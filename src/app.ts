@@ -10,6 +10,7 @@ import { createExamRouter } from './routes/exam';
 import { createAdminUsersRouter } from './routes/adminUsers';
 import { createAdminVocabularyRouter } from './routes/adminVocabulary';
 import { createAdminExamRouter } from './routes/adminExam';
+import { createUserPreferencesRouter } from './routes/userPreferences';
 import { jsonSafe } from './lib/jsonSafe';
 
 dotenv.config();
@@ -64,6 +65,8 @@ app.use('/admin/vocabulary', createAdminVocabularyRouter());
 app.use('/api/admin/vocabulary', createAdminVocabularyRouter());
 app.use('/admin/exam', createAdminExamRouter());
 app.use('/api/admin/exam', createAdminExamRouter());
+app.use('/user/preferences', createUserPreferencesRouter());
+app.use('/api/user/preferences', createUserPreferencesRouter());
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;
