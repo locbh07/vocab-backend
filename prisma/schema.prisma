@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Mapped models from your provided schema. Review column types/lengths after pull.
+
+model Grammar {
+  grammar_id           BigInt           @id @default(autoincrement()) @map("grammar_id")
+  grammar_point        String           @db.VarChar(255)
+  grammar_point_romaji String?          @db.VarChar(255)
+  level                String           @db.VarChar(5)
+  topic                String?          @db.VarChar(255)
+  meaning_vi           String?          @db.Text
+  grammar_usage_text   String?          @db.Text @map("grammar_usage")
+  note                 String?          @db.Text
+  usages               GrammarUsage[]   @relation("GrammarToUsage", fields: [], references: [])
+
+  @@map("grammar")
+}
+
+model GrammarUsage {
+  usage_id    BigInt  @id @default(autoincrement()) @map("usage_id")
+  grammar_id  BigInt  @map("grammar_id")
+  formation    String? @db.VarChar(255)
+  example_ja   String? @db.Text
+  example_vi   String? @db.Text
+
+  grammar      Grammar @relation("GrammarToUsage", fields: [grammar_id], references: [grammar_id])
+
+  @@map("grammar_usage")
+}
+
+model JlptExam {
+  id         BigInt   @id @default(autoincrement())
+  level      String
+  exam_id    String   @map("exam_id")
+  part       Int      @db.SmallInt
+  source_file String  @map("source_file")
+  json_data  Json     @map("json_data")
+  created_at DateTime @map("created_at") @default(now())
+
+  @@unique([level, exam_id, part])
+  @@map("jlpt_exam")
+}
+
+model JlptExamRevision {
+  id         BigInt   @id @default(autoincrement())
+  level      String
+  exam_id    String   @map("exam_id")
+  part       Int      @db.SmallInt
+  editor_id  BigInt?  @map("editor_id")
+  note       String?  @db.Text
+  json_data  Json     @map("json_data")
+  created_at DateTime @map("created_at") @default(now())
+
+  @@map("jlpt_exam_revision")
+}
+
+model JlptAttempt {
+  id          BigInt    @id @default(autoincrement())
+  user_id     BigInt    @map("user_id")
+  level       String
+  exam_id     String    @map("exam_id")
+  started_at  DateTime? @map("started_at") @default(now())
+  finished_at DateTime? @map("finished_at")
+  duration_sec Int?
+  score_total  Int      @default(0)
+  score_sec1   Int      @default(0)
+  score_sec2   Int      @default(0)
+  score_sec3   Int      @default(0)
+
+  user UserAccount @relation(fields: [user_id], references: [id])
+  items JlptAttemptItem[] @relation("AttemptItems")
+
+  @@map("jlpt_attempt")
+}
+
+model JlptAttemptItem {
+  id           BigInt  @id @default(autoincrement())
+  attempt_id   BigInt  @map("attempt_id")
+  part         Int     @db.SmallInt
+  section_index Int
+  question_index Int
+  question_id   String?
+  selected      String?
+  correct_answer String?
+  is_correct    Boolean @map("is_correct") @default(false)
+  question_json Json?   @map("question_json")
+
+  attempt JlptAttempt @relation("AttemptItems", fields: [attempt_id], references: [id])
+
+  @@map("jlpt_attempt_item")
+}
+
+model QuizSession {
+  id          BigInt   @id @default(autoincrement())
+  user_id     BigInt   @map("user_id")
+  session_date DateTime @map("session_date")
+  session_index Int    @map("session_index")
+  batch_size  Int      @default(5) @map("batch_size")
+  created_at  DateTime @map("created_at") @default(now())
+
+  items QuizSessionItem[]
+
+  @@map("quiz_session")
+}
+
+model QuizSessionItem {
+  id         BigInt  @id @default(autoincrement())
+  session_id BigInt  @map("session_id")
+  vocab_id   BigInt  @map("vocab_id")
+  item_order Int     @map("item_order")
+  created_at DateTime @map("created_at") @default(now())
+
+  session QuizSession @relation(fields: [session_id], references: [id])
+  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id])
+
+  @@map("quiz_session_item")
+}
+
+model UserAccount {
+  id           BigInt  @id @default(autoincrement())
+  username     String  @db.VarChar(50)
+  passwordhash String  @map("passwordhash")
+  fullname     String  @db.VarChar(100)
+  email        String  @db.VarChar(255)
+  role         String  @db.VarChar(20)
+  createdat    DateTime @map("createdat") @default(now())
+  exam_enabled Boolean @map("exam_enabled") @default(false)
+  exam_code    String? @map("exam_code")
+
+  attempts JlptAttempt[]
+  learningPlans UserLearningPlan[]
+  reviewLogs UserReviewLog[]
+  vocabProgress UserVocabProgress[]
+
+  @@unique([username])
+  @@unique([email])
+  @@map("useraccount")
+}
+
+model UserExamCode {
+  id       BigInt  @id @default(autoincrement())
+  user_id  BigInt  @map("user_id")
+  level    String
+  code     String
+  enabled  Boolean @default(true)
+  updated_at DateTime @map("updated_at") @default(now())
+
+  @@unique([user_id, level])
+  @@map("user_exam_code")
+}
+
+model UserLearningPlan {
+  id            BigInt  @id @default(autoincrement())
+  user_id       BigInt  @map("user_id")
+  total_words   Int?
+  target_months Int?
+  start_date    DateTime?
+  target_date   DateTime?
+  daily_new_words Int?
+  is_active     Int     @map("is_active") @default(1)
+  created_at    DateTime @map("created_at") @default(now())
+  updated_at    DateTime @map("updated_at") @default(now())
+  topic_prefix  String? @db.VarChar(50)
+
+  user UserAccount @relation(fields: [user_id], references: [id])
+  progress UserVocabProgress[]
+
+  @@map("user_learning_plan")
+}
+
+model UserReviewLog {
+  id         BigInt  @id @default(autoincrement())
+  user_id    BigInt  @map("user_id")
+  vocab_id   BigInt  @map("vocab_id")
+  review_time DateTime @map("review_time")
+  result     Int     @map("result")
+  mode       String  @map("mode") @db.VarChar(20)
+
+  user UserAccount @relation(fields: [user_id], references: [id])
+
+  @@map("user_review_log")
+}
+
+model UserVocabProgress {
+  id              BigInt   @id @default(autoincrement())
+  user_id         BigInt   @map("user_id")
+  vocab_id        BigInt   @map("vocab_id")
+  plan_id         BigInt?  @map("plan_id")
+  stage           Int      @default(0)
+  next_review_date DateTime?
+  last_reviewed_at DateTime?
+  times_reviewed  Int      @default(0)
+  last_result     Int?
+  is_mastered     Int      @default(0)
+  created_at      DateTime @map("created_at") @default(now())
+  updated_at      DateTime @map("updated_at") @default(now())
+  first_seen_date DateTime?
+
+  user UserAccount @relation(fields: [user_id], references: [id])
+  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id])
+  plan UserLearningPlan? @relation(fields: [plan_id], references: [id])
+
+  @@unique([user_id, vocab_id])
+  @@map("user_vocab_progress")
+}
+
+model Vocabulary {
+  id             BigInt   @id @default(autoincrement())
+  word_ja        String?  @db.VarChar(255)
+  word_hira_kana String?  @db.VarChar(255)
+  word_romaji    String?  @db.VarChar(255)
+  word_vi        String?  @db.VarChar(1000)
+  example_ja     String?  @db.VarChar(1000)
+  example_vi     String?  @db.VarChar(1000)
+  topic          String?  @db.VarChar(100)
+  level          String?  @db.VarChar(50)
+  image_url      String?
+  audio_url      String?
+  core_order     Int?
+
+  quizSessionItems QuizSessionItem[]
+  vocabProgress UserVocabProgress[]
+
+  @@map("vocabulary")
+}
+
+// Note: vocabulary_backup_coreorder has no PK in your description — skip mapping for now or add a manual model if needed.
+

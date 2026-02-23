@@ -1,0 +1,40 @@
+{
+  "name": "vocab-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "env:local": "node scripts/use-env.cjs local",
+    "env:staging": "node scripts/use-env.cjs staging",
+    "env:production": "node scripts/use-env.cjs production",
+    "dev": "kill-port 4000 && ts-node-dev --respawn --transpile-only src/main.ts",
+    "dev:local": "npm run env:local && npm run dev",
+    "dev:staging": "npm run env:staging && npm run dev",
+    "dev:production": "npm run env:production && npm run dev",
+    "postinstall": "prisma generate",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "prisma": "prisma",
+    "prisma:migrate:dev:local": "npm run env:local && npm run prisma -- migrate dev",
+    "prisma:migrate:deploy:staging": "npm run env:staging && npm run prisma -- migrate deploy",
+    "prisma:migrate:deploy:production": "npm run env:production && npm run prisma -- migrate deploy",
+    "prisma:studio:local": "npm run env:local && npm run prisma -- studio",
+    "prisma:studio:staging": "npm run env:staging && npm run prisma -- studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^4.16.2",
+    "@supabase/supabase-js": "^2.45.4",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-async-errors": "^3.1.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.4.2",
+    "kill-port": "^2.0.1",
+    "prisma": "^4.16.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.1.6"
+  }
+}
