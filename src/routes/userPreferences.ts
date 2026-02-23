@@ -1,14 +1,20 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 
-const DEFAULT_ORDER = ['vi', 'ja', 'kana', 'example', 'image'];
+const DEFAULT_ORDER = ['vi', 'ja', 'hira', 'romaji', 'example_ja', 'example_vi', 'image'];
 const ORDER_SET = new Set(DEFAULT_ORDER);
+const LEGACY_EXPAND: Record<string, string[]> = {
+  kana: ['hira', 'romaji'],
+  example: ['example_ja', 'example_vi'],
+};
 
 const DEFAULT_VISIBILITY: Record<string, boolean> = {
   vi: true,
   ja: true,
-  kana: true,
-  example: true,
+  hira: true,
+  romaji: true,
+  example_ja: true,
+  example_vi: true,
   image: true,
 };
 
@@ -27,15 +33,19 @@ async function ensurePreferenceTable() {
   tableReady = true;
 }
 
-function isValidOrder(order: unknown): order is string[] {
-  if (!Array.isArray(order) || order.length !== DEFAULT_ORDER.length) return false;
-  const keys = order.map((item) => String(item));
-  return DEFAULT_ORDER.every((key) => keys.includes(key));
-}
-
 function normalizeVisibility(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object') return { ...DEFAULT_VISIBILITY };
   const visibility = { ...DEFAULT_VISIBILITY };
+  if (typeof (value as Record<string, unknown>).kana === 'boolean') {
+    const legacy = (value as Record<string, boolean>).kana;
+    visibility.hira = legacy;
+    visibility.romaji = legacy;
+  }
+  if (typeof (value as Record<string, unknown>).example === 'boolean') {
+    const legacy = (value as Record<string, boolean>).example;
+    visibility.example_ja = legacy;
+    visibility.example_vi = legacy;
+  }
   for (const key of Object.keys(DEFAULT_VISIBILITY)) {
     if (typeof (value as Record<string, unknown>)[key] === 'boolean') {
       visibility[key] = (value as Record<string, boolean>)[key];
@@ -45,10 +55,25 @@ function normalizeVisibility(value: unknown): Record<string, boolean> {
 }
 
 function normalizeOrder(value: unknown): string[] {
-  if (!isValidOrder(value)) return [...DEFAULT_ORDER];
-  const keys = value.map((item) => String(item));
-  if (!keys.every((item) => ORDER_SET.has(item))) return [...DEFAULT_ORDER];
-  return keys;
+  if (!Array.isArray(value)) return [...DEFAULT_ORDER];
+  const expanded: string[] = [];
+  for (const item of value) {
+    const key = String(item);
+    if (LEGACY_EXPAND[key]) {
+      expanded.push(...LEGACY_EXPAND[key]);
+    } else {
+      expanded.push(key);
+    }
+  }
+  const unique: string[] = [];
+  for (const key of expanded) {
+    if (!ORDER_SET.has(key)) continue;
+    if (!unique.includes(key)) unique.push(key);
+  }
+  for (const key of DEFAULT_ORDER) {
+    if (!unique.includes(key)) unique.push(key);
+  }
+  return unique;
 }
 
 export function createUserPreferencesRouter() {
