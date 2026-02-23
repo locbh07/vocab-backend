@@ -15,7 +15,30 @@ import { jsonSafe } from './lib/jsonSafe';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+const configuredCorsOrigin = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+if (configuredCorsOrigin.length === 0) {
+  app.use(cors());
+} else {
+  app.use(
+    cors({
+      origin: (
+        origin: string | undefined,
+        callback: (err: Error | null, allow?: boolean) => void,
+      ) => {
+        // Allow same-origin/server-to-server requests without Origin header.
+        if (!origin || configuredCorsOrigin.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error('Not allowed by CORS'));
+      },
+    }),
+  );
+}
 app.use(express.json());
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
