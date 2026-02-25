@@ -56,12 +56,12 @@ export function createLearningRouter() {
     const plan = await getActivePlan(userId);
     if (!plan?.daily_new_words || plan.daily_new_words <= 0) return res.json([]);
 
-    const today = dateOnly(new Date());
     const [usedRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
-      SELECT COUNT(*) AS total
-      FROM user_vocab_progress
+      SELECT COUNT(DISTINCT vocab_id) AS total
+      FROM user_review_log
       WHERE user_id = ${BigInt(userId)}
-      AND first_seen_date = ${today}
+        AND mode = 'new'
+        AND DATE(review_time) = CURRENT_DATE
     `;
     const used = Number(usedRow?.total || 0n);
     const remaining = plan.daily_new_words - used;
