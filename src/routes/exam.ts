@@ -8,10 +8,11 @@ import {
   PassageExplanation,
   ReadingSeedQuestionData,
 } from '../lib/examExplanation';
-import { inferJlptQuestionMeta, JlptQuestionType } from '../lib/jlptQuestionType';
+import { describeJlptQuestionType, inferJlptQuestionMeta, JlptQuestionType } from '../lib/jlptQuestionType';
 import { getOrCreateQuestionReadingCache, QuestionReadingCache } from '../lib/examReadingCache';
+import { getExamQuestionMeta, upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
 
-const EXPLANATION_PROMPT_VERSION = 13;
+const EXPLANATION_PROMPT_VERSION = 14;
 let ensureExplainTablePromise: Promise<void> | null = null;
 
 type VerifyRequest = {
@@ -942,9 +943,37 @@ async function loadQuestionContext(
   const rawQuestionText = normalizeSpace(stripHtml(toText(q.question_html ?? q.ques) || ''));
   const correctAnswer = toText(q.correct_answer ?? q.answer) || '';
   const sectionTitle = normalizeSpace(stripHtml(toText(section.section_title ?? section.sec) || ''));
-  const questionLabel = toText(q.question_id ?? q.qid) || `${questionIndex + 1}`;
+  const rawQuestionLabel = toText(q.question_id ?? q.qid) || `${questionIndex + 1}`;
+  let metadata = await getExamQuestionMeta({
+    level,
+    examId,
+    part,
+    sectionIndex,
+    questionIndex,
+  });
+  if (!metadata) {
+    await upsertExamQuestionMetaForPart({
+      level,
+      examId,
+      part,
+      jsonData: json,
+      force: false,
+    });
+    metadata = await getExamQuestionMeta({
+      level,
+      examId,
+      part,
+      sectionIndex,
+      questionIndex,
+    });
+  }
+
+  const fallbackDisplayQuestionNo = parseLeadingQuestionNo(rawQuestionText) ?? parseQuestionLabelNumber(rawQuestionLabel);
+  const displayQuestionNo = metadata?.displayQuestionNo ?? fallbackDisplayQuestionNo;
+  const labelForMarker = displayQuestionNo !== null ? String(displayQuestionNo) : rawQuestionLabel;
+  const labelForInference = displayQuestionNo !== null ? String(displayQuestionNo) : rawQuestionLabel;
   const passageText = extractPassageText(json, q);
-  const markerCandidates = buildBlankMarkerCandidates(rawQuestionText, questionLabel);
+  const markerCandidates = buildBlankMarkerCandidates(rawQuestionText, labelForMarker);
   const sentenceWithBlank = extractSentenceAroundBlank(passageText, markerCandidates);
   const answerText = correctAnswer ? options[correctAnswer] || '' : '';
   const sentenceWithAnswer = replaceBlankMarker(sentenceWithBlank, markerCandidates, answerText);
@@ -953,16 +982,19 @@ async function loadQuestionContext(
   const blankLabels = isClozeQuestion ? detectBlankLabels(passageText) : [];
   const questionWithBlank = isClozeQuestion ? sentenceWithBlank : rawQuestionText;
   const questionWithAnswer = isClozeQuestion ? sentenceWithAnswer : '';
-  const questionMeta = inferJlptQuestionMeta({
+  const fallbackMeta = inferJlptQuestionMeta({
     level,
     part,
     sectionTitle,
-    questionLabel,
+    questionLabel: labelForInference,
     questionText: rawQuestionText,
     optionTexts: Object.values(options),
     hasPassage: Boolean(passageText),
     isClozeQuestion,
   });
+  const questionType = metadata?.questionType || fallbackMeta.questionType;
+  const questionTypeDescriptor = describeJlptQuestionType(questionType);
+  const mondaiLabel = metadata?.mondaiLabel || fallbackMeta.mondaiLabel;
   const rawExpl = toText(q.expl ?? q.explanation ?? q.exp) || '';
   const sentenceOrderExpectedOrder = parseSentenceOrderExpectedOrder(rawExpl, Object.keys(options));
   const questionText = buildQuestionPromptText({
@@ -974,11 +1006,11 @@ async function loadQuestionContext(
 
   return {
     sectionTitle,
-    questionLabel,
-    mondaiLabel: questionMeta.mondaiLabel,
-    questionType: questionMeta.questionType,
-    questionTypeLabelVi: questionMeta.questionTypeLabelVi,
-    typeStrategyVi: questionMeta.strategyVi,
+    questionLabel: rawQuestionLabel,
+    mondaiLabel,
+    questionType,
+    questionTypeLabelVi: questionTypeDescriptor.questionTypeLabelVi,
+    typeStrategyVi: questionTypeDescriptor.strategyVi,
     questionText,
     questionWithBlank,
     questionWithAnswer,
@@ -1067,6 +1099,22 @@ function buildBlankMarkerCandidates(rawQuestionText: string, questionLabel: stri
 function extractDigits(value: string): string {
   const m = value.match(/\d+/);
   return m ? String(Number(m[0])) : '';
+}
+
+function parseLeadingQuestionNo(text: string): number | null {
+  const normalized = toAsciiDigitsLocal(String(text || ''));
+  const m = normalized.match(/^\s*(\d{1,3})\s*[.．。]/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseQuestionLabelNumber(label: string): number | null {
+  const normalized = toAsciiDigitsLocal(String(label || ''));
+  const m = normalized.match(/\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
 }
 
 function extractSentenceAroundBlank(passageText: string, markers: string[]): string {

@@ -13,6 +13,7 @@
     "postinstall": "prisma generate",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "exam:meta:backfill": "npm run build && node scripts/backfill-exam-metadata.cjs",
     "prisma": "prisma",
     "prisma:migrate:dev:local": "npm run env:local && npm run prisma -- migrate dev",
     "prisma:migrate:deploy:staging": "npm run env:staging && npm run prisma -- migrate deploy",

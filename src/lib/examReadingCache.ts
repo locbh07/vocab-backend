@@ -135,6 +135,134 @@ export async function precomputeExamReadings(args: {
   return { total, created, skipped };
 }
 
+export async function precomputeLevelReadings(args: {
+  level: string;
+  force?: boolean;
+}): Promise<{
+  level: string;
+  force: boolean;
+  examCount: number;
+  total: number;
+  created: number;
+  skipped: number;
+  exams: Array<{ examId: string; total: number; created: number; skipped: number }>;
+}> {
+  await ensureExamReadingCacheTable();
+  const level = String(args.level || '').trim();
+  const force = Boolean(args.force);
+  if (!level) {
+    const err = new Error('Invalid level for reading precompute') as Error & { status?: number };
+    err.status = 400;
+    throw err;
+  }
+
+  const rows = await prisma.$queryRawUnsafe<Array<{ exam_id: string }>>(
+    `
+      SELECT DISTINCT exam_id
+      FROM jlpt_exam
+      WHERE level = $1
+      ORDER BY exam_id DESC
+    `,
+    level,
+  );
+  const examIds = rows.map((item) => String(item.exam_id || '')).filter((item) => item.length > 0);
+  const exams: Array<{ examId: string; total: number; created: number; skipped: number }> = [];
+  let total = 0;
+  let created = 0;
+  let skipped = 0;
+
+  for (const examId of examIds) {
+    const summary = await precomputeExamReadings({ level, examId, force });
+    exams.push({
+      examId,
+      ...summary,
+    });
+    total += summary.total;
+    created += summary.created;
+    skipped += summary.skipped;
+  }
+
+  return {
+    level,
+    force,
+    examCount: exams.length,
+    total,
+    created,
+    skipped,
+    exams,
+  };
+}
+
+export async function precomputeAllReadings(args?: {
+  levels?: string[];
+  force?: boolean;
+}): Promise<{
+  levels: string[];
+  force: boolean;
+  levelCount: number;
+  total: number;
+  created: number;
+  skipped: number;
+  summaries: Array<{
+    level: string;
+    examCount: number;
+    total: number;
+    created: number;
+    skipped: number;
+  }>;
+}> {
+  await ensureExamReadingCacheTable();
+  const force = Boolean(args?.force);
+  const requestedLevels = Array.isArray(args?.levels)
+    ? args!.levels.map((item) => String(item || '').trim()).filter((item) => item.length > 0)
+    : [];
+
+  const levelRows = requestedLevels.length
+    ? requestedLevels.map((level) => ({ level }))
+    : await prisma.$queryRawUnsafe<Array<{ level: string }>>(
+      `
+        SELECT DISTINCT level
+        FROM jlpt_exam
+        ORDER BY level ASC
+      `,
+    );
+  const levels = levelRows.map((row) => String(row.level || '').trim()).filter((item) => item.length > 0);
+  const summaries: Array<{
+    level: string;
+    examCount: number;
+    total: number;
+    created: number;
+    skipped: number;
+  }> = [];
+  let total = 0;
+  let created = 0;
+  let skipped = 0;
+
+  for (const level of levels) {
+    const summary = await precomputeLevelReadings({ level, force });
+    summaries.push({
+      level,
+      examCount: summary.examCount,
+      total: summary.total,
+      created: summary.created,
+      skipped: summary.skipped,
+    });
+    total += summary.total;
+    created += summary.created;
+    skipped += summary.skipped;
+  }
+
+  return {
+    levels,
+    force,
+    levelCount: summaries.length,
+    total,
+    created,
+    skipped,
+    summaries,
+  };
+}
+
 async function buildQuestionReadingCache(args: {
   questionText: string;
   options: Record<string, string>;

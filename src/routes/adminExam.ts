@@ -1,7 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
-import { precomputeExamReadings } from '../lib/examReadingCache';
+import { precomputeAllReadings, precomputeExamReadings, precomputeLevelReadings } from '../lib/examReadingCache';
+import {
+  upsertExamQuestionMetaForAll,
+  upsertExamQuestionMetaForLevel,
+  upsertExamQuestionMetaForExam,
+  upsertExamQuestionMetaForPart,
+} from '../lib/examQuestionMeta';
 
 export function createAdminExamRouter() {
   const router = Router();
@@ -61,7 +67,15 @@ export function createAdminExamRouter() {
       data: { json_data: json },
     });
 
-    return res.json({ updated: true });
+    const metadata = await upsertExamQuestionMetaForPart({
+      level,
+      examId,
+      part,
+      jsonData: json,
+      force: true,
+    });
+
+    return res.json({ updated: true, metadata });
   });
 
   router.post('/:level/:examId/part/:part/restore/:revisionId', async (req: Request, res: Response) => {
@@ -97,7 +111,16 @@ export function createAdminExamRouter() {
       },
       data: { json_data: revision.json_data as any },
     });
-    return res.json({ restored: true });
+
+    const metadata = await upsertExamQuestionMetaForPart({
+      level,
+      examId,
+      part,
+      jsonData: revision.json_data as any,
+      force: true,
+    });
+
+    return res.json({ restored: true, metadata });
   });
 
   router.post('/:level/:examId/precompute-readings', async (req: Request, res: Response) => {
@@ -113,6 +136,65 @@ export function createAdminExamRouter() {
       force,
       ...summary,
     });
+  });
+
+  router.post('/:level/precompute-readings', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const level = String(req.params.level);
+    const force = Boolean(req.body?.force);
+
+    const summary = await precomputeLevelReadings({ level, force });
+    return res.json(summary);
+  });
+
+  router.post('/precompute-readings-all', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const force = Boolean(req.body?.force);
+    const level = String(req.body?.level || '').trim();
+    const levels = Array.isArray(req.body?.levels)
+      ? req.body.levels.map((item: unknown) => String(item || '').trim()).filter((item: string) => item.length > 0)
+      : [];
+
+    if (level) {
+      const summary = await precomputeLevelReadings({ level, force });
+      return res.json(summary);
+    }
+    if (levels.length > 0) {
+      const summary = await precomputeAllReadings({ levels, force });
+      return res.json(summary);
+    }
+    const summary = await precomputeAllReadings({ force });
+    return res.json(summary);
+  });
+
+  router.post('/:level/:examId/precompute-metadata', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const level = String(req.params.level);
+    const examId = String(req.params.examId);
+    const force = Boolean(req.body?.force);
+
+    const summary = await upsertExamQuestionMetaForExam({ level, examId, force });
+    return res.json(summary);
+  });
+
+  router.post('/precompute-metadata-all', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const force = Boolean(req.body?.force);
+    const level = String(req.body?.level || '').trim();
+    const levels = Array.isArray(req.body?.levels)
+      ? req.body.levels.map((item: unknown) => String(item || '').trim()).filter((item: string) => item.length > 0)
+      : [];
+
+    if (level) {
+      const summary = await upsertExamQuestionMetaForLevel({ level, force });
+      return res.json(summary);
+    }
+    if (levels.length > 0) {
+      const summary = await upsertExamQuestionMetaForAll({ levels, force });
+      return res.json(summary);
+    }
+    const summary = await upsertExamQuestionMetaForAll({ force });
+    return res.json(summary);
   });
 
   return router;

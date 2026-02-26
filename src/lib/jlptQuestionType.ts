@@ -17,6 +17,11 @@ export type JlptQuestionMeta = {
   strategyVi: string;
 };
 
+export type JlptQuestionTypeDescriptor = {
+  questionTypeLabelVi: string;
+  strategyVi: string;
+};
+
 type InferInput = {
   level: string;
   part: number;
@@ -91,8 +96,14 @@ export function inferJlptQuestionMeta(input: InferInput): JlptQuestionMeta {
     mondaiLabel,
     mondaiNumber,
     questionType,
-    questionTypeLabelVi: TYPE_LABELS[questionType],
-    strategyVi: TYPE_STRATEGIES[questionType],
+    ...describeJlptQuestionType(questionType),
+  };
+}
+
+export function describeJlptQuestionType(questionType: JlptQuestionType): JlptQuestionTypeDescriptor {
+  return {
+    questionTypeLabelVi: TYPE_LABELS[questionType] || TYPE_LABELS.unknown,
+    strategyVi: TYPE_STRATEGIES[questionType] || TYPE_STRATEGIES.unknown,
   };
 }
 
