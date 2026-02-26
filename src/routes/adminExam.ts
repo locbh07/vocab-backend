@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
+import { precomputeExamReadings } from '../lib/examReadingCache';
 
 export function createAdminExamRouter() {
   const router = Router();
@@ -97,6 +98,21 @@ export function createAdminExamRouter() {
       data: { json_data: revision.json_data as any },
     });
     return res.json({ restored: true });
+  });
+
+  router.post('/:level/:examId/precompute-readings', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const level = String(req.params.level);
+    const examId = String(req.params.examId);
+    const force = Boolean(req.body?.force);
+
+    const summary = await precomputeExamReadings({ level, examId, force });
+    return res.json({
+      level,
+      examId,
+      force,
+      ...summary,
+    });
   });
 
   return router;

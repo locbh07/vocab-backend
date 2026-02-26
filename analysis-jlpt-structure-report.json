@@ -1,0 +1,1253 @@
+{
+  "generatedAt": "2026-02-26T02:28:56.337Z",
+  "totalRows": 312,
+  "levels": {
+    "N5": {
+      "examCount": 5,
+      "exams": [
+        "202407",
+        "202112",
+        "201807",
+        "201707",
+        "201307"
+      ],
+      "totalQuestions": 362,
+      "mondai": {
+        "(khong ro)": {
+          "mondaiNumber": null,
+          "questionCount": 362,
+          "parts": {
+            "1": 145,
+            "2": 97,
+            "3": 120
+          },
+          "questionTypes": {
+            "sentence_order": 131,
+            "unknown": 17,
+            "reading_cloze": 70,
+            "reading_content": 24,
+            "listening": 120
+          },
+          "sampleSectionTitle": "",
+          "sampleQuestions": [
+            {
+              "examId": "202407",
+              "part": 1,
+              "qid": "1",
+              "text": "1 いま 店 のまえに います｡"
+            },
+            {
+              "examId": "202407",
+              "part": 1,
+              "qid": "2",
+              "text": "2 たなかさんは いま 外国 に います｡"
+            },
+            {
+              "examId": "202407",
+              "part": 1,
+              "qid": "3",
+              "text": "3 さとうさんは 話 が じょうずです｡"
+            }
+          ]
+        }
+      },
+      "questionTypes": {
+        "sentence_order": 131,
+        "unknown": 17,
+        "reading_cloze": 70,
+        "reading_content": 24,
+        "listening": 120
+      },
+      "unknownSamples": [
+        {
+          "examId": "202407",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "19",
+          "sectionTitle": "",
+          "questionText": "19 けさ、はやしさんに あいました。"
+        },
+        {
+          "examId": "202407",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "20",
+          "sectionTitle": "",
+          "questionText": "20 この かんじは かんたんです。"
+        },
+        {
+          "examId": "202407",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21 たなかさんは リーさんに さくぶんを おしえました。"
+        },
+        {
+          "examId": "202112",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "19",
+          "sectionTitle": "",
+          "questionText": "19 ともだちと きっさてんへ いきました｡"
+        },
+        {
+          "examId": "202112",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "20",
+          "sectionTitle": "",
+          "questionText": "20 へやの そうじを しました。"
+        },
+        {
+          "examId": "202112",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21 それは かるいです。"
+        },
+        {
+          "examId": "201807",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "31",
+          "sectionTitle": "",
+          "questionText": "31 これは りょうしんの しゃしんです ｡"
+        },
+        {
+          "examId": "201807",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "32",
+          "sectionTitle": "",
+          "questionText": "32 このダンスは やさしいです ｡"
+        },
+        {
+          "examId": "201807",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "33",
+          "sectionTitle": "",
+          "questionText": "33 ふくを せんたくしました ｡"
+        },
+        {
+          "examId": "201807",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "34",
+          "sectionTitle": "",
+          "questionText": "34 このへやは からいですね ｡"
+        },
+        {
+          "examId": "201807",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 4,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35 リーさんは もりさんに ペンを かしました ｡"
+        },
+        {
+          "examId": "201307",
+          "part": 1,
+          "sectionIndex": 0,
+          "questionIndex": 9,
+          "questionLabel": "10",
+          "sectionTitle": "",
+          "questionText": "10．この とけいは 八百円 です｡"
+        },
+        {
+          "examId": "201307",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "31",
+          "sectionTitle": "",
+          "questionText": "31． まいばん あそこは としょかんか です｡"
+        },
+        {
+          "examId": "201307",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "32",
+          "sectionTitle": "",
+          "questionText": "32． まいばん テレビで ニュースを みます ｡"
+        },
+        {
+          "examId": "201307",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "33",
+          "sectionTitle": "",
+          "questionText": "33． まいばん おとうとは あのレストランで はたらいています ｡"
+        },
+        {
+          "examId": "201307",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "34",
+          "sectionTitle": "",
+          "questionText": "34． まいばん あのみせは しずかじゃありませんでした ｡"
+        },
+        {
+          "examId": "201307",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 4,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35． まいばん じゅぎょうで むずかしい かんじを ならいました ｡"
+        }
+      ]
+    },
+    "N4": {
+      "examCount": 7,
+      "exams": [
+        "202512",
+        "202507",
+        "202412",
+        "202407",
+        "202307",
+        "202112",
+        "202107"
+      ],
+      "totalQuestions": 558,
+      "mondai": {
+        "(khong ro)": {
+          "mondaiNumber": null,
+          "questionCount": 558,
+          "parts": {
+            "1": 195,
+            "2": 195,
+            "3": 168
+          },
+          "questionTypes": {
+            "sentence_order": 165,
+            "unknown": 58,
+            "reading_cloze": 119,
+            "reading_content": 48,
+            "listening": 168
+          },
+          "sampleSectionTitle": "",
+          "sampleQuestions": [
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "1",
+              "text": "1 紙 は そこに ありますから、つかって ください｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "2",
+              "text": "2 やまださんは 日本の 地理 に ついて よく しって います｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "3",
+              "text": "3 ここで 泳がないで ください｡"
+            }
+          ]
+        }
+      },
+      "questionTypes": {
+        "sentence_order": 165,
+        "unknown": 58,
+        "reading_cloze": 119,
+        "reading_content": 48,
+        "listening": 168
+      },
+      "unknownSamples": [
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21 かぐの うりばは ２かいです ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "22",
+          "sectionTitle": "",
+          "questionText": "22 たなかさんは．さとうさんに あやまりました｡ ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "23",
+          "sectionTitle": "",
+          "questionText": "23 すずきさんは どくしんです ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "24",
+          "sectionTitle": "",
+          "questionText": "24 うちの 犬は とても おとなしいです ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 0,
+          "questionLabel": "25",
+          "sectionTitle": "",
+          "questionText": "25 うんてん"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 1,
+          "questionLabel": "26",
+          "sectionTitle": "",
+          "questionText": "26 あさい"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 2,
+          "questionLabel": "27",
+          "sectionTitle": "",
+          "questionText": "27 しょうかい"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 3,
+          "questionLabel": "28",
+          "sectionTitle": "",
+          "questionText": "28 にる"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21 もりさんは 何が ひつようですか ｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "22",
+          "sectionTitle": "",
+          "questionText": "22 にんじんを こまかく きって ください ｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "23",
+          "sectionTitle": "",
+          "questionText": "23 あそこに いるのが ちょうじょです ｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "24",
+          "sectionTitle": "",
+          "questionText": "24 たかやまさんは にこにこして いました ｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 0,
+          "questionLabel": "25",
+          "sectionTitle": "",
+          "questionText": "25 ていねい"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 1,
+          "questionLabel": "26",
+          "sectionTitle": "",
+          "questionText": "26 たおれる"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 2,
+          "questionLabel": "27",
+          "sectionTitle": "",
+          "questionText": "27 きんじょ"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 3,
+          "questionLabel": "28",
+          "sectionTitle": "",
+          "questionText": "28 ひろう"
+        },
+        {
+          "examId": "202412",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 4,
+          "questionLabel": "17",
+          "sectionTitle": "",
+          "questionText": "17 こんばん どこで しょくじを するか（ ）｡"
+        },
+        {
+          "examId": "202412",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21 これは とても だいじな ものです ｡"
+        },
+        {
+          "examId": "202412",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "22",
+          "sectionTitle": "",
+          "questionText": "22 そふは よろこんで いました ｡"
+        },
+        {
+          "examId": "202412",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "23",
+          "sectionTitle": "",
+          "questionText": "23 あすの ほうが いいです ｡"
+        }
+      ]
+    },
+    "N3": {
+      "examCount": 30,
+      "exams": [
+        "202512",
+        "202507",
+        "202412",
+        "202407",
+        "202312",
+        "202307",
+        "202212",
+        "202207",
+        "202112",
+        "202107",
+        "202012",
+        "201912",
+        "201907",
+        "201812",
+        "201807",
+        "201712",
+        "201707",
+        "201612",
+        "201607",
+        "201512",
+        "201507",
+        "201412",
+        "201407",
+        "201312",
+        "201307",
+        "201212",
+        "201207",
+        "201112",
+        "201107",
+        "201007"
+      ],
+      "totalQuestions": 2988,
+      "mondai": {
+        "(khong ro)": {
+          "mondaiNumber": null,
+          "questionCount": 2988,
+          "parts": {
+            "1": 1049,
+            "2": 1157,
+            "3": 782
+          },
+          "questionTypes": {
+            "sentence_order": 1003,
+            "unknown": 198,
+            "reading_cloze": 535,
+            "reading_content": 470,
+            "listening": 782
+          },
+          "sampleSectionTitle": "",
+          "sampleQuestions": [
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "1",
+              "text": "1．これは 西洋 の建物の写真です｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "2",
+              "text": "2．今回はとても 苦しい 試合だった｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "3",
+              "text": "3．この手紙は 他人 に見せないでください｡"
+            }
+          ]
+        }
+      },
+      "questionTypes": {
+        "sentence_order": 1003,
+        "unknown": 198,
+        "reading_cloze": 535,
+        "reading_content": 470,
+        "listening": 782
+      },
+      "unknownSamples": [
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 4,
+          "questionLabel": "30",
+          "sectionTitle": "",
+          "questionText": "30．そろそろ おしまいにしましょう ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 0,
+          "questionLabel": "31",
+          "sectionTitle": "",
+          "questionText": "31．にぎる"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 1,
+          "questionLabel": "32",
+          "sectionTitle": "",
+          "questionText": "32． 修理 しゅうり"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 2,
+          "questionLabel": "33",
+          "sectionTitle": "",
+          "questionText": "33． 目的 もくてき"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 3,
+          "questionLabel": "34",
+          "sectionTitle": "",
+          "questionText": "34． 懐 なつ かしい"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 4,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35． 変化 へんか"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 0,
+          "questionLabel": "15",
+          "sectionTitle": "",
+          "questionText": "15．山の上から見た 景色 けしき が素晴らしくて、とても（ ）した｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 1,
+          "questionLabel": "16",
+          "sectionTitle": "",
+          "questionText": "16．この店では、以前 誰 だれ かが使っていた（ ）の車を売っている｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 4,
+          "questionLabel": "19",
+          "sectionTitle": "",
+          "questionText": "19．ここから 市役所 しやくしょ までの（ ）はどのくらいですか｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 6,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21． 配 はい 達 たつ が 遅 おく れた せいで、 お 客 きゃく さんから（ ）を言われてしまった｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 8,
+          "questionLabel": "23",
+          "sectionTitle": "",
+          "questionText": "23．私の家から駅までは（ ）なので、駅まで歩くと 疲 つか れ ます｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 10,
+          "questionLabel": "25",
+          "sectionTitle": "",
+          "questionText": "25．後でレポートを書くために、 実 じっ 験 けん の 結 けっ 果 か をノートに（ ）した｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "26",
+          "sectionTitle": "",
+          "questionText": "26．あの 仕 事 は 本 ほん 当 とう に 苦 く 労 ろう した｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "29",
+          "sectionTitle": "",
+          "questionText": "29．ここに 来 て から1 週 間 くらい 経 た ち ました ｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 4,
+          "questionLabel": "30",
+          "sectionTitle": "",
+          "questionText": "30．この 店 では さまざまな 料 理 が食べられます｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 0,
+          "questionLabel": "31",
+          "sectionTitle": "",
+          "questionText": "31． 減少 げんしょう"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 1,
+          "questionLabel": "32",
+          "sectionTitle": "",
+          "questionText": "32．重大"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 2,
+          "questionLabel": "33",
+          "sectionTitle": "",
+          "questionText": "33．ばらばら"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 3,
+          "questionLabel": "34",
+          "sectionTitle": "",
+          "questionText": "34． 皮 かわ"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 4,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35．オーダー"
+        }
+      ]
+    },
+    "N2": {
+      "examCount": 31,
+      "exams": [
+        "202512",
+        "202507",
+        "202412",
+        "202407",
+        "202312",
+        "202307",
+        "202212",
+        "202207",
+        "202112",
+        "202107",
+        "202012",
+        "201912",
+        "201907",
+        "201812",
+        "201807",
+        "201712",
+        "201707",
+        "201612",
+        "201607",
+        "201512",
+        "201507",
+        "201412",
+        "201407",
+        "201312",
+        "201307",
+        "201212",
+        "201207",
+        "201112",
+        "201107",
+        "201012",
+        "201007"
+      ],
+      "totalQuestions": 3233,
+      "mondai": {
+        "(khong ro)": {
+          "mondaiNumber": null,
+          "questionCount": 3233,
+          "parts": {
+            "1": 1635,
+            "2": 641,
+            "3": 957
+          },
+          "questionTypes": {
+            "sentence_order": 1132,
+            "unknown": 359,
+            "reading_cloze": 151,
+            "reading_content": 634,
+            "listening": 957
+          },
+          "sampleSectionTitle": "",
+          "sampleQuestions": [
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "1",
+              "text": "1．この家の 柱 はしっかりしている｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "2",
+              "text": "2．なかなか 討論 が終わらない｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "3",
+              "text": "3．家具の色は白で 統一 した｡"
+            }
+          ]
+        }
+      },
+      "questionTypes": {
+        "sentence_order": 1132,
+        "unknown": 359,
+        "reading_cloze": 151,
+        "reading_content": 634,
+        "listening": 957
+      },
+      "unknownSamples": [
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 0,
+          "questionLabel": "26",
+          "sectionTitle": "",
+          "questionText": "26．休憩"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 1,
+          "questionLabel": "27",
+          "sectionTitle": "",
+          "questionText": "27．進める"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 2,
+          "questionLabel": "28",
+          "sectionTitle": "",
+          "questionText": "28．貢献"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 3,
+          "questionLabel": "29",
+          "sectionTitle": "",
+          "questionText": "29．早急"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 4,
+          "questionLabel": "30",
+          "sectionTitle": "",
+          "questionText": "30．区切り"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 4,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35．P社のおもちゃは、赤ちゃんが口に（ ）米や麦粉を原料として作られているそうだ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 5,
+          "questionLabel": "36",
+          "sectionTitle": "",
+          "questionText": "36．私は音楽大学でバイオリンを専攻しているが、卒業後は演奏家（ ）子どもたちに教えるという形でバイオリンに関わっていきたいと思っている｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 6,
+          "questionLabel": "37",
+          "sectionTitle": "",
+          "questionText": "37．（卓球教室で） A「私は卓球始めたんです。」 B「私も、友達と遊ひで少し（ ）、習うのは初めてです｡」"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 8,
+          "questionLabel": "39",
+          "sectionTitle": "",
+          "questionText": "39．駅前のラーメン屋はいつも込んでいて、けっこう待たされるのに、今日はそんなに（ ）｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 9,
+          "questionLabel": "40",
+          "sectionTitle": "",
+          "questionText": "40．私は彼と結婚したいと思っているが、彼はきっとまた結婚は（ ）｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 11,
+          "questionLabel": "42",
+          "sectionTitle": "",
+          "questionText": "42．ピアノの発表会の前に、間違えそうで怖いと先生に言ったら、「ちょっとぐらい （ ）よ。大事なのは楽しんで弾くことなんだよ。」といってくれた｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 3,
+          "questionLabel": "24",
+          "sectionTitle": "",
+          "questionText": "24．中山さんは 帰省して います｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 0,
+          "questionLabel": "26",
+          "sectionTitle": "",
+          "questionText": "26． 潰 つぶ す"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 1,
+          "questionLabel": "27",
+          "sectionTitle": "",
+          "questionText": "27． 粗末 そまつ"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 2,
+          "questionLabel": "28",
+          "sectionTitle": "",
+          "questionText": "28．熱中"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 3,
+          "questionLabel": "29",
+          "sectionTitle": "",
+          "questionText": "29． 和 なご やかな"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 5,
+          "questionIndex": 4,
+          "questionLabel": "30",
+          "sectionTitle": "",
+          "questionText": "30．愛着"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 4,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35．父は、健康のことを考えてなるべく（ ）、会社から家まで１時間かけて歩いて帰って来ることもある｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 5,
+          "questionLabel": "36",
+          "sectionTitle": "",
+          "questionText": "36．図書館で本を借りたのだが、最後まで（ ）返却期限が来そうだ｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 6,
+          "questionIndex": 6,
+          "questionLabel": "37",
+          "sectionTitle": "",
+          "questionText": "37．最近成績が伸びないのて、このままの勉強方法（ ）先生に相談してみた｡"
+        }
+      ]
+    },
+    "N1": {
+      "examCount": 31,
+      "exams": [
+        "202512",
+        "202507",
+        "202412",
+        "202407",
+        "202312",
+        "202307",
+        "202212",
+        "202207",
+        "202112",
+        "202107",
+        "202012",
+        "201912",
+        "201907",
+        "201812",
+        "201807",
+        "201712",
+        "201707",
+        "201612",
+        "201607",
+        "201512",
+        "201507",
+        "201412",
+        "201407",
+        "201312",
+        "201307",
+        "201212",
+        "201207",
+        "201112",
+        "201107",
+        "201012",
+        "201007"
+      ],
+      "totalQuestions": 3206,
+      "mondai": {
+        "(khong ro)": {
+          "mondaiNumber": null,
+          "questionCount": 3206,
+          "parts": {
+            "1": 1384,
+            "2": 752,
+            "3": 1070
+          },
+          "questionTypes": {
+            "sentence_order": 859,
+            "unknown": 381,
+            "reading_cloze": 146,
+            "reading_content": 750,
+            "listening": 1070
+          },
+          "sampleSectionTitle": "",
+          "sampleQuestions": [
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "1",
+              "text": "1．この棚は 頑丈 に作られている｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "2",
+              "text": "2．思わぬところに深刻な問題が 潜んで いた｡"
+            },
+            {
+              "examId": "202512",
+              "part": 1,
+              "qid": "3",
+              "text": "3．私は 行政 の仕事に携わっている｡"
+            }
+          ]
+        }
+      },
+      "questionTypes": {
+        "sentence_order": 859,
+        "unknown": 381,
+        "reading_cloze": 146,
+        "reading_content": 750,
+        "listening": 1070
+      },
+      "unknownSamples": [
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 0,
+          "questionIndex": 4,
+          "questionLabel": "5",
+          "sectionTitle": "",
+          "questionText": "5．最近は会社の営業成績が 芳しくない ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 5,
+          "questionLabel": "19",
+          "sectionTitle": "",
+          "questionText": "19．衣装はいつも 自前である ｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "20",
+          "sectionTitle": "",
+          "questionText": "20．運用"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21．抜き打ち"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "22",
+          "sectionTitle": "",
+          "questionText": "22．かすれる"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "23",
+          "sectionTitle": "",
+          "questionText": "23．緻密"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 4,
+          "questionLabel": "24",
+          "sectionTitle": "",
+          "questionText": "24．迫力"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 5,
+          "questionLabel": "25",
+          "sectionTitle": "",
+          "questionText": "25．目まぐるしい"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 4,
+          "questionLabel": "30",
+          "sectionTitle": "",
+          "questionText": "30．田中選手は、度重なるけがに（ ）、それを克服してオリンピック出場を果たした｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 7,
+          "questionLabel": "33",
+          "sectionTitle": "",
+          "questionText": "33．けんか中の父と母を仲直りさせられそうだったのに、姉が話を蒸し返したせいで、うまくいかなくなってしまった。まったく、余計なことを（ ）｡"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 8,
+          "questionLabel": "34",
+          "sectionTitle": "",
+          "questionText": "34．（弁護士へのインタビューで） A「弁護士として毎日お忙しいと思いますが、休日はどのようにお過ごしですか。」 B「家にいることが多いですね。弁護士は人と話すのが仕事（ ）ので、休日は一人でゆっくりしたいんです。」"
+        },
+        {
+          "examId": "202512",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 9,
+          "questionLabel": "35",
+          "sectionTitle": "",
+          "questionText": "35．もう一か月近く雨が降っていない。晴れの日が続くのはうれしいが、水不足などの問題を考えると、（ ）｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 2,
+          "questionIndex": 4,
+          "questionLabel": "18",
+          "sectionTitle": "",
+          "questionText": "18．話を聞いた大木さんは、 けげんな 顔をした｡"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 0,
+          "questionLabel": "20",
+          "sectionTitle": "",
+          "questionText": "20．保留"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 1,
+          "questionLabel": "21",
+          "sectionTitle": "",
+          "questionText": "21．緩和"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 2,
+          "questionLabel": "22",
+          "sectionTitle": "",
+          "questionText": "22．程遠い"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 3,
+          "questionLabel": "23",
+          "sectionTitle": "",
+          "questionText": "23．まろやか"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 4,
+          "questionLabel": "24",
+          "sectionTitle": "",
+          "questionText": "24．脱却"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 3,
+          "questionIndex": 5,
+          "questionLabel": "25",
+          "sectionTitle": "",
+          "questionText": "25．使いこなす"
+        },
+        {
+          "examId": "202507",
+          "part": 1,
+          "sectionIndex": 4,
+          "questionIndex": 2,
+          "questionLabel": "28",
+          "sectionTitle": "",
+          "questionText": "28．同僚の山川さんは、相手が（ ）おかしいと思ったことを指摘せずにはいられない性格だ｡"
+        }
+      ]
+    }
+  }
+}
