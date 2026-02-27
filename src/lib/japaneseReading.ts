@@ -15,46 +15,64 @@ type KuromojiModule = {
   };
 };
 
+type ReadingConvertOptions = {
+  surfaceReadings?: Record<string, string>;
+};
+
 let tokenizerPromise: Promise<KuromojiTokenizer> | null = null;
 
-export async function toReadingHiragana(text: string): Promise<string> {
+export async function toReadingHiragana(text: string, options?: ReadingConvertOptions): Promise<string> {
   const normalized = String(text || '');
   if (!normalized.trim()) return '';
   const tokenizer = await getTokenizer();
+  const surfaceReadings = normalizeSurfaceReadings(options?.surfaceReadings);
   const lines = normalized.split('\n');
-  const convertedLines = lines.map((line) => tokenizeLineToHiragana(tokenizer, line));
+  const convertedLines = lines.map((line) => tokenizeLineToHiragana(tokenizer, line, surfaceReadings));
   return convertedLines.join('\n');
 }
 
-export async function toRubyHtml(text: string): Promise<string> {
+export async function toRubyHtml(text: string, options?: ReadingConvertOptions): Promise<string> {
   const normalized = String(text || '');
   if (!normalized.trim()) return '';
   const tokenizer = await getTokenizer();
+  const surfaceReadings = normalizeSurfaceReadings(options?.surfaceReadings);
   const lines = normalized.split('\n');
-  const convertedLines = lines.map((line) => tokenizeLineToRubyHtml(tokenizer, line));
+  const convertedLines = lines.map((line) => tokenizeLineToRubyHtml(tokenizer, line, surfaceReadings));
   return convertedLines.join('<br/>');
 }
 
-function tokenizeLineToHiragana(tokenizer: KuromojiTokenizer, line: string) {
+function tokenizeLineToHiragana(
+  tokenizer: KuromojiTokenizer,
+  line: string,
+  surfaceReadings: Record<string, string>,
+) {
   if (!line) return '';
   const tokens = tokenizer.tokenize(line);
   return tokens
     .map((token) => {
+      const surface = String(token.surface_form || '');
+      const forced = surfaceReadings[surface];
+      if (forced) return katakanaToHiragana(forced);
       const reading = String(token.reading || '');
       if (reading) return katakanaToHiragana(reading);
-      return katakanaToHiragana(String(token.surface_form || ''));
+      return katakanaToHiragana(surface);
     })
     .join('');
 }
 
-function tokenizeLineToRubyHtml(tokenizer: KuromojiTokenizer, line: string) {
+function tokenizeLineToRubyHtml(
+  tokenizer: KuromojiTokenizer,
+  line: string,
+  surfaceReadings: Record<string, string>,
+) {
   if (!line) return '';
   const tokens = tokenizer.tokenize(line);
   return tokens
     .map((token) => {
       const surface = String(token.surface_form || '');
       const escapedSurface = escapeHtml(surface);
-      const reading = katakanaToHiragana(String(token.reading || ''));
+      const forced = surfaceReadings[surface];
+      const reading = katakanaToHiragana(String(forced || token.reading || ''));
       if (!reading || !containsKanji(surface)) return escapedSurface;
       return `<ruby>${escapedSurface}<rt>${escapeHtml(reading)}</rt></ruby>`;
     })
@@ -75,7 +93,7 @@ function katakanaToHiragana(input: string) {
 }
 
 function containsKanji(input: string) {
-  return /[一-龯々〆ヵヶ]/.test(input);
+  return /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(input);
 }
 
 function escapeHtml(input: string) {
@@ -85,6 +103,18 @@ function escapeHtml(input: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function normalizeSurfaceReadings(value: Record<string, string> | undefined): Record<string, string> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [surface, reading] of Object.entries(value)) {
+    const s = String(surface || '').trim();
+    const r = String(reading || '').trim();
+    if (!s || !r) continue;
+    out[s] = r;
+  }
+  return out;
 }
 
 async function getTokenizer(): Promise<KuromojiTokenizer> {

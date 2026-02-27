@@ -241,6 +241,7 @@ export function createExamRouter() {
         questionText: questionCtx.questionText,
         options: questionCtx.options,
         passageText: questionCtx.passageText,
+        questionWordReadings: questionCtx.questionWordReadings,
       });
 
       const questionHash = buildQuestionHash(questionCtx);
@@ -403,6 +404,7 @@ export function createExamRouter() {
           questionText: context.questionText,
           options: context.options,
           passageText: context.passageText,
+          questionWordReadings: context.questionWordReadings,
         });
         contextEntries.push({ context, readingCache });
       }
@@ -411,7 +413,7 @@ export function createExamRouter() {
       const blankLabels = contexts.map((item) => item.questionLabel).filter((value) => value.length > 0);
       const groupHash = createHash('sha256')
         .update(
-          JSON.stringify({
+          stableSerialize({
             level: body.level,
             examId: body.examId,
             part,
@@ -615,6 +617,7 @@ type QuestionContext = {
   options: Record<string, string>;
   correctAnswer: string;
   passageText: string;
+  questionWordReadings: Record<string, string>;
   sentenceOrderExpectedOrder: string[];
 };
 
@@ -939,6 +942,7 @@ async function loadQuestionContext(
     const value = toText(rawOptions[key]);
     if (value) options[key] = sanitizeOptionText(key, value);
   }
+  const questionWordReadings = extractQuestionWordReadings(q);
 
   const rawQuestionText = normalizeSpace(stripHtml(toText(q.question_html ?? q.ques) || ''));
   const correctAnswer = toText(q.correct_answer ?? q.answer) || '';
@@ -1019,6 +1023,7 @@ async function loadQuestionContext(
     options,
     correctAnswer,
     passageText,
+    questionWordReadings,
     sentenceOrderExpectedOrder,
   };
 }
@@ -1044,7 +1049,7 @@ function extractPassageText(partJson: Record<string, unknown>, question: Record<
 }
 
 function buildQuestionHash(question: QuestionContext): string {
-  return createHash('sha256').update(JSON.stringify(question)).digest('hex');
+  return createHash('sha256').update(stableSerialize(question)).digest('hex');
 }
 
 function buildQuestionPromptText(args: {
@@ -1298,8 +1303,8 @@ function hydrateQuestionExplanationWithReadingCache(
         ...item,
         option,
         text_ja: textJa,
-        text_ruby_html: item.text_ruby_html || optionRubyHtmls[option] || '',
-        reading_hira: item.reading_hira || optionReadings[option] || '',
+        text_ruby_html: optionRubyHtmls[option] || item.text_ruby_html || '',
+        reading_hira: optionReadings[option] || item.reading_hira || '',
       };
     })
     .sort((a, b) => Number(a.option || 0) - Number(b.option || 0));
@@ -1314,8 +1319,8 @@ function hydrateQuestionExplanationWithReadingCache(
 
   return {
     ...explanation,
-    question_ruby_html: explanation.question_ruby_html || readingCache.question_ruby_html || '',
-    question_reading_hira: explanation.question_reading_hira || readingCache.question_reading_hira || '',
+    question_ruby_html: readingCache.question_ruby_html || explanation.question_ruby_html || '',
+    question_reading_hira: readingCache.question_reading_hira || explanation.question_reading_hira || '',
     options_with_reading,
     sentence_order_solution,
   };
@@ -1424,6 +1429,30 @@ function sanitizeOptionText(optionKey: string, input: string): string {
     .trim();
 }
 
+function extractQuestionWordReadings(question: Record<string, unknown>): Record<string, string> {
+  const overrides = isObject(question.reading_overrides) ? (question.reading_overrides as Record<string, unknown>) : {};
+  const wordMap = isObject(overrides.question_word_readings)
+    ? (overrides.question_word_readings as Record<string, unknown>)
+    : {};
+  return normalizeSurfaceReadingMap(
+    Object.fromEntries(
+      Object.entries(wordMap).map(([surface, reading]) => [surface, toText(reading) || '']),
+    ),
+  );
+}
+
+function normalizeSurfaceReadingMap(value: Record<string, string> | undefined): Record<string, string> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [surface, reading] of Object.entries(value)) {
+    const s = String(surface || '').trim();
+    const r = String(reading || '').trim();
+    if (!s || !r) continue;
+    out[s] = r;
+  }
+  return out;
+}
+
 function parseSentenceOrderExpectedOrder(expl: string, optionKeys: string[]): string[] {
   const source = String(expl || '').replace(/<br\s*\/?>/gi, '\n');
   if (!source) return [];
@@ -1451,6 +1480,19 @@ function parseSentenceOrderExpectedOrder(expl: string, optionKeys: string[]): st
 
 function toAsciiDigitsLocal(value: string): string {
   return String(value || '').replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null) return 'null';
+  const t = typeof value;
+  if (t === 'number' || t === 'boolean' || t === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  if (t === 'object') {
+    const row = value as Record<string, unknown>;
+    const keys = Object.keys(row).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableSerialize(row[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(String(value));
 }
 
 function toText(value: unknown): string | null {

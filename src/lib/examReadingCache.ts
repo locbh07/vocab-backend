@@ -11,6 +11,7 @@ export type QuestionReadingCache = {
   question_text_ja: string;
   question_ruby_html: string;
   question_reading_hira: string;
+  question_word_readings: Record<string, string>;
   option_readings: Record<string, string>;
   option_ruby_htmls: Record<string, string>;
   passage_text: string;
@@ -31,6 +32,7 @@ type GetOrCreateArgs = CacheKey & {
   questionText: string;
   options: Record<string, string>;
   passageText: string;
+  questionWordReadings?: Record<string, string>;
   force?: boolean;
 };
 
@@ -42,15 +44,17 @@ let ensureTablePromise: Promise<void> | null = null;
 
 export async function getOrCreateQuestionReadingCache(args: GetOrCreateArgs): Promise<QuestionReadingCache> {
   await ensureExamReadingCacheTable();
+  const resolvedQuestionWordReadings = resolveQuestionWordReadings(args.questionText, args.questionWordReadings);
   if (!args.force) {
     const cached = await getQuestionReadingCache(args);
-    if (cached) return cached;
+    if (cached && isCacheReusable(cached, args, resolvedQuestionWordReadings)) return cached;
   }
 
   const built = await buildQuestionReadingCache({
     questionText: args.questionText,
     options: args.options,
     passageText: args.passageText,
+    questionWordReadings: resolvedQuestionWordReadings,
   });
   await saveQuestionReadingCache(args, built);
   return built;
@@ -110,21 +114,25 @@ export async function precomputeExamReadings(args: {
           sectionIndex,
           questionIndex,
         };
+
+        const options = extractOptions(question);
+        const questionText = normalizeSpace(stripHtml(toText(question.question_html ?? question.ques) || ''));
+        const passageText = extractPassageText(json, question);
+        const questionWordReadings = resolveQuestionWordReadings(questionText, extractQuestionWordReadings(question));
+
         if (!args.force) {
           const cached = await getQuestionReadingCache(key);
-          if (cached) {
+          if (cached && isCacheReusable(cached, { ...key, questionText, options, passageText }, questionWordReadings)) {
             skipped += 1;
             continue;
           }
         }
 
-        const options = extractOptions(question);
-        const questionText = normalizeSpace(stripHtml(toText(question.question_html ?? question.ques) || ''));
-        const passageText = extractPassageText(json, question);
         const built = await buildQuestionReadingCache({
           questionText,
           options,
           passageText,
+          questionWordReadings,
         });
         await saveQuestionReadingCache(key, built);
         created += 1;
@@ -214,7 +222,7 @@ export async function precomputeAllReadings(args?: {
   await ensureExamReadingCacheTable();
   const force = Boolean(args?.force);
   const requestedLevels = Array.isArray(args?.levels)
-    ? args!.levels.map((item) => String(item || '').trim()).filter((item) => item.length > 0)
+    ? args.levels.map((item) => String(item || '').trim()).filter((item) => item.length > 0)
     : [];
 
   const levelRows = requestedLevels.length
@@ -267,12 +275,14 @@ async function buildQuestionReadingCache(args: {
   questionText: string;
   options: Record<string, string>;
   passageText: string;
+  questionWordReadings?: Record<string, string>;
 }): Promise<QuestionReadingCache> {
   const questionText = String(args.questionText || '');
   const passageText = String(args.passageText || '');
+  const questionWordReadings = normalizeSurfaceReadingMap(args.questionWordReadings);
 
-  const question_ruby_html = await toRubyHtml(questionText);
-  const question_reading_hira = await toReadingHiragana(questionText);
+  const question_ruby_html = await toRubyHtml(questionText, { surfaceReadings: questionWordReadings });
+  const question_reading_hira = await toReadingHiragana(questionText, { surfaceReadings: questionWordReadings });
 
   const optionEntries = Object.entries(args.options || {});
   const option_readings = Object.fromEntries(
@@ -302,6 +312,7 @@ async function buildQuestionReadingCache(args: {
     question_text_ja: questionText,
     question_ruby_html,
     question_reading_hira,
+    question_word_readings: questionWordReadings,
     option_readings,
     option_ruby_htmls,
     passage_text: passageText,
@@ -364,6 +375,9 @@ function normalizeReadingCache(value: unknown): QuestionReadingCache {
   const row = isObject(value) ? value : {};
   const option_readings = asStringMap((row as Record<string, unknown>).option_readings);
   const option_ruby_htmls = asStringMap((row as Record<string, unknown>).option_ruby_htmls);
+  const question_word_readings = normalizeSurfaceReadingMap(
+    asStringMap((row as Record<string, unknown>).question_word_readings),
+  );
   const sentenceRows = Array.isArray((row as Record<string, unknown>).sentence_readings)
     ? ((row as Record<string, unknown>).sentence_readings as unknown[])
     : [];
@@ -382,6 +396,7 @@ function normalizeReadingCache(value: unknown): QuestionReadingCache {
     question_text_ja: toText((row as Record<string, unknown>).question_text_ja) || '',
     question_ruby_html: toText((row as Record<string, unknown>).question_ruby_html) || '',
     question_reading_hira: toText((row as Record<string, unknown>).question_reading_hira) || '',
+    question_word_readings,
     option_readings,
     option_ruby_htmls,
     passage_text: toText((row as Record<string, unknown>).passage_text) || '',
@@ -389,6 +404,25 @@ function normalizeReadingCache(value: unknown): QuestionReadingCache {
     passage_reading_hira: toText((row as Record<string, unknown>).passage_reading_hira) || '',
     sentence_readings,
   };
+}
+
+function isCacheReusable(
+  cached: QuestionReadingCache,
+  args: Pick<GetOrCreateArgs, 'questionText' | 'options' | 'passageText'>,
+  resolvedQuestionWordReadings: Record<string, string>,
+): boolean {
+  if (cached.question_text_ja !== String(args.questionText || '')) return false;
+  if (cached.passage_text !== String(args.passageText || '')) return false;
+  const cachedOverrides = normalizeSurfaceReadingMap(cached.question_word_readings);
+  const nextOverrides = normalizeSurfaceReadingMap(resolvedQuestionWordReadings);
+  if (!areStringMapsEqual(cachedOverrides, nextOverrides)) return false;
+  const optionKeys = Object.keys(args.options || {}).sort();
+  const cachedOptionKeys = Object.keys(cached.option_readings || {}).sort();
+  if (optionKeys.length !== cachedOptionKeys.length) return false;
+  for (let i = 0; i < optionKeys.length; i += 1) {
+    if (optionKeys[i] !== cachedOptionKeys[i]) return false;
+  }
+  return true;
 }
 
 function extractOptions(question: Record<string, unknown>): Record<string, string> {
@@ -399,6 +433,33 @@ function extractOptions(question: Record<string, unknown>): Record<string, strin
     if (value) options[key] = sanitizeOptionText(key, value);
   }
   return options;
+}
+
+function extractQuestionWordReadings(question: Record<string, unknown>): Record<string, string> {
+  const overrides = isObject(question.reading_overrides) ? (question.reading_overrides as Record<string, unknown>) : {};
+  const wordMap = isObject(overrides.question_word_readings)
+    ? (overrides.question_word_readings as Record<string, unknown>)
+    : {};
+  return normalizeSurfaceReadingMap(asStringMap(wordMap));
+}
+
+function resolveQuestionWordReadings(questionText: string, manualOverrides?: Record<string, string>): Record<string, string> {
+  const autoOverrides = inferAutoQuestionWordReadings(questionText);
+  const manual = normalizeSurfaceReadingMap(manualOverrides);
+  return { ...autoOverrides, ...manual };
+}
+
+function inferAutoQuestionWordReadings(questionText: string): Record<string, string> {
+  const text = String(questionText || '');
+  const compact = text.replace(/\s+/g, '');
+  const out: Record<string, string> = {};
+  if (
+    /辛い(?=もの|物|食べ物|食べもの|料理|食事|カレー|ラーメン|鍋|スープ|味|香辛料)/u.test(compact) ||
+    /(食べ物|食べもの|料理|食事).{0,8}辛い/u.test(compact)
+  ) {
+    out['辛い'] = 'からい';
+  }
+  return out;
 }
 
 function extractPassageText(partJson: Record<string, unknown>, question: Record<string, unknown>): string {
@@ -431,7 +492,7 @@ function splitJapaneseSentences(text: string): string[] {
   const out: string[] = [];
   for (const chunk of chunks) {
     const parts = chunk
-      .split(/(?<=[。｡！？!?])/)
+      .split(/(?<=[。｡．！？!?])/u)
       .map((item) => item.trim())
       .filter((item) => item.length > 0)
       .filter((item) => !isPassageSectionMarker(item));
@@ -499,6 +560,30 @@ function asStringMap(value: unknown): Record<string, string> {
     out[key] = toText(row) || '';
   }
   return out;
+}
+
+function normalizeSurfaceReadingMap(value: Record<string, string> | undefined): Record<string, string> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [surface, reading] of Object.entries(value)) {
+    const s = String(surface || '').trim();
+    const r = String(reading || '').trim();
+    if (!s || !r) continue;
+    out[s] = r;
+  }
+  return out;
+}
+
+function areStringMapsEqual(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let i = 0; i < leftKeys.length; i += 1) {
+    const key = leftKeys[i];
+    if (key !== rightKeys[i]) return false;
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
 }
 
 function toText(value: unknown): string | null {
