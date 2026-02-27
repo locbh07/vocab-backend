@@ -391,7 +391,11 @@ export function createLearningRouter() {
       daily,
     );
 
-    return res.json(await getActiveKanjiPlan(userId));
+    const activePlan = await getActiveKanjiPlan(userId);
+    if (activePlan?.id) {
+      await rebuildKanjiPlanItemsForPlan(userId, activePlan);
+    }
+    return res.json(activePlan);
   });
 
   router.get('/kanji/activePlan', async (req: Request, res: Response) => {
@@ -414,17 +418,8 @@ export function createLearningRouter() {
     await ensureKanjiLearningTables();
     const plan = await getActiveKanjiPlan(userId);
     if (!plan?.dailyNewKanji || plan.dailyNewKanji <= 0) return res.json([]);
-
-    const used = await countTodayLearnedKanji(userId);
-    const remaining = plan.dailyNewKanji - used;
-    if (remaining <= 0) return res.json([]);
-
-    const jlptLevel = normalizeJlptLevel(plan.jlptLevel || 'ALL');
-    const rows = await pickNewKanjiRowsForUser({
-      userId,
-      jlptLevel,
-      limit: remaining,
-    });
+    await ensureKanjiPlanItemsForPlan(userId, plan);
+    const rows = await listScheduledNewKanjiRows(userId, plan);
     return res.json(rows.map(mapKanjiLearningItem));
   });
 
@@ -453,17 +448,9 @@ export function createLearningRouter() {
       });
     }
 
-    const used = await countTodayLearnedKanji(userId);
-    const remaining = Math.max(0, plan.dailyNewKanji - used);
-    const jlptLevel = normalizeJlptLevel(plan.jlptLevel || 'ALL');
+    await ensureKanjiPlanItemsForPlan(userId, plan);
     const [newRows, reviewRows] = await Promise.all([
-      remaining > 0
-        ? pickNewKanjiRowsForUser({
-            userId,
-            jlptLevel,
-            limit: remaining,
-          })
-        : Promise.resolve([] as KanjiLearningItemRow[]),
+      listScheduledNewKanjiRows(userId, plan),
       reviewPromise,
     ]);
 
@@ -567,6 +554,27 @@ export function createLearningRouter() {
         correct ? 1 : 0,
         mode,
       );
+
+      if (mode === 'new' && plan?.id) {
+        await tx.$executeRawUnsafe(
+          `
+            UPDATE user_kanji_plan_item
+            SET
+              status = 'done',
+              first_result = COALESCE(first_result, $1),
+              reviewed_at = COALESCE(reviewed_at, $2),
+              updated_at = NOW()
+            WHERE user_id = $3
+              AND plan_id = $4
+              AND kanji_char = $5
+          `,
+          correct ? 1 : 0,
+          now,
+          BigInt(userId),
+          BigInt(plan.id),
+          kanji,
+        );
+      }
     });
 
     return res.json('OK');
@@ -668,6 +676,20 @@ type KanjiLearningPlanRow = {
   updated_at: Date;
 };
 
+type KanjiLearningPlan = {
+  id: number;
+  userId: number;
+  totalKanji: number;
+  targetMonths: number;
+  jlptLevel: JlptLevel;
+  startDate: Date | null;
+  targetDate: Date | null;
+  dailyNewKanji: number;
+  isActive: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type KanjiLearningItemRow = {
   kanji_char: string;
   stage?: number | null;
@@ -755,6 +777,46 @@ async function ensureKanjiLearningTables() {
         CREATE INDEX IF NOT EXISTS idx_user_kanji_review_log_user_mode_time
         ON user_kanji_review_log(user_id, mode, review_time DESC);
       `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS user_kanji_plan_item (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          plan_id BIGINT NOT NULL,
+          day_index INT NOT NULL,
+          order_in_day INT NOT NULL,
+          kanji_char VARCHAR(8) NOT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          first_result INT,
+          reviewed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT uq_user_kanji_plan_item_plan_char UNIQUE (plan_id, kanji_char)
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_plan_item
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'pending';
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_plan_item
+        ADD COLUMN IF NOT EXISTS first_result INT;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_plan_item
+        ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_plan_item_user_plan_day
+        ON user_kanji_plan_item(user_id, plan_id, day_index, order_in_day);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_plan_item_user_status_day
+        ON user_kanji_plan_item(user_id, status, day_index, order_in_day);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_plan_item_user_char
+        ON user_kanji_plan_item(user_id, kanji_char);
+      `);
     })().catch((error) => {
       ensureKanjiLearningTablesPromise = null;
       throw error;
@@ -763,7 +825,7 @@ async function ensureKanjiLearningTables() {
   return ensureKanjiLearningTablesPromise;
 }
 
-async function getActiveKanjiPlan(userId: number) {
+async function getActiveKanjiPlan(userId: number): Promise<KanjiLearningPlan | null> {
   await ensureKanjiLearningTables();
   const rows = await prisma.$queryRawUnsafe<Array<KanjiLearningPlanRow>>(
     `
@@ -792,6 +854,149 @@ async function getActiveKanjiPlan(userId: number) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function getKanjiPlanDayIndex(startDate: Date | null | undefined): number {
+  if (!startDate) return 0;
+  const start = dateOnly(new Date(startDate));
+  const today = dateOnly(new Date());
+  const diffMs = today.getTime() - start.getTime();
+  const day = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  return Math.max(0, day);
+}
+
+async function ensureKanjiPlanItemsForPlan(userId: number, plan: KanjiLearningPlan): Promise<void> {
+  if (!plan?.id || !plan.dailyNewKanji || plan.dailyNewKanji <= 0) return;
+  const [row] = await prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
+    `
+      SELECT COUNT(*)::bigint AS total
+      FROM user_kanji_plan_item
+      WHERE user_id = $1
+        AND plan_id = $2
+    `,
+    BigInt(userId),
+    BigInt(plan.id),
+  );
+  const total = Number(row?.total || 0n);
+  if (total > 0) return;
+  await rebuildKanjiPlanItemsForPlan(userId, plan);
+}
+
+async function rebuildKanjiPlanItemsForPlan(userId: number, plan: KanjiLearningPlan): Promise<void> {
+  if (!plan?.id || !plan.dailyNewKanji || plan.dailyNewKanji <= 0) return;
+  const daily = Math.max(1, Math.floor(plan.dailyNewKanji));
+  const level = normalizeJlptLevel(plan.jlptLevel || 'ALL');
+  const allowedChars = await getAllowedKanjiChars(level);
+  if (!allowedChars.length) return;
+
+  const rows = await pickNewKanjiRowsForUser({
+    userId,
+    jlptLevel: level,
+    limit: allowedChars.length,
+  });
+
+  await prisma.$executeRawUnsafe(
+    `
+      DELETE FROM user_kanji_plan_item
+      WHERE user_id = $1
+        AND plan_id = $2
+    `,
+    BigInt(userId),
+    BigInt(plan.id),
+  );
+
+  if (!rows.length) return;
+
+  const dayIndexes: number[] = [];
+  const orderInDays: number[] = [];
+  const chars: string[] = [];
+
+  rows.forEach((row, index) => {
+    dayIndexes.push(Math.floor(index / daily));
+    orderInDays.push((index % daily) + 1);
+    chars.push(String(row.kanji_char || '').trim());
+  });
+
+  await prisma.$executeRawUnsafe(
+    `
+      INSERT INTO user_kanji_plan_item (
+        user_id, plan_id, day_index, order_in_day, kanji_char, status, created_at, updated_at
+      )
+      SELECT
+        $1,
+        $2,
+        x.day_index,
+        x.order_in_day,
+        x.kanji_char,
+        'pending',
+        NOW(),
+        NOW()
+      FROM UNNEST($3::int[], $4::int[], $5::text[]) AS x(day_index, order_in_day, kanji_char)
+      ON CONFLICT (plan_id, kanji_char)
+      DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        day_index = EXCLUDED.day_index,
+        order_in_day = EXCLUDED.order_in_day,
+        updated_at = NOW()
+    `,
+    BigInt(userId),
+    BigInt(plan.id),
+    dayIndexes,
+    orderInDays,
+    chars,
+  );
+}
+
+async function listScheduledNewKanjiRows(userId: number, plan: KanjiLearningPlan): Promise<KanjiLearningItemRow[]> {
+  if (!plan?.id || !plan.dailyNewKanji || plan.dailyNewKanji <= 0) return [];
+  const dayIndex = getKanjiPlanDayIndex(plan.startDate);
+  const limit = Math.max(1, Math.floor(plan.dailyNewKanji));
+
+  return prisma.$queryRawUnsafe<Array<KanjiLearningItemRow>>(
+    `
+      WITH scheduled AS (
+        SELECT
+          pi.kanji_char,
+          pi.day_index,
+          pi.order_in_day
+        FROM user_kanji_plan_item pi
+        WHERE pi.user_id = $1
+          AND pi.plan_id = $2
+          AND pi.day_index <= $3
+          AND pi.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM user_kanji_progress p
+            WHERE p.user_id = pi.user_id
+              AND p.kanji_char = pi.kanji_char
+          )
+        ORDER BY pi.day_index ASC, pi.order_in_day ASC, pi.kanji_char ASC
+        LIMIT $4
+      )
+      SELECT
+        s.kanji_char,
+        ex.word_ja AS example_word_ja,
+        ex.reading_kana AS example_reading_kana,
+        ex.meaning_vi AS example_meaning_vi,
+        ex.meaning_en AS example_meaning_en
+      FROM scheduled s
+      LEFT JOIN LATERAL (
+        SELECT word_ja, reading_kana, meaning_vi, meaning_en
+        FROM kanji_compound k2
+        WHERE k2.kanji_char = s.kanji_char
+        ORDER BY
+          CASE WHEN COALESCE(k2.meaning_vi, '') <> '' THEN 0 ELSE 1 END,
+          k2.priority ASC,
+          k2.word_ja ASC
+        LIMIT 1
+      ) ex ON TRUE
+      ORDER BY s.day_index ASC, s.order_in_day ASC, s.kanji_char ASC
+    `,
+    BigInt(userId),
+    BigInt(plan.id),
+    dayIndex,
+    limit,
+  );
 }
 
 function mapKanjiLearningItem(row: KanjiLearningItemRow) {
