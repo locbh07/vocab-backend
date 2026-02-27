@@ -28,6 +28,9 @@ type CompoundCacheRow = {
   compounds_json: unknown;
 };
 
+const FAST_QUERY_SEED_MIN = 240;
+const FAST_QUERY_SEED_MAX = 4000;
+
 let ensureTablePromise: Promise<void> | null = null;
 
 export async function ensureKanjiCompoundTable() {
@@ -56,6 +59,10 @@ export async function ensureKanjiCompoundTable() {
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS idx_kanji_compound_char_priority
         ON kanji_compound(kanji_char, priority, word_ja);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_kanji_compound_char_source_priority_word
+        ON kanji_compound(kanji_char, source, priority, word_ja);
       `);
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS kanji_compound_lookup_cache (
@@ -167,7 +174,63 @@ export async function listKanjiCompounds(args: {
     return asCompoundRows(cachedRows[0].compounds_json);
   }
 
-  const rows = await prisma.$queryRawUnsafe<Array<CompoundRow>>(
+  const seedLimit = Math.min(
+    FAST_QUERY_SEED_MAX,
+    Math.max(FAST_QUERY_SEED_MIN, limit * 40),
+  );
+  let rows = await prisma.$queryRawUnsafe<Array<CompoundRow>>(
+    `
+      WITH seed AS (
+        SELECT
+          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+        FROM kanji_compound
+        WHERE kanji_char = $1
+        ORDER BY
+          CASE
+            WHEN COALESCE(meaning_vi, '') <> '' THEN 0
+            WHEN COALESCE(meaning_en, '') <> '' THEN 1
+            ELSE 2
+          END,
+          CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
+          priority ASC,
+          word_ja ASC
+        LIMIT $3
+      ),
+      ranked AS (
+        SELECT
+          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
+          ROW_NUMBER() OVER (
+            PARTITION BY word_ja, reading_kana
+            ORDER BY
+              CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
+              CASE WHEN COALESCE(meaning_vi, '') <> '' THEN 0 ELSE 1 END,
+              priority ASC,
+              word_ja ASC
+          ) AS rn
+        FROM seed
+      )
+      SELECT
+        kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY
+        CASE
+          WHEN COALESCE(meaning_vi, '') <> '' THEN 0
+          WHEN COALESCE(meaning_en, '') <> '' THEN 1
+          ELSE 2
+        END,
+        priority ASC,
+        word_ja ASC
+      LIMIT $2
+    `,
+    kanji,
+    limit,
+    seedLimit,
+  );
+
+  // If seed window was not enough due to heavy duplicates, run full query for correctness.
+  if (rows.length < limit) {
+    rows = await prisma.$queryRawUnsafe<Array<CompoundRow>>(
     `
       WITH ranked AS (
         SELECT
@@ -200,6 +263,7 @@ export async function listKanjiCompounds(args: {
     kanji,
     limit,
   );
+  }
   await saveCompoundLookupCache(kanji, limit, rows);
   return rows;
 }

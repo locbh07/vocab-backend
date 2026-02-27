@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../lib/prisma';
 import { dateOnly } from '../lib/http';
+
+const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
+type JlptLevel = (typeof JLPT_LEVELS)[number];
 
 export function createLearningRouter() {
   const router = Router();
@@ -340,6 +345,233 @@ export function createLearningRouter() {
     return res.json('OK');
   });
 
+  router.post('/kanji/plan', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId ?? req.body?.userId);
+    const targetMonths = Number(req.query.targetMonths ?? req.body?.targetMonths ?? 6);
+    const jlptLevel = normalizeJlptLevel(req.query.jlptLevel ?? req.body?.jlptLevel ?? 'ALL');
+    if (!Number.isFinite(userId) || !Number.isFinite(targetMonths) || targetMonths <= 0) {
+      return res.status(400).json({ message: 'Invalid userId or targetMonths' });
+    }
+    await ensureKanjiLearningTables();
+
+    const totalKanji = await countKanjiByJlptLevel(jlptLevel);
+    if (totalKanji <= 0) {
+      return res.status(400).json({ message: 'No kanji found for this level. Build kanji dataset first.' });
+    }
+
+    const userBigId = BigInt(userId);
+    const start = dateOnly(new Date());
+    const target = dateOnly(new Date(start));
+    target.setMonth(target.getMonth() + targetMonths);
+    const daily = Math.max(1, Math.ceil(totalKanji / (targetMonths * 30)));
+
+    await prisma.$executeRawUnsafe(
+      `
+        UPDATE user_kanji_learning_plan
+        SET is_active = 0, updated_at = NOW()
+        WHERE user_id = $1
+          AND is_active = 1
+      `,
+      userBigId,
+    );
+
+    await prisma.$queryRawUnsafe(
+      `
+        INSERT INTO user_kanji_learning_plan (
+          user_id, total_kanji, target_months, jlpt_level, start_date, target_date, daily_new_kanji, is_active, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW(), NOW())
+      `,
+      userBigId,
+      totalKanji,
+      Math.floor(targetMonths),
+      jlptLevel,
+      start,
+      target,
+      daily,
+    );
+
+    return res.json(await getActiveKanjiPlan(userId));
+  });
+
+  router.get('/kanji/activePlan', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+    return res.json(await getActiveKanjiPlan(userId));
+  });
+
+  router.get('/kanji/count', async (req: Request, res: Response) => {
+    const jlptLevel = normalizeJlptLevel(req.query.jlptLevel ?? 'ALL');
+    await ensureKanjiLearningTables();
+    const total = await countKanjiByJlptLevel(jlptLevel);
+    return res.json({ jlptLevel, total });
+  });
+
+  router.get('/kanji/new', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+    const plan = await getActiveKanjiPlan(userId);
+    if (!plan?.dailyNewKanji || plan.dailyNewKanji <= 0) return res.json([]);
+
+    const used = await countTodayLearnedKanji(userId);
+    const remaining = plan.dailyNewKanji - used;
+    if (remaining <= 0) return res.json([]);
+
+    const jlptLevel = normalizeJlptLevel(plan.jlptLevel || 'ALL');
+    const rows = await pickNewKanjiRowsForUser({
+      userId,
+      jlptLevel,
+      limit: remaining,
+    });
+    return res.json(rows.map(mapKanjiLearningItem));
+  });
+
+  router.get('/kanji/reviews', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+
+    const rows = await listDueKanjiRows(userId);
+    return res.json(rows.map(mapKanjiLearningItem));
+  });
+
+  router.get('/kanji/today', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+
+    const plan = await getActiveKanjiPlan(userId);
+    const reviewPromise = listDueKanjiRows(userId);
+    if (!plan?.dailyNewKanji || plan.dailyNewKanji <= 0) {
+      const reviewRows = await reviewPromise;
+      return res.json({
+        plan: plan || null,
+        newKanji: [],
+        reviewKanji: reviewRows.map(mapKanjiLearningItem),
+      });
+    }
+
+    const used = await countTodayLearnedKanji(userId);
+    const remaining = Math.max(0, plan.dailyNewKanji - used);
+    const jlptLevel = normalizeJlptLevel(plan.jlptLevel || 'ALL');
+    const [newRows, reviewRows] = await Promise.all([
+      remaining > 0
+        ? pickNewKanjiRowsForUser({
+            userId,
+            jlptLevel,
+            limit: remaining,
+          })
+        : Promise.resolve([] as KanjiLearningItemRow[]),
+      reviewPromise,
+    ]);
+
+    return res.json({
+      plan,
+      newKanji: newRows.map(mapKanjiLearningItem),
+      reviewKanji: reviewRows.map(mapKanjiLearningItem),
+    });
+  });
+
+  router.post('/kanji/review-result', async (req: Request, res: Response) => {
+    const userId = Number(req.body?.userId);
+    const kanji = String(req.body?.kanji || '').trim();
+    const correct = Boolean(req.body?.correct);
+    const mode = String(req.body?.mode || 'review').trim() || 'review';
+    if (!Number.isFinite(userId) || !kanji) {
+      return res.status(400).json({ message: 'Invalid userId or kanji' });
+    }
+    await ensureKanjiLearningTables();
+    const plan = await getActiveKanjiPlan(userId);
+
+    const intervals = [0, 1, 3, 7, 14, 30];
+    const now = new Date();
+    const firstSeen = dateOnly(now);
+
+    await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRawUnsafe<
+        Array<{ id: bigint; stage: number | null; times_reviewed: number | null; is_mastered: number | null; plan_id: bigint | null; first_seen_date: Date | null }>
+      >(
+        `
+          SELECT id, stage, times_reviewed, is_mastered, plan_id, first_seen_date
+          FROM user_kanji_progress
+          WHERE user_id = $1
+            AND kanji_char = $2
+          LIMIT 1
+        `,
+        BigInt(userId),
+        kanji,
+      );
+      const current = rows[0] || null;
+      let stage = Number(current?.stage ?? 0);
+      stage = correct ? Math.min(stage + 1, 5) : Math.max(stage - 1, 0);
+
+      const nextReview = new Date(now);
+      nextReview.setDate(nextReview.getDate() + intervals[stage]);
+
+      if (!current) {
+        await tx.$executeRawUnsafe(
+          `
+            INSERT INTO user_kanji_progress (
+              user_id, kanji_char, plan_id, stage, next_review_date, last_reviewed_at,
+              times_reviewed, last_result, is_mastered, first_seen_date, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, NOW(), NOW())
+          `,
+          BigInt(userId),
+          kanji,
+          plan?.id ? BigInt(plan.id) : null,
+          stage,
+          nextReview,
+          now,
+          correct ? 1 : 0,
+          stage >= 5 ? 1 : 0,
+          firstSeen,
+        );
+      } else {
+        await tx.$executeRawUnsafe(
+          `
+            UPDATE user_kanji_progress
+            SET
+              plan_id = COALESCE(plan_id, $1),
+              stage = $2,
+              next_review_date = $3,
+              last_reviewed_at = $4,
+              times_reviewed = COALESCE(times_reviewed, 0) + 1,
+              last_result = $5,
+              is_mastered = CASE WHEN $6 = 1 THEN 1 ELSE COALESCE(is_mastered, 0) END,
+              first_seen_date = COALESCE(first_seen_date, $7),
+              updated_at = NOW()
+            WHERE id = $8
+          `,
+          plan?.id ? BigInt(plan.id) : null,
+          stage,
+          nextReview,
+          now,
+          correct ? 1 : 0,
+          stage >= 5 ? 1 : 0,
+          firstSeen,
+          current.id,
+        );
+      }
+
+      await tx.$executeRawUnsafe(
+        `
+          INSERT INTO user_kanji_review_log (user_id, kanji_char, review_time, result, mode)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        BigInt(userId),
+        kanji,
+        now,
+        correct ? 1 : 0,
+        mode,
+      );
+    });
+
+    return res.json('OK');
+  });
+
   router.get('/dashboard', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     const topicPrefix = String(req.query.topicPrefix || '').trim();
@@ -420,4 +652,393 @@ async function getActivePlan(userId: number) {
     where: { user_id: BigInt(userId), is_active: 1 },
     orderBy: { id: 'desc' },
   });
+}
+
+type KanjiLearningPlanRow = {
+  id: bigint;
+  user_id: bigint;
+  total_kanji: number | null;
+  target_months: number | null;
+  jlpt_level: string | null;
+  start_date: Date | null;
+  target_date: Date | null;
+  daily_new_kanji: number | null;
+  is_active: number | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type KanjiLearningItemRow = {
+  kanji_char: string;
+  stage?: number | null;
+  next_review_date?: Date | null;
+  min_priority?: number | null;
+  example_word_ja?: string | null;
+  example_reading_kana?: string | null;
+  example_meaning_vi?: string | null;
+  example_meaning_en?: string | null;
+};
+
+let ensureKanjiLearningTablesPromise: Promise<void> | null = null;
+
+async function ensureKanjiLearningTables() {
+  if (!ensureKanjiLearningTablesPromise) {
+    ensureKanjiLearningTablesPromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS user_kanji_learning_plan (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          total_kanji INT,
+          target_months INT,
+          jlpt_level VARCHAR(5) NOT NULL DEFAULT 'ALL',
+          start_date TIMESTAMPTZ,
+          target_date TIMESTAMPTZ,
+          daily_new_kanji INT,
+          is_active INT NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_learning_plan
+        ADD COLUMN IF NOT EXISTS jlpt_level VARCHAR(5) NOT NULL DEFAULT 'ALL';
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_learning_plan_user_active
+        ON user_kanji_learning_plan(user_id, is_active, id DESC);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS user_kanji_progress (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          kanji_char VARCHAR(8) NOT NULL,
+          plan_id BIGINT,
+          stage INT NOT NULL DEFAULT 0,
+          next_review_date TIMESTAMPTZ,
+          last_reviewed_at TIMESTAMPTZ,
+          times_reviewed INT NOT NULL DEFAULT 0,
+          last_result INT,
+          is_mastered INT NOT NULL DEFAULT 0,
+          first_seen_date TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT uq_user_kanji_progress_user_char UNIQUE (user_id, kanji_char)
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_progress_due
+        ON user_kanji_progress(user_id, is_mastered, next_review_date, kanji_char);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_progress_first_seen
+        ON user_kanji_progress(user_id, first_seen_date);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS user_kanji_review_log (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          kanji_char VARCHAR(8) NOT NULL,
+          review_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          result INT NOT NULL,
+          mode VARCHAR(20) NOT NULL
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_review_log_user_time
+        ON user_kanji_review_log(user_id, review_time DESC);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_review_log_user_char
+        ON user_kanji_review_log(user_id, kanji_char);
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_user_kanji_review_log_user_mode_time
+        ON user_kanji_review_log(user_id, mode, review_time DESC);
+      `);
+    })().catch((error) => {
+      ensureKanjiLearningTablesPromise = null;
+      throw error;
+    });
+  }
+  return ensureKanjiLearningTablesPromise;
+}
+
+async function getActiveKanjiPlan(userId: number) {
+  await ensureKanjiLearningTables();
+  const rows = await prisma.$queryRawUnsafe<Array<KanjiLearningPlanRow>>(
+    `
+      SELECT
+        id, user_id, total_kanji, target_months, jlpt_level, start_date, target_date, daily_new_kanji, is_active, created_at, updated_at
+      FROM user_kanji_learning_plan
+      WHERE user_id = $1
+        AND is_active = 1
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    BigInt(userId),
+  );
+  if (!rows.length) return null;
+  const row = rows[0];
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    totalKanji: Number(row.total_kanji || 0),
+    targetMonths: Number(row.target_months || 0),
+    jlptLevel: normalizeJlptLevel(row.jlpt_level || 'ALL'),
+    startDate: row.start_date,
+    targetDate: row.target_date,
+    dailyNewKanji: Number(row.daily_new_kanji || 0),
+    isActive: Number(row.is_active || 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapKanjiLearningItem(row: KanjiLearningItemRow) {
+  return {
+    kanji: String(row.kanji_char || '').trim(),
+    stage: Number.isFinite(Number(row.stage)) ? Number(row.stage) : 0,
+    nextReviewDate: row.next_review_date || null,
+    priority: Number.isFinite(Number(row.min_priority)) ? Number(row.min_priority) : null,
+    exampleWordJa: String(row.example_word_ja || '').trim(),
+    exampleReadingKana: String(row.example_reading_kana || '').trim(),
+    exampleMeaningVi: String(row.example_meaning_vi || '').trim(),
+    exampleMeaningEn: String(row.example_meaning_en || '').trim(),
+  };
+}
+
+type KanjiReviewCountRow = {
+  total: bigint;
+};
+
+type PickNewKanjiRowsArgs = {
+  userId: number;
+  jlptLevel: JlptLevel;
+  limit: number;
+};
+
+async function countTodayLearnedKanji(userId: number): Promise<number> {
+  const [usedRow] = await prisma.$queryRawUnsafe<Array<KanjiReviewCountRow>>(
+    `
+      SELECT COUNT(DISTINCT kanji_char) AS total
+      FROM user_kanji_review_log
+      WHERE user_id = $1
+        AND mode = 'new'
+        AND review_time >= CURRENT_DATE
+        AND review_time < (CURRENT_DATE + INTERVAL '1 day')
+    `,
+    BigInt(userId),
+  );
+  return Number(usedRow?.total || 0n);
+}
+
+async function listDueKanjiRows(userId: number): Promise<KanjiLearningItemRow[]> {
+  return prisma.$queryRawUnsafe<Array<KanjiLearningItemRow>>(
+    `
+      WITH due AS (
+        SELECT kanji_char, stage, next_review_date
+        FROM user_kanji_progress
+        WHERE user_id = $1
+          AND is_mastered = 0
+          AND next_review_date <= CURRENT_DATE
+        ORDER BY next_review_date ASC, kanji_char ASC
+        LIMIT 200
+      )
+      SELECT
+        d.kanji_char,
+        d.stage AS stage,
+        d.next_review_date AS next_review_date,
+        ex.word_ja AS example_word_ja,
+        ex.reading_kana AS example_reading_kana,
+        ex.meaning_vi AS example_meaning_vi,
+        ex.meaning_en AS example_meaning_en
+      FROM due d
+      LEFT JOIN LATERAL (
+        SELECT word_ja, reading_kana, meaning_vi, meaning_en
+        FROM kanji_compound k2
+        WHERE k2.kanji_char = d.kanji_char
+        ORDER BY
+          CASE WHEN COALESCE(k2.meaning_vi, '') <> '' THEN 0 ELSE 1 END,
+          k2.priority ASC,
+          k2.word_ja ASC
+        LIMIT 1
+      ) ex ON TRUE
+      ORDER BY d.next_review_date ASC, d.kanji_char ASC
+    `,
+    BigInt(userId),
+  );
+}
+
+async function pickNewKanjiRowsForUser(args: PickNewKanjiRowsArgs): Promise<KanjiLearningItemRow[]> {
+  const limit = Math.max(0, Math.floor(args.limit));
+  if (limit <= 0) return [];
+  const allowedChars = await getAllowedKanjiChars(args.jlptLevel);
+  if (allowedChars.length === 0) return [];
+
+  return prisma.$queryRawUnsafe<Array<KanjiLearningItemRow>>(
+    `
+      WITH allowed AS (
+        SELECT UNNEST($2::text[]) AS kanji_char
+      ),
+      unseen AS (
+        SELECT a.kanji_char
+        FROM allowed a
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM user_kanji_progress p
+          WHERE p.user_id = $1
+            AND p.kanji_char = a.kanji_char
+        )
+      ),
+      ranked AS (
+        SELECT DISTINCT ON (kc.kanji_char)
+          kc.kanji_char,
+          kc.priority AS min_priority
+        FROM kanji_compound kc
+        INNER JOIN unseen u ON u.kanji_char = kc.kanji_char
+        ORDER BY kc.kanji_char ASC, kc.priority ASC
+      ),
+      limited AS (
+        SELECT
+          r.kanji_char,
+          r.min_priority
+        FROM ranked r
+        ORDER BY r.min_priority ASC, r.kanji_char ASC
+        LIMIT $3
+      )
+      SELECT
+        l.kanji_char,
+        l.min_priority,
+        ex.word_ja AS example_word_ja,
+        ex.reading_kana AS example_reading_kana,
+        ex.meaning_vi AS example_meaning_vi,
+        ex.meaning_en AS example_meaning_en
+      FROM limited l
+      LEFT JOIN LATERAL (
+        SELECT word_ja, reading_kana, meaning_vi, meaning_en
+        FROM kanji_compound k2
+        WHERE k2.kanji_char = l.kanji_char
+        ORDER BY
+          CASE WHEN COALESCE(k2.meaning_vi, '') <> '' THEN 0 ELSE 1 END,
+          k2.priority ASC,
+          k2.word_ja ASC
+        LIMIT 1
+      ) ex ON TRUE
+      ORDER BY l.min_priority ASC, l.kanji_char ASC
+    `,
+    BigInt(args.userId),
+    allowedChars,
+    limit,
+  );
+}
+
+type KanjiCatalog = {
+  all: string[];
+  byLevel: Record<JlptLevel, string[]>;
+};
+
+let kanjiCatalogPromise: Promise<KanjiCatalog> | null = null;
+
+function normalizeJlptLevel(raw: unknown): JlptLevel {
+  const value = String(raw || '').trim().toUpperCase();
+  if (value === 'N1' || value === 'N2' || value === 'N3' || value === 'N4' || value === 'N5') {
+    return value;
+  }
+  return 'ALL';
+}
+
+async function getAllowedKanjiChars(level: JlptLevel): Promise<string[]> {
+  const catalog = await loadKanjiCatalog();
+  return catalog.byLevel[level] || [];
+}
+
+async function countKanjiByJlptLevel(level: JlptLevel): Promise<number> {
+  const allowedChars = await getAllowedKanjiChars(level);
+  if (allowedChars.length === 0) return 0;
+  const [row] = await prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
+    `
+      SELECT COUNT(DISTINCT kanji_char) AS total
+      FROM kanji_compound
+      WHERE kanji_char = ANY($1::text[])
+    `,
+    allowedChars,
+  );
+  return Number(row?.total || 0n);
+}
+
+async function loadKanjiCatalog(): Promise<KanjiCatalog> {
+  if (!kanjiCatalogPromise) {
+    kanjiCatalogPromise = (async () => {
+      const sourcePath = resolveKanjiCatalogPath();
+      if (!sourcePath) {
+        return {
+          all: [],
+          byLevel: {
+            ALL: [],
+            N5: [],
+            N4: [],
+            N3: [],
+            N2: [],
+            N1: [],
+          },
+        };
+      }
+      const raw = fs.readFileSync(sourcePath, 'utf8');
+      const data = JSON.parse(raw) as Record<string, { jlpt_new?: number }>;
+      const allSet = new Set<string>();
+      const levelSets: Record<JlptLevel, Set<string>> = {
+        ALL: new Set<string>(),
+        N5: new Set<string>(),
+        N4: new Set<string>(),
+        N3: new Set<string>(),
+        N2: new Set<string>(),
+        N1: new Set<string>(),
+      };
+
+      Object.entries(data || {}).forEach(([char, info]) => {
+        const ch = String(char || '').trim();
+        if (!ch) return;
+        allSet.add(ch);
+        const jlptNum = Number(info?.jlpt_new);
+        if (jlptNum >= 1 && jlptNum <= 5) {
+          const level = `N${jlptNum}` as JlptLevel;
+          levelSets[level].add(ch);
+        }
+      });
+
+      const jlptAllSet = new Set<string>();
+      ['N5', 'N4', 'N3', 'N2', 'N1'].forEach((level) => {
+        levelSets[level as JlptLevel].forEach((ch) => jlptAllSet.add(ch));
+      });
+
+      return {
+        all: Array.from(allSet),
+        byLevel: {
+          // "ALL" for learning plan means JLPT N5->N1 union (~2200), not every rare kanji from dictionary dumps.
+          ALL: Array.from(jlptAllSet),
+          N5: Array.from(levelSets.N5),
+          N4: Array.from(levelSets.N4),
+          N3: Array.from(levelSets.N3),
+          N2: Array.from(levelSets.N2),
+          N1: Array.from(levelSets.N1),
+        },
+      };
+    })().catch((error) => {
+      kanjiCatalogPromise = null;
+      throw error;
+    });
+  }
+  return kanjiCatalogPromise;
+}
+
+function resolveKanjiCatalogPath(): string | null {
+  const candidates = [
+    path.resolve(__dirname, '../../../vocab-frontend/public/data/kanji/kanji-en.json'),
+    path.resolve(process.cwd(), '../vocab-frontend/public/data/kanji/kanji-en.json'),
+    path.resolve(process.cwd(), 'public/data/kanji/kanji-en.json'),
+  ];
+  for (const filePath of candidates) {
+    if (fs.existsSync(filePath)) return filePath;
+  }
+  return null;
 }

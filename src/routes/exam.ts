@@ -293,7 +293,7 @@ export function createExamRouter() {
             });
           }
           return res.status(429).json({
-            message: 'B蘯｡n ﾄ妥｣ dﾃｹng lﾆｰ盻｣t t蘯｡o gi蘯｣i thﾃｭch cho cﾃ｢u nﾃy. Vui lﾃｲng liﾃｪn h盻・admin n蘯ｿu c蘯ｧn lﾃm m盻嬖.',
+            message: 'Bạn đã dùng lượt tạo giải thích cho câu này. Vui lòng liên hệ admin nếu cần làm mới.',
           });
         }
       }
@@ -1060,7 +1060,7 @@ function buildQuestionPromptText(args: {
 }): string {
   if (args.isClozeQuestion) {
     if (args.sentenceWithBlank && args.sentenceWithAnswer) {
-      return `Cﾃ｢u ch盻ｩa ch盻・tr盻創g: ${args.sentenceWithBlank}\nCﾃ｢u khi ﾄ訴盻］ ﾄ妥｡p ﾃ｡n ﾄ妥ｺng: ${args.sentenceWithAnswer}`;
+      return `Câu chứa chỗ trống: ${args.sentenceWithBlank}\nCâu khi điền đáp án đúng: ${args.sentenceWithAnswer}`;
     }
     if (args.sentenceWithBlank) return args.sentenceWithBlank;
   }

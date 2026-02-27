@@ -18,6 +18,9 @@ const MAZII_DECRYPT_SALT = 'mazii-search-v3';
 const MAZII_TIMEOUT_MS = 15000;
 const MAZII_PROGRESS_STEP = 200;
 const HANVIET_CHAR_OVERRIDES = {};
+const FAST_QUERY_SEED_MIN = 240;
+const FAST_QUERY_SEED_MAX = 4000;
+const PREWARM_PROGRESS_STEP = 200;
 
 const args = new Set(process.argv.slice(2));
 const includeJmdict = !args.has('--skip-jmdict');
@@ -27,6 +30,8 @@ const dryRun = args.has('--dry-run');
 const useMazii = args.has('--use-mazii');
 const refreshMaziiCache = args.has('--refresh-mazii-cache');
 const maziiBackfillJmdictVi = args.has('--mazii-backfill-jmdict-vi');
+const prewarmOnly = args.has('--prewarm-only');
+const prewarmCache = args.has('--prewarm-cache') || prewarmOnly;
 
 const jmdictLimitArg = process.argv.find((arg) => arg.startsWith('--jmdict-limit='));
 const jmdictLimit = jmdictLimitArg ? Number(jmdictLimitArg.split('=')[1]) : 0;
@@ -80,6 +85,32 @@ const maziiBackfillWords = maziiBackfillWordArg
       .filter(Boolean)
   : [];
 
+const prewarmLimitsArg = process.argv.find((arg) => arg.startsWith('--prewarm-limits='));
+const prewarmLimits = parsePositiveIntList(
+  prewarmLimitsArg ? prewarmLimitsArg.split('=')[1] : '',
+  [6, 30],
+);
+
+const prewarmConcurrencyArg = process.argv.find((arg) =>
+  arg.startsWith('--prewarm-concurrency='),
+);
+const prewarmConcurrencyRaw = prewarmConcurrencyArg
+  ? Number(prewarmConcurrencyArg.split('=')[1])
+  : 6;
+const prewarmConcurrency = Number.isFinite(prewarmConcurrencyRaw)
+  ? Math.max(1, Math.min(10, Number(prewarmConcurrencyRaw)))
+  : 6;
+
+const prewarmKanjiLimitArg = process.argv.find((arg) =>
+  arg.startsWith('--prewarm-kanji-limit='),
+);
+const prewarmKanjiLimitRaw = prewarmKanjiLimitArg
+  ? Number(prewarmKanjiLimitArg.split('=')[1])
+  : 0;
+const prewarmKanjiLimit = Number.isFinite(prewarmKanjiLimitRaw)
+  ? Math.max(0, Number(prewarmKanjiLimitRaw))
+  : 0;
+
 const cacheDir = path.join(__dirname, '.cache');
 const jmdictGzPath = path.join(cacheDir, 'JMdict_e.gz');
 const frontendKanjiDataPath = path.resolve(
@@ -90,6 +121,24 @@ const frontendKanjiDataPath = path.resolve(
 async function main() {
   console.log('[kanji-compounds] start');
   await ensureTable();
+
+  if (prewarmOnly) {
+    if (dryRun) {
+      console.log('[kanji-compounds] prewarm-only in dry-run mode: skip cache writes');
+    } else {
+      const prewarmSummary = await prewarmLookupCache({
+        limits: prewarmLimits,
+        concurrency: prewarmConcurrency,
+        kanjiLimit: prewarmKanjiLimit,
+      });
+      console.log(
+        `[kanji-compounds] prewarm done: kanji=${prewarmSummary.kanjiCount} tasks=${prewarmSummary.tasks} cache_rows=${prewarmSummary.updatedCaches}`,
+      );
+    }
+    const countRows = await prisma.$queryRawUnsafe('SELECT COUNT(*)::int AS c FROM kanji_compound');
+    console.log(`[kanji-compounds] total rows=${Number(countRows[0]?.c || 0)}`);
+    return;
+  }
 
   const mazii = await createMaziiProvider({
     enabled: useMazii,
@@ -160,6 +209,21 @@ async function main() {
     );
   }
 
+  if (prewarmCache) {
+    if (dryRun) {
+      console.log('[kanji-compounds] skip prewarm in dry-run mode');
+    } else {
+      const prewarmSummary = await prewarmLookupCache({
+        limits: prewarmLimits,
+        concurrency: prewarmConcurrency,
+        kanjiLimit: prewarmKanjiLimit,
+      });
+      console.log(
+        `[kanji-compounds] prewarm done: kanji=${prewarmSummary.kanjiCount} tasks=${prewarmSummary.tasks} cache_rows=${prewarmSummary.updatedCaches}`,
+      );
+    }
+  }
+
   const countRows = await prisma.$queryRawUnsafe('SELECT COUNT(*)::int AS c FROM kanji_compound');
   console.log(`[kanji-compounds] total rows=${Number(countRows[0]?.c || 0)}`);
 }
@@ -188,6 +252,10 @@ async function ensureTable() {
   await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS idx_kanji_compound_char_priority
     ON kanji_compound(kanji_char, priority, word_ja);
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS idx_kanji_compound_char_source_priority_word
+    ON kanji_compound(kanji_char, source, priority, word_ja);
   `);
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS kanji_compound_lookup_cache (
@@ -581,6 +649,183 @@ async function upsertBatch(rows) {
   return upserted;
 }
 
+function clampCompoundLimit(limit) {
+  const numeric = Number(limit);
+  if (!Number.isFinite(numeric)) return 30;
+  return Math.max(1, Math.min(Math.floor(numeric), 200));
+}
+
+async function fetchTopCompoundsForKanji(kanjiChar, limit) {
+  const safeLimit = clampCompoundLimit(limit);
+  const seedLimit = Math.min(FAST_QUERY_SEED_MAX, Math.max(FAST_QUERY_SEED_MIN, safeLimit * 40));
+
+  let rows = await prisma.$queryRawUnsafe(
+    `
+      WITH seed AS (
+        SELECT
+          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+        FROM kanji_compound
+        WHERE kanji_char = $1
+        ORDER BY
+          CASE
+            WHEN COALESCE(meaning_vi, '') <> '' THEN 0
+            WHEN COALESCE(meaning_en, '') <> '' THEN 1
+            ELSE 2
+          END,
+          CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
+          priority ASC,
+          word_ja ASC
+        LIMIT $3
+      ),
+      ranked AS (
+        SELECT
+          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
+          ROW_NUMBER() OVER (
+            PARTITION BY word_ja, reading_kana
+            ORDER BY
+              CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
+              CASE WHEN COALESCE(meaning_vi, '') <> '' THEN 0 ELSE 1 END,
+              priority ASC,
+              word_ja ASC
+          ) AS rn
+        FROM seed
+      )
+      SELECT
+        kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY
+        CASE
+          WHEN COALESCE(meaning_vi, '') <> '' THEN 0
+          WHEN COALESCE(meaning_en, '') <> '' THEN 1
+          ELSE 2
+        END,
+        priority ASC,
+        word_ja ASC
+      LIMIT $2
+    `,
+    kanjiChar,
+    safeLimit,
+    seedLimit,
+  );
+
+  if (rows.length >= safeLimit) {
+    return rows;
+  }
+
+  rows = await prisma.$queryRawUnsafe(
+    `
+      WITH ranked AS (
+        SELECT
+          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
+          ROW_NUMBER() OVER (
+            PARTITION BY word_ja, reading_kana
+            ORDER BY
+              CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
+              CASE WHEN COALESCE(meaning_vi, '') <> '' THEN 0 ELSE 1 END,
+              priority ASC,
+              word_ja ASC
+          ) AS rn
+        FROM kanji_compound
+        WHERE kanji_char = $1
+      )
+      SELECT
+        kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY
+        CASE
+          WHEN COALESCE(meaning_vi, '') <> '' THEN 0
+          WHEN COALESCE(meaning_en, '') <> '' THEN 1
+          ELSE 2
+        END,
+        priority ASC,
+        word_ja ASC
+      LIMIT $2
+    `,
+    kanjiChar,
+    safeLimit,
+  );
+  return rows;
+}
+
+async function saveLookupCacheRow(kanjiChar, limit, rows) {
+  await prisma.$executeRawUnsafe(
+    `
+      INSERT INTO kanji_compound_lookup_cache (
+        kanji_char, limit_size, compounds_json, created_at, updated_at
+      )
+      VALUES ($1, $2, $3::jsonb, NOW(), NOW())
+      ON CONFLICT (kanji_char, limit_size)
+      DO UPDATE SET
+        compounds_json = EXCLUDED.compounds_json,
+        updated_at = NOW()
+    `,
+    kanjiChar,
+    clampCompoundLimit(limit),
+    JSON.stringify(Array.isArray(rows) ? rows : []),
+  );
+}
+
+async function prewarmLookupCache(opts) {
+  const limits = parsePositiveIntList(opts?.limits || '', [6, 30]).map(clampCompoundLimit);
+  const concurrency = Number.isFinite(opts?.concurrency)
+    ? Math.max(1, Math.min(10, Number(opts.concurrency)))
+    : 6;
+  const kanjiLimit = Number.isFinite(opts?.kanjiLimit) ? Math.max(0, Number(opts.kanjiLimit)) : 0;
+
+  const kanjiRows =
+    kanjiLimit > 0
+      ? await prisma.$queryRawUnsafe(
+          `
+            SELECT DISTINCT kanji_char
+            FROM kanji_compound
+            ORDER BY kanji_char ASC
+            LIMIT $1
+          `,
+          kanjiLimit,
+        )
+      : await prisma.$queryRawUnsafe(`
+          SELECT DISTINCT kanji_char
+          FROM kanji_compound
+          ORDER BY kanji_char ASC
+        `);
+
+  const kanjiChars = uniqueStrings(
+    kanjiRows.map((row) => String(row?.kanji_char || '').trim()).filter(Boolean),
+  );
+
+  if (!kanjiChars.length) {
+    console.log('[kanji-compounds] prewarm skipped: no kanji rows');
+    return { kanjiCount: 0, tasks: 0, updatedCaches: 0 };
+  }
+
+  const tasks = [];
+  for (const kanjiChar of kanjiChars) {
+    for (const limit of limits) {
+      tasks.push({ kanjiChar, limit });
+    }
+  }
+
+  console.log(
+    `[kanji-compounds] prewarm start: kanji=${kanjiChars.length} limits=${limits.join(',')} tasks=${tasks.length} concurrency=${concurrency}`,
+  );
+
+  let done = 0;
+  let updatedCaches = 0;
+  await runWithConcurrency(tasks, concurrency, async (task) => {
+    const rows = await fetchTopCompoundsForKanji(task.kanjiChar, task.limit);
+    await saveLookupCacheRow(task.kanjiChar, task.limit, rows);
+    updatedCaches += 1;
+    done += 1;
+    if (done % PREWARM_PROGRESS_STEP === 0 || done === tasks.length) {
+      console.log(`[kanji-compounds] prewarm progress ${done}/${tasks.length}`);
+    }
+  });
+
+  return { kanjiCount: kanjiChars.length, tasks: tasks.length, updatedCaches };
+}
+
 function containsKanji(text) {
   return CJK_RE.test(String(text || ''));
 }
@@ -825,6 +1070,28 @@ function uniqueStrings(values) {
     out.push(text);
   }
   return out;
+}
+
+function parsePositiveIntList(raw, fallback) {
+  const values = String(raw || '')
+    .split(',')
+    .map((part) => Number(String(part || '').trim()))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.max(1, Math.min(Math.floor(value), 200)));
+
+  if (values.length > 0) {
+    return Array.from(new Set(values));
+  }
+
+  const normalizedFallback = Array.isArray(fallback) ? fallback : [30];
+  return Array.from(
+    new Set(
+      normalizedFallback
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.max(1, Math.min(Math.floor(value), 200))),
+    ),
+  );
 }
 
 async function loadMaziiWordCacheRows(queryWords) {

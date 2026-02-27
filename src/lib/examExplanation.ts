@@ -226,7 +226,7 @@ export async function generateExamQuestionExplanation(
           content: [
             'Ban la giao vien JLPT cap cao.',
             'Tra loi bang tieng Viet ro rang, lap luan chat che.',
-            'Khong biet thi noi khong biet, khong du doan qua muc tu du lieu.',
+            'Không biet thi noi không biet, không du doan qua muc tu dữ liệu.',
           ].join(' '),
         },
         {
@@ -295,7 +295,7 @@ export async function generatePassageExplanation(
           role: 'system',
           content: [
             'Ban la giao vien JLPT doc hieu cap cao.',
-            'Phan tich theo dong mach toan doan, khong tach roi tung cau.',
+            'Phan tich theo dòng mạch toàn đoạn, không tach roi tung cau.',
             'Tra loi bang tieng Viet, lap luan chat che va ngan gon.',
           ].join(' '),
         },
@@ -347,52 +347,52 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
     .join('\n');
 
   return [
-    'Hay phan tich 1 cau hoi JLPT va tra JSON dung schema.',
+    'Hay phan tich 1 câu hỏi JLPT va tra JSON dung schema.',
     `Level: ${payload.level}`,
     `Exam ID: ${payload.examId}`,
     `Part: ${payload.part}`,
-    `Muc cau hoi: ${payload.sectionTitle || '(khong co)'}`,
-    `Nhan cau hoi: ${payload.questionLabel || '(khong co)'}`,
-    `Nhan nhom Mondai: ${payload.mondaiLabel || '(khong co)'}`,
-    `Loai cau hoi: ${payload.questionTypeLabelVi} (${payload.questionType})`,
-    `Chien luoc giai uu tien: ${payload.typeStrategyVi || '(khong co)'}`,
-    `Cau hoi goc: ${payload.questionText || '(khong co)'}`,
-    `Dang cau hoi dien cho trong: ${payload.isClozeQuestion ? 'co' : 'khong'}`,
-    `Cau chua o trong: ${payload.questionWithBlank || '(khong co)'}`,
-    `Cau sau khi dien dap an dung: ${payload.questionWithAnswer || '(khong co)'}`,
-    `Cac o trong trong doan: ${(payload.blankLabels || []).join(', ') || '(khong co)'}`,
-    `Cach doc cau hoi (tokenizer): ${precomputedReadings.questionReadingHira || '(khong co)'}`,
-    `Ngu canh doan van/nghe: ${payload.passageText || '(khong co)'}`,
+    `Muc câu hỏi: ${payload.sectionTitle || '(không co)'}`,
+    `Nhan câu hỏi: ${payload.questionLabel || '(không co)'}`,
+    `Nhan nhom Mondai: ${payload.mondaiLabel || '(không co)'}`,
+    `Loai câu hỏi: ${payload.questionTypeLabelVi} (${payload.questionType})`,
+    `Chiến lược giai uu tien: ${payload.typeStrategyVi || '(không co)'}`,
+    `Câu hỏi goc: ${payload.questionText || '(không co)'}`,
+    `Dang câu hỏi điền chỗ trống: ${payload.isClozeQuestion ? 'co' : 'không'}`,
+    `Câu chứa o trong: ${payload.questionWithBlank || '(không co)'}`,
+    `Câu sau khi điền đáp án dung: ${payload.questionWithAnswer || '(không co)'}`,
+    `Cac o trong trong doan: ${(payload.blankLabels || []).join(', ') || '(không co)'}`,
+    `Cach doc câu hỏi (tokenizer): ${precomputedReadings.questionReadingHira || '(không co)'}`,
+    `Ngữ cảnh doan van/nghe: ${payload.passageText || '(không co)'}`,
     isReadingContent
-      ? 'Luu y quan trong: question_ja phai la cau hoi trac nghiem (vi du: 52. ...), KHONG duoc lay cau trong doan van lam question_ja.'
-      : 'Luu y quan trong: question_ja phai dung voi cau hoi ma de bai yeu cau.',
-    `Cac dap an:\n${optionsText || '(khong co)'}`,
-    `Cach doc dap an (tokenizer):\n${optionsReadingText || '(khong co)'}`,
-    `Dap an dung: ${payload.correctAnswer || '(khong ro)'}`,
+      ? 'Luu y quan trong: question_ja phai la câu hỏi trac nghiem (vi du: 52. ...), KHONG được lay cau trong doan van lam question_ja.'
+      : 'Luu y quan trong: question_ja phai dung voi câu hỏi ma de bai yeu cau.',
+    `Cac đáp án:\n${optionsText || '(không co)'}`,
+    `Cach doc đáp án (tokenizer):\n${optionsReadingText || '(không co)'}`,
+    `Đáp án dung: ${payload.correctAnswer || '(không ro)'}`,
     payload.questionType === 'sentence_order' && (payload.sentenceOrderExpectedOrder || []).length
       ? `Thu tu chuan tham khao tu de: ${(payload.sentenceOrderExpectedOrder || []).join('-')}`
       : '',
     '',
     'Bat buoc thuc hien:',
     '1) Cho cau tieng Nhat goc va cach doc hiragana cua cau.',
-    '2) Doi voi moi dap an, cho text tieng Nhat + cach doc + nghia Viet.',
+    '2) Doi voi moi đáp án, cho text tieng Nhat + cach doc + nghia Viet.',
     '3) Liet ke tu kho (kanji) trong cau va giai thich vi sao quan trong.',
-    '4) Phan tich dung/sai tung dap an, neu nguoi hoc de bi nham thi noi ro bay.',
-    `5) Viet chien luoc lam bai theo loai cau hoi nay: ${payload.typeStrategyVi || partSpecificInstruction(payload.part)}`,
-    '6) Kiem tra tinh nhat quan: dap an danh dau correct phai trung dap an dung de bai.',
-    '7) Uu tien dung cach doc tokenizer da cho; neu khong phu hop moi tu dieu chinh rat ngan gon.',
-    '8) Neu la cau dien cho trong, phai dua tren cau chua o trong va mach van ban, khong duoc dich ro ro tung lua chon mot cach may moc.',
+    '4) Phan tich dung/sai tung đáp án, neu nguoi hoc de bi nham thi noi ro bay.',
+    `5) Viet chiến lược lam bai theo loai câu hỏi nay: ${payload.typeStrategyVi || partSpecificInstruction(payload.part)}`,
+    '6) Kiem tra tinh nhat quan: đáp án danh dau correct phai trung đáp án dung de bai.',
+    '7) Uu tien dung cach doc tokenizer da cho; neu không phu hop moi tu dieu chinh rat ngan gon.',
+    '8) Neu la cau điền chỗ trống, phai dua tren câu chứa o trong va mach van ban, không được dich ro ro tung lựa chọn mot cach may moc.',
     isSentenceOrder
-      ? '9) Day la dang sap xep cau co dau ★: ordered_options BAT BUOC phai gom DAY DU tat ca lua chon (1-2-3-4) moi lua chon dung 1 lan, cho cau hoan chinh sau sap xep, va chi ro manh dung o vi tri ★.'
-      : '9) Neu khong phai dang sap xep, de null cho sentence_order_solution.',
+      ? '9) Day la dang sap xep cau co dau ★: ordered_options BAT BUOC phai gom DAY DU tat ca lựa chọn (1-2-3-4) moi lựa chọn dung 1 lan, cho cau hoan chinh sau sap xep, va chi ro manh dung o vi tri ★.'
+      : '9) Neu không phai dang sap xep, de null cho sentence_order_solution.',
     '',
-    'Tra ve JSON dung cac key sau, khong them key khac:',
+    'Trả về JSON dung cac key sau, không them key khac:',
     '{',
     '  "question_ja": "string",',
     '  "question_reading_hira": "string",',
     '  "question_translation_vi": "string",',
     '  "sentence_order_solution": {',
-    '    "ordered_options": ["1|2|3|4 day du tat ca lua chon"],',
+    '    "ordered_options": ["1|2|3|4 day du tat ca lựa chọn"],',
     '    "ordered_sentence_ja": "string",',
     '    "ordered_sentence_reading_hira": "string",',
     '    "star_option": "1|2|3|4",',
@@ -426,7 +426,7 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
   const sentenceListText =
     precomputed.sentenceReadings
       .map((item, index) => `${index + 1}. ${item.sentence_ja}`)
-      .join('\n') || '(khong co)';
+      .join('\n') || '(không co)';
 
   const questionsText = payload.questions
     .map((q) => {
@@ -439,20 +439,20 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
       if (isReadingCloze) {
         return [
           `Question ${q.questionLabel}:`,
-          `- Cau chua o trong: ${q.questionWithBlank || '(khong co)'}`,
-          `- Cach doc cau chua o trong: ${precomputed.questionBlankReadings[q.questionLabel] || '(khong co)'}`,
-          `- Cau sau khi dien dap an dung: ${q.questionWithAnswer || '(khong co)'}`,
-          `- Cach doc cau sau khi dien dung: ${precomputed.questionAnswerReadings[q.questionLabel] || '(khong co)'}`,
-          `- Dap an dung: ${q.correctAnswer || '(khong ro)'}`,
-          `- Lua chon:\n${optionsText || '(khong co)'}`,
+          `- Câu chứa o trong: ${q.questionWithBlank || '(không co)'}`,
+          `- Cach doc câu chứa o trong: ${precomputed.questionBlankReadings[q.questionLabel] || '(không co)'}`,
+          `- Câu sau khi điền đáp án dung: ${q.questionWithAnswer || '(không co)'}`,
+          `- Cach doc câu sau khi điền dung: ${precomputed.questionAnswerReadings[q.questionLabel] || '(không co)'}`,
+          `- Đáp án dung: ${q.correctAnswer || '(không ro)'}`,
+          `- Lựa chọn:\n${optionsText || '(không co)'}`,
         ].join('\n');
       }
       return [
         `Question ${q.questionLabel}:`,
-        `- Cau hoi: ${q.questionWithBlank || '(khong co)'}`,
-        `- Cach doc cau hoi: ${precomputed.questionBlankReadings[q.questionLabel] || '(khong co)'}`,
-        `- Dap an dung: ${q.correctAnswer || '(khong ro)'}`,
-        `- Lua chon:\n${optionsText || '(khong co)'}`,
+        `- Câu hỏi: ${q.questionWithBlank || '(không co)'}`,
+        `- Cach doc câu hỏi: ${precomputed.questionBlankReadings[q.questionLabel] || '(không co)'}`,
+        `- Đáp án dung: ${q.correctAnswer || '(không ro)'}`,
+        `- Lựa chọn:\n${optionsText || '(không co)'}`,
       ].join('\n');
     })
     .join('\n\n');
@@ -460,39 +460,39 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
   return [
     isReadingCloze
       ? 'Hay phan tich 1 cum bai doc hieu co nhieu o trong.'
-      : 'Hay phan tich bai doc hieu va tra loi cau hoi theo noi dung doan van.',
+      : 'Hay phan tich bai doc hieu va tra loi câu hỏi theo noi dung doan van.',
     `Level: ${payload.level}`,
     `Exam ID: ${payload.examId}`,
     `Part: ${payload.part}`,
-    `Section: ${payload.sectionTitle || '(khong co)'}`,
-    `Nhan nhom Mondai: ${payload.mondaiLabel || '(khong co)'}`,
-    `Loai cau hoi: ${payload.questionTypeLabelVi} (${payload.questionType})`,
-    `Chien luoc xu ly uu tien: ${payload.typeStrategyVi || '(khong co)'}`,
+    `Section: ${payload.sectionTitle || '(không co)'}`,
+    `Nhan nhom Mondai: ${payload.mondaiLabel || '(không co)'}`,
+    `Loai câu hỏi: ${payload.questionTypeLabelVi} (${payload.questionType})`,
+    `Chiến lược xu ly uu tien: ${payload.typeStrategyVi || '(không co)'}`,
     isReadingCloze
-      ? `Cac o trong: ${(payload.blankLabels || []).join(', ') || '(khong co)'}`
-      : 'Dang bai: Doc hieu cau hoi noi dung (khong phai dien o trong).',
-    `Doan van:\n${payload.passageText || '(khong co)'}`,
-    `Cach doc toan doan (tokenizer):\n${precomputed.passageReadingHira || '(khong co)'}`,
+      ? `Cac o trong: ${(payload.blankLabels || []).join(', ') || '(không co)'}`
+      : 'Dang bai: Doc hieu câu hỏi noi dung (không phai dien o trong).',
+    `Doan van:\n${payload.passageText || '(không co)'}`,
+    `Cach doc toàn đoạn (tokenizer):\n${precomputed.passageReadingHira || '(không co)'}`,
     `Danh sach cau can dich (giu nguyen thu tu):\n${sentenceListText}`,
     '',
     'Thong tin tung cau trong cum:',
-    questionsText || '(khong co)',
+    questionsText || '(không co)',
     '',
     'Yeu cau:',
     isReadingCloze
       ? '1) Phan tich tong quan doan van truoc, sau do moi di vao tung o trong.'
-      : '1) Phan tich tong quan doan van truoc, sau do moi di vao tung cau hoi.',
+      : '1) Phan tich tong quan doan van truoc, sau do moi di vao tung câu hỏi.',
     isReadingCloze
-      ? '2) Voi moi o trong, giai thich vi sao dap an dung hop dong mach, va vi sao cac dap an sai bi lech ngu canh.'
-      : '2) Voi moi cau hoi, giai thich vi sao dap an dung theo bang chung trong doan, va vi sao cac dap an sai.',
+      ? '2) Voi moi o trong, giai thich vi sao đáp án dung hop dòng mạch, va vi sao cac đáp án sai bi lech ngữ cảnh.'
+      : '2) Voi moi câu hỏi, giai thich vi sao đáp án dung theo bang chung trong doan, va vi sao cac đáp án sai.',
     '3) Nhan manh lien ket giua cac cau (quan he truoc-sau, giat doan, doi y, ket luan).',
     isReadingCloze
       ? '4) Neu co bay de nham giua cac o trong, phai chi ro.'
       : '4) Neu co bay doc hieu (tu de gay nham, suy luan vuot qua van ban), phai chi ro.',
-    '5) Muc sentence_readings bat buoc theo danh sach cau da cho: dung index de map dung cau, khong duoc dao thu tu.',
-    '6) Trong moi question.option_analysis, bat buoc dien du 4 lua chon va khong de trong meaning_vi/reason_vi.',
+    '5) Muc sentence_readings bat buoc theo danh sach cau da cho: dung index de map dung cau, không được dao thu tu.',
+    '6) Trong moi question.option_analysis, bat buoc dien du 4 lựa chọn va không de trong meaning_vi/reason_vi.',
     '',
-    'Tra ve JSON dung schema sau, khong them key khac:',
+    'Trả về JSON dung schema sau, không them key khac:',
     '{',
     '  "passage_ja": "string",',
     '  "passage_translation_vi": "string",',
@@ -523,12 +523,12 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
 
 function partSpecificInstruction(part: number): string {
   if (part === 1) {
-    return 'Tap trung vao am doc kanji, nghia theo ngu canh, va bay dong am/dong tu.';
+    return 'Tap trung vao am doc kanji, nghia theo ngữ cảnh, va bay dong am/dong tu.';
   }
   if (part === 2) {
     return 'Tap trung vao lien ket cau, logic truoc-sau, dau hieu ngu phap de loai tru.';
   }
-  return 'Tap trung vao tu khoa nghe, tu phu dinh, su doi y o cuoi cau, va by ngu canh.';
+  return 'Tap trung vao tu khoa nghe, tu phu dinh, su doi y o cuoi cau, va by ngữ cảnh.';
 }
 
 function parseLooseJson(raw: string): unknown {
@@ -699,7 +699,7 @@ async function completeSentenceOrderSolution(args: {
   }
 
   if (!solution.reason_vi && hasCompleteOrder(expectedOrder, optionKeys)) {
-    solution.reason_vi = `Thu tu duoc chuan hoa theo dap an chuan cua de: ${expectedOrder.join('→')}.`;
+    solution.reason_vi = `Thu tu được chuan hoa theo đáp án chuan cua de: ${expectedOrder.join('→')}.`;
   }
 
   return {
@@ -720,18 +720,18 @@ async function repairSentenceOrderSolutionWithModel(args: {
   const optionsText = optionKeys.map((key) => `${key}. ${args.payload.options[key] || ''}`).join('\n');
   const prompt = [
     'Ban dang sua ket qua dang sap xep cau JLPT co dau ★.',
-    'NHIEM VU: tra ve DUY NHAT JSON va KHONG text khac.',
-    `Cau hoi: ${args.payload.questionText || args.payload.questionWithBlank || ''}`,
+    'NHIEM VU: trả về DUY NHAT JSON va KHONG text khac.',
+    `Câu hỏi: ${args.payload.questionText || args.payload.questionWithBlank || ''}`,
     `Cau co o trong: ${args.payload.questionWithBlank || ''}`,
-    `Cau da dien dap an dung: ${args.payload.questionWithAnswer || ''}`,
-    `Dap an dung (vi tri ★): ${args.payload.correctAnswer || ''}`,
-    `Cac lua chon:\n${optionsText}`,
+    `Cau da dien đáp án dung: ${args.payload.questionWithAnswer || ''}`,
+    `Đáp án dung (vi tri ★): ${args.payload.correctAnswer || ''}`,
+    `Cac lựa chọn:\n${optionsText}`,
     `Ket qua hien tai ordered_options: ${(args.current.ordered_options || []).join(', ') || '(rong)'}`,
     `Ket qua hien tai ordered_sentence_ja: ${args.current.ordered_sentence_ja || '(rong)'}`,
     '',
     'RANG BUOC BAT BUOC:',
-    `- ordered_options phai chua DAY DU ${optionKeys.join(', ')} va moi lua chon dung 1 lan.`,
-    '- star_option phai bang dap an dung de bai.',
+    `- ordered_options phai chua DAY DU ${optionKeys.join(', ')} va moi lựa chọn dung 1 lan.`,
+    '- star_option phai bang đáp án dung de bai.',
     '- ordered_sentence_ja phai la cau da sap xep day du tat ca manh.',
     '',
     'Schema:',
@@ -756,7 +756,7 @@ async function repairSentenceOrderSolutionWithModel(args: {
         messages: [
           {
             role: 'system',
-            content: 'Ban la giao vien JLPT. Tra JSON hop le, dung schema, khong noi them.',
+            content: 'Ban la giao vien JLPT. Tra JSON hop le, dung schema, không noi them.',
           },
           {
             role: 'user',
@@ -1312,12 +1312,12 @@ async function fillMissingPassageOptionContent(args: {
       }));
 
     const prompt = [
-      'Dien du lieu con thieu cho phan giai thich doc hieu JLPT.',
-      'Tra ve JSON voi schema:',
+      'Dien dữ liệu con thieu cho phan giai thich doc hieu JLPT.',
+      'Trả về JSON voi schema:',
       '{ "questions": [ { "question_label": "string", "options": [ { "option": "1|2|3|4", "meaning_vi": "string", "reason_vi": "string" } ] } ] }',
-      'Bat buoc: meaning_vi va reason_vi khong duoc rong.',
-      `Doan van:\n${args.payload.passageText || '(khong co)'}`,
-      `Cac cau hoi can dien:\n${JSON.stringify(questionInfo)}`,
+      'Bat buoc: meaning_vi va reason_vi không được rong.',
+      `Doan van:\n${args.payload.passageText || '(không co)'}`,
+      `Cac câu hỏi can dien:\n${JSON.stringify(questionInfo)}`,
     ].join('\n');
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1428,8 +1428,8 @@ function applyOptionFallback(question: PassageQuestionExplanation): PassageQuest
       reason_vi:
         item.reason_vi ||
         (isCorrect
-          ? 'Lua chon nay phu hop nhat voi noi dung va lap luan trong doan van.'
-          : 'Lua chon nay khong khop voi thong tin/chu de duoc neu trong doan van.'),
+          ? 'Lựa chọn nay phu hop nhat voi noi dung va lap luan trong doan van.'
+          : 'Lựa chọn nay không khop voi thong tin/chu de được neu trong doan van.'),
       meaning_vi: item.meaning_vi || '',
     };
   });
@@ -1493,4 +1493,5 @@ async function safeReadBody(response: Response) {
     return 'Unable to read response body';
   }
 }
+
 
