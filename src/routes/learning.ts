@@ -580,6 +580,79 @@ export function createLearningRouter() {
     return res.json('OK');
   });
 
+  router.get('/kanji/dashboard', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+    const userBigId = BigInt(userId);
+
+    const [learnedKanji, masteredKanji] = await Promise.all([
+      prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*)::bigint AS total
+        FROM user_kanji_progress
+        WHERE user_id = ${userBigId}
+      `,
+      prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*)::bigint AS total
+        FROM user_kanji_progress
+        WHERE user_id = ${userBigId}
+          AND is_mastered = 1
+      `,
+    ]);
+
+    const today = dateOnly(new Date());
+    const rows = await prisma.$queryRaw<Array<{ study_date: Date; items: bigint }>>`
+      SELECT DATE(review_time) AS study_date, COUNT(DISTINCT kanji_char) AS items
+      FROM user_kanji_review_log
+      WHERE user_id = ${userBigId}
+      GROUP BY DATE(review_time)
+      ORDER BY study_date DESC
+      LIMIT 90
+    `;
+
+    const recentStudyDays: Record<string, number> = {};
+    let todayReviews = 0;
+    for (const row of rows) {
+      const key = dateOnly(row.study_date).toISOString().slice(0, 10);
+      const items = Number(row.items);
+      recentStudyDays[key] = items;
+      if (key === today.toISOString().slice(0, 10)) todayReviews = items;
+    }
+
+    let streak = 0;
+    let cursor = dateOnly(new Date());
+    while (true) {
+      const key = cursor.toISOString().slice(0, 10);
+      if (recentStudyDays[key] && recentStudyDays[key] > 0) {
+        streak += 1;
+        cursor = dateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000));
+      } else {
+        break;
+      }
+    }
+
+    const [todayNewRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COUNT(DISTINCT kanji_char) AS total
+      FROM user_kanji_review_log
+      WHERE user_id = ${userBigId}
+        AND mode = 'new'
+        AND DATE(review_time) = ${today}
+    `;
+
+    const activePlan = await getActiveKanjiPlan(userId);
+
+    return res.json({
+      totalPlanKanji: activePlan?.totalKanji || 0,
+      learnedKanji: Number(learnedKanji?.[0]?.total || 0n),
+      masteredKanji: Number(masteredKanji?.[0]?.total || 0n),
+      inProgressKanji: Math.max(Number(learnedKanji?.[0]?.total || 0n) - Number(masteredKanji?.[0]?.total || 0n), 0),
+      todayNewKanji: Number(todayNewRow?.total || 0n),
+      todayReviews,
+      currentStreak: streak,
+      recentStudyDays,
+    });
+  });
+
   router.get('/dashboard', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     const topicPrefix = String(req.query.topicPrefix || '').trim();
