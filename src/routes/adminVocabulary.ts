@@ -17,6 +17,16 @@ const PATCH_FIELDS = [
 ] as const;
 
 type PatchKey = (typeof PATCH_FIELDS)[number];
+type VocabSuggestionResult = {
+  suggested: Record<string, unknown>;
+  imageQuery: string;
+  audioQuery: string;
+  mode: string;
+  provider: string;
+  model?: string;
+  warning?: string;
+};
+type OpenAIChatResponse = { choices?: Array<{ message?: { content?: string } }> };
 
 export function createAdminVocabularyRouter() {
   const router = Router();
@@ -82,25 +92,9 @@ export function createAdminVocabularyRouter() {
     const id = Number(req.params.id);
     const vocab = await prisma.vocabulary.findUnique({ where: { id: BigInt(id) } });
     if (!vocab) return res.status(404).json({ message: 'Vocabulary not found' });
-    return res.json({
-      suggested: {
-        word_ja: vocab.word_ja,
-        word_hira_kana: vocab.word_hira_kana,
-        word_romaji: vocab.word_romaji,
-        word_vi: vocab.word_vi,
-        example_ja: vocab.example_ja,
-        example_vi: vocab.example_vi,
-        topic: vocab.topic,
-        level: vocab.level,
-        image_url: vocab.image_url,
-        audio_url: vocab.audio_url,
-        core_order: vocab.core_order,
-      },
-      imageQuery: vocab.word_ja || vocab.word_vi || '',
-      audioQuery: vocab.word_ja || vocab.word_hira_kana || '',
-      mode: req.body?.mode || 'fix',
-      provider: 'local',
-    });
+    const mode = String(req.body?.mode || req.query?.mode || 'fix').trim() || 'fix';
+    const result = await suggestVocabularyWithAi(vocab, mode);
+    return res.json(result);
   });
 
   router.put('/:id/apply', async (req: Request, res: Response) => {
@@ -203,4 +197,135 @@ function toPatch(payload: Record<string, unknown>, includeEmpty = false): Record
     out[key] = text;
   }
   return out;
+}
+
+function buildLocalSuggestion(vocab: any, mode = 'fix', warning?: string): VocabSuggestionResult {
+  return {
+    suggested: {
+      word_ja: vocab.word_ja,
+      word_hira_kana: vocab.word_hira_kana,
+      word_romaji: vocab.word_romaji,
+      word_vi: vocab.word_vi,
+      example_ja: vocab.example_ja,
+      example_vi: vocab.example_vi,
+      topic: vocab.topic,
+      level: vocab.level,
+      image_url: vocab.image_url,
+      audio_url: vocab.audio_url,
+      core_order: vocab.core_order,
+    },
+    imageQuery: String(vocab.word_ja || vocab.word_vi || '').trim(),
+    audioQuery: String(vocab.word_ja || vocab.word_hira_kana || '').trim(),
+    mode,
+    provider: 'local',
+    ...(warning ? { warning } : {}),
+  };
+}
+
+async function suggestVocabularyWithAi(vocab: any, mode = 'fix'): Promise<VocabSuggestionResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_VOCAB_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  if (!apiKey) {
+    return buildLocalSuggestion(vocab, mode, 'OPENAI_API_KEY is not configured. Using local fallback.');
+  }
+
+  const base = buildLocalSuggestion(vocab, mode);
+  const payload = {
+    word_ja: base.suggested.word_ja,
+    word_hira_kana: base.suggested.word_hira_kana,
+    word_romaji: base.suggested.word_romaji,
+    word_vi: base.suggested.word_vi,
+    example_ja: base.suggested.example_ja,
+    example_vi: base.suggested.example_vi,
+    topic: base.suggested.topic,
+    level: base.suggested.level,
+    image_url: base.suggested.image_url,
+    audio_url: base.suggested.audio_url,
+    core_order: base.suggested.core_order,
+  };
+
+  const systemPrompt =
+    'You fix Japanese vocabulary records for a study app. Return only strict JSON. ' +
+    'Preserve meaning. Keep Japanese fields natural and correct. Do not invent random facts. ' +
+    'When example_ja contains ruby/furigana, verify reading must match sentence context.';
+  const userPrompt = `
+mode: ${mode}
+current_record:
+${JSON.stringify(payload, null, 2)}
+
+Return JSON only in this shape:
+{
+  "suggested": {
+    "word_ja": "...",
+    "word_hira_kana": "...",
+    "word_romaji": "...",
+    "word_vi": "...",
+    "example_ja": "...",
+    "example_vi": "...",
+    "topic": "...",
+    "level": "...",
+    "image_url": "...",
+    "audio_url": "...",
+    "core_order": 123
+  },
+  "imageQuery": "...",
+  "audioQuery": "..."
+}
+Rules:
+- Keep empty string for unknown optional fields.
+- Keep core_order numeric when available.
+- Keep output concise and safe for learners.
+- Validate ruby/furigana in example_ja by sentence context.
+- Keep ruby HTML valid: <ruby>漢字<rt>かな</rt></ruby>.
+- If a word has multiple readings (e.g. 日本), choose reading that fits the actual phrase in example_ja.
+`.trim();
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      return buildLocalSuggestion(vocab, mode, `OpenAI request failed (${response.status}): ${detail}`);
+    }
+
+    const data = (await response.json()) as OpenAIChatResponse;
+    const content = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (!content) {
+      return buildLocalSuggestion(vocab, mode, 'OpenAI returned empty content. Using local fallback.');
+    }
+
+    const parsed = JSON.parse(content) as any;
+    const rawSuggested = parsed?.suggested ?? parsed ?? {};
+    const patched = toPatch(rawSuggested, true);
+    const suggested: Record<string, unknown> = { ...base.suggested, ...patched };
+    return {
+      suggested,
+      imageQuery: String(parsed?.imageQuery || base.imageQuery || '').trim(),
+      audioQuery: String(parsed?.audioQuery || base.audioQuery || '').trim(),
+      mode,
+      provider: 'openai',
+      model,
+    };
+  } catch (error) {
+    return buildLocalSuggestion(
+      vocab,
+      mode,
+      `OpenAI parsing/runtime error: ${(error as Error)?.message || 'unknown error'}`,
+    );
+  }
 }
