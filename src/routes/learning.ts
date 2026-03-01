@@ -7,6 +7,14 @@ import { dateOnly } from '../lib/http';
 const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
 type JlptLevel = (typeof JLPT_LEVELS)[number];
 
+function formatLocalDateKey(dateValue: Date): string {
+  const d = dateOnly(dateValue);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function createLearningRouter() {
   const router = Router();
 
@@ -146,7 +154,7 @@ export function createLearningRouter() {
       stage: row.stage,
     }));
     return res.json({
-      date: dateOnly(endDate).toISOString().slice(0, 10),
+      date: formatLocalDateKey(endDate),
       items,
       total: items.length,
     });
@@ -613,16 +621,16 @@ export function createLearningRouter() {
     const recentStudyDays: Record<string, number> = {};
     let todayReviews = 0;
     for (const row of rows) {
-      const key = dateOnly(row.study_date).toISOString().slice(0, 10);
+      const key = formatLocalDateKey(row.study_date);
       const items = Number(row.items);
       recentStudyDays[key] = items;
-      if (key === today.toISOString().slice(0, 10)) todayReviews = items;
+      if (key === formatLocalDateKey(today)) todayReviews = items;
     }
 
     let streak = 0;
     let cursor = dateOnly(new Date());
     while (true) {
-      const key = cursor.toISOString().slice(0, 10);
+      const key = formatLocalDateKey(cursor);
       if (recentStudyDays[key] && recentStudyDays[key] > 0) {
         streak += 1;
         cursor = dateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000));
@@ -686,16 +694,16 @@ export function createLearningRouter() {
     const recentStudyDays: Record<string, number> = {};
     let todayReviews = 0;
     for (const row of rows) {
-      const key = dateOnly(row.study_date).toISOString().slice(0, 10);
+      const key = formatLocalDateKey(row.study_date);
       const words = Number(row.words);
       recentStudyDays[key] = words;
-      if (key === today.toISOString().slice(0, 10)) todayReviews = words;
+      if (key === formatLocalDateKey(today)) todayReviews = words;
     }
 
     let streak = 0;
     let cursor = dateOnly(new Date());
     while (true) {
-      const key = cursor.toISOString().slice(0, 10);
+      const key = formatLocalDateKey(cursor);
       if (recentStudyDays[key] && recentStudyDays[key] > 0) {
         streak += 1;
         cursor = dateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000));
