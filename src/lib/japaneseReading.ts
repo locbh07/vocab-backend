@@ -34,9 +34,10 @@ export async function toReadingHiragana(text: string, options?: ReadingConvertOp
 export async function toRubyHtml(text: string, options?: ReadingConvertOptions): Promise<string> {
   const normalized = String(text || '');
   if (!normalized.trim()) return '';
+  const cleaned = stripInlineReadingAnnotations(normalized);
   const tokenizer = await getTokenizer();
   const surfaceReadings = normalizeSurfaceReadings(options?.surfaceReadings);
-  const lines = normalized.split('\n');
+  const lines = cleaned.split('\n');
   const convertedLines = lines.map((line) => tokenizeLineToRubyHtml(tokenizer, line, surfaceReadings));
   return convertedLines.join('<br/>');
 }
@@ -115,6 +116,18 @@ function normalizeSurfaceReadings(value: Record<string, string> | undefined): Re
     out[s] = r;
   }
   return out;
+}
+
+// Removes inline furigana annotations like:
+// - 漢字（かんじ） -> 漢字
+// - 漢字かんじ（かんじ） -> 漢字
+// Keeps non-kana parentheses content untouched.
+function stripInlineReadingAnnotations(input: string) {
+  const KANA = '[ぁ-んァ-ンー゛゜・]';
+  const KANJI = '[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff々〆ヵヶ]';
+  return String(input || '')
+    .replace(new RegExp(`(${KANJI}+)(?:${KANA}+)?\\s*[（(](${KANA}+)[）)]`, 'gu'), '$1')
+    .replace(new RegExp(`[（(]${KANA}+[）)]`, 'gu'), '');
 }
 
 async function getTokenizer(): Promise<KuromojiTokenizer> {

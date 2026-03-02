@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-03-01T22:41:33.654Z",
+  "referenceFile": "C:\\Users\\locbh\\vocab-backend\\data\\grammar-reference\\bunpro-reference.json",
+  "summary": {
+    "insertedTotal": 0
+  },
+  "levels": {
+    "N5": {
+      "sourceBook": "minna1",
+      "sourceTitle": "みんなの日本語 I [Grammar] | Bunpro",
+      "sourceUrl": "https://bunpro.jp/decks/9fzdtl/%E3%81%BF%E3%82%93%E3%81%AA%E3%81%AE%E6%97%A5%E6%9C%AC%E8%AA%9E-I-Grammar",
+      "referenceCount": 118,
+      "dbCountBefore": 199,
+      "matchedCount": 108,
+      "missingCount": 0,
+      "ambiguousCount": 10,
+      "matchedByCoreCount": 108,
+      "ambiguousCoreCount": 10,
+      "insertedCount": 0,
+      "missingSample": [],
+      "dbCountAfter": 199
+    },
+    "N4": {
+      "sourceBook": "minna2",
+      "sourceTitle": "みんなの日本語 I I [Grammar] | Bunpro",
+      "sourceUrl": "https://bunpro.jp/decks/6jgltv/%E3%81%BF%E3%82%93%E3%81%AA%E3%81%AE%E6%97%A5%E6%9C%AC%E8%AA%9E-I-I-%5BGrammar%5D",
+      "referenceCount": 92,
+      "dbCountBefore": 191,
+      "matchedCount": 91,
+      "missingCount": 0,
+      "ambiguousCount": 1,
+      "matchedByCoreCount": 92,
+      "ambiguousCoreCount": 0,
+      "insertedCount": 0,
+      "missingSample": [],
+      "dbCountAfter": 191
+    },
+    "N3": {
+      "sourceBook": "shinkanzen_n3",
+      "sourceTitle": "新完全マスター・JLPTN3・文法と語彙 | Bunpro",
+      "sourceUrl": "https://bunpro.jp/decks/zrxuwq/shinkanzen-master-jlpt-n3",
+      "referenceCount": 60,
+      "dbCountBefore": 196,
+      "matchedCount": 58,
+      "missingCount": 0,
+      "ambiguousCount": 2,
+      "matchedByCoreCount": 58,
+      "ambiguousCoreCount": 2,
+      "insertedCount": 0,
+      "missingSample": [],
+      "dbCountAfter": 196
+    },
+    "N2": {
+      "sourceBook": "shinkanzen_n2",
+      "sourceTitle": "新完全マスター文法N2 | Bunpro",
+      "sourceUrl": "https://bunpro.jp/decks/rmegia/skmn2",
+      "referenceCount": 143,
+      "dbCountBefore": 286,
+      "matchedCount": 140,
+      "missingCount": 0,
+      "ambiguousCount": 3,
+      "matchedByCoreCount": 141,
+      "ambiguousCoreCount": 2,
+      "insertedCount": 0,
+      "missingSample": [],
+      "dbCountAfter": 286
+    },
+    "N1": {
+      "sourceBook": "shinkanzen_n1",
+      "sourceTitle": "新完全マスター文法N1 | Bunpro",
+      "sourceUrl": "https://bunpro.jp/decks/o49klo/skmn1",
+      "referenceCount": 99,
+      "dbCountBefore": 232,
+      "matchedCount": 88,
+      "missingCount": 0,
+      "ambiguousCount": 11,
+      "matchedByCoreCount": 99,
+      "ambiguousCoreCount": 0,
+      "insertedCount": 0,
+      "missingSample": [],
+      "dbCountAfter": 232
+    }
+  }
+}

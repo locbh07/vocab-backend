@@ -14,6 +14,10 @@ model Grammar {
   grammar_point        String           @db.VarChar(255)
   grammar_point_romaji String?          @db.VarChar(255)
   level                String           @db.VarChar(5)
+  source_book          String?          @db.VarChar(64)
+  source_unit          String?          @db.VarChar(64)
+  track                String           @default("core") @db.VarChar(20)
+  priority             Int?
   topic                String?          @db.VarChar(255)
   meaning_vi           String?          @db.Text
   grammar_usage_text   String?          @db.Text @map("grammar_usage")
