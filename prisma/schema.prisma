@@ -235,5 +235,50 @@ model Vocabulary {
   @@map("vocabulary")
 }
 
-// Note: vocabulary_backup_coreorder has no PK in your description — skip mapping for now or add a manual model if needed.
+// Note: vocabulary_backup_coreorder has no PK in your description  Eskip mapping for now or add a manual model if needed.
 
+
+model ListeningVideo {
+  id               BigInt   @id @default(autoincrement())
+  source_id        String?  @db.VarChar(100)
+  video_id         String   @unique @db.VarChar(20)
+  source_order     Int?
+  title            String   @db.Text
+  duration_sec     Int      @default(0)
+  thumbnail        String?  @db.Text
+  levels           String[] @default([])
+  normalized_levels String[] @default([])
+  tags             String[] @default([])
+  category_label   String?  @db.VarChar(100)
+  created_relative String?  @db.VarChar(50)
+  views            BigInt   @default(0)
+  created_at_src   DateTime?
+  updated_at_src   DateTime?
+  video_url        String?  @db.Text
+  embed_url        String?  @db.Text
+  inserted_at      DateTime @default(now())
+  updated_at       DateTime @default(now())
+
+  transcripts ListeningTranscriptLine[]
+
+  @@index([inserted_at])
+  @@map("listening_video")
+}
+
+model ListeningTranscriptLine {
+  id          BigInt   @id @default(autoincrement())
+  video_id    String   @db.VarChar(20)
+  line_index  Int
+  text        String   @db.Text
+  start_sec   Float?
+  end_sec     Float?
+  dur_sec     Float?
+  ruby_html   String?  @db.Text
+  inserted_at DateTime @default(now())
+
+  video ListeningVideo @relation(fields: [video_id], references: [video_id], onDelete: Cascade)
+
+  @@unique([video_id, line_index])
+  @@index([video_id])
+  @@map("listening_transcript_line")
+}
