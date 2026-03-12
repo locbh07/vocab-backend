@@ -36,6 +36,8 @@
     "kanji:compounds:build:vocab-only": "node scripts/build-kanji-compounds.cjs --skip-jmdict",
     "kanji:compounds:prewarm": "node scripts/build-kanji-compounds.cjs --prewarm-only",
     "listening:import:json": "node scripts/import-listening-from-json.cjs",
+    "db:sync:staging-to-local": "powershell -ExecutionPolicy Bypass -File scripts/sync-db-from-server.ps1 -From staging",
+    "db:sync:production-to-local": "powershell -ExecutionPolicy Bypass -File scripts/sync-db-from-server.ps1 -From production",
     "prisma": "prisma",
     "prisma:migrate:dev:local": "npm run env:local && npm run prisma -- migrate dev",
     "prisma:migrate:deploy:staging": "npm run env:staging && npm run prisma -- migrate deploy",

@@ -8,3 +8,4 @@ dist/
 /.vscode
 *.log
 prisma/dev.db
+backups/
