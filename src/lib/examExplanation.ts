@@ -216,7 +216,7 @@ export async function generateExamQuestionExplanation(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
+    body: encodeOpenAIRequestBody({
       model,
       temperature: 0.2,
       response_format: { type: 'json_object' },
@@ -286,7 +286,7 @@ export async function generatePassageExplanation(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
+    body: encodeOpenAIRequestBody({
       model,
       temperature: 0.2,
       response_format: { type: 'json_object' },
@@ -385,6 +385,8 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
     isSentenceOrder
       ? '9) Day la dang sap xep cau co dau ★: ordered_options BAT BUOC phai gom DAY DU tat ca lựa chọn (1-2-3-4) moi lựa chọn dung 1 lan, cho cau hoan chinh sau sap xep, va chi ro manh dung o vi tri ★.'
       : '9) Neu không phai dang sap xep, de null cho sentence_order_solution.',
+    '10) Mỗi reason_vi phải bám đúng chính lựa chọn đang phân tích; không duoc dùng 1 ly do mau cho nhieu dap an.',
+    '11) Khong gan ep ly do theo chu de "cong viec" neu cau lua chon do khong co ngu canh cong viec.',
     '',
     'Trả về JSON dung cac key sau, không them key khac:',
     '{',
@@ -591,6 +593,7 @@ function normalizeExplanation(
       item.verdict = item.option === payload.correctAnswer ? 'correct' : 'wrong';
     }
   }
+  const alignedOptionAnalysis = alignExamOptionReasonsWithOptionContext(optionAnalysis, payload);
 
   const questionJaFallback = payload.questionWithBlank || payload.questionText || '';
   const forceOriginalQuestionText = payload.questionType === 'reading_content' || payload.questionType === 'reading_cloze';
@@ -603,7 +606,7 @@ function normalizeExplanation(
     sentence_order_solution: asSentenceOrderSolution(value.sentence_order_solution, payload),
     key_point_vi: text(value.key_point_vi) || '',
     reasoning_steps_vi: asStringArray(value.reasoning_steps_vi),
-    option_analysis: optionAnalysis,
+    option_analysis: alignedOptionAnalysis,
     options_with_reading: asOptionWithReading(
       value.options_with_reading,
       payload.options,
@@ -749,7 +752,7 @@ async function repairSentenceOrderSolutionWithModel(args: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${args.apiKey}`,
       },
-      body: JSON.stringify({
+      body: encodeOpenAIRequestBody({
         model: args.model,
         temperature: 0,
         response_format: { type: 'json_object' },
@@ -1326,7 +1329,7 @@ async function fillMissingPassageOptionContent(args: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${args.apiKey}`,
       },
-      body: JSON.stringify({
+      body: encodeOpenAIRequestBody({
         model: args.model,
         temperature: 0.1,
         response_format: { type: 'json_object' },
@@ -1460,6 +1463,32 @@ function parsePositiveInt(value: unknown): number | null {
   return parsed;
 }
 
+function alignExamOptionReasonsWithOptionContext(
+  optionAnalysis: OptionAnalysis[],
+  payload: ExamQuestionPayload,
+): OptionAnalysis[] {
+  return optionAnalysis.map((item) => {
+    const optionText = String(payload.options?.[item.option] || '');
+    if (!mentionsWorkContext(item.reason_vi) || mentionsWorkContext(optionText)) {
+      return item;
+    }
+
+    return {
+      ...item,
+      reason_vi:
+        item.verdict === 'correct'
+          ? 'Lựa chọn này đúng vì cách dùng từ/cấu trúc tự nhiên nhất trong chính ngữ cảnh của câu.'
+          : 'Lựa chọn này sai vì cách dùng từ/cấu trúc không tự nhiên trong chính ngữ cảnh của câu.',
+    };
+  });
+}
+
+function mentionsWorkContext(value: string): boolean {
+  const source = String(value || '');
+  if (!source) return false;
+  return /(仕事|業務|職場|勤務|作業|会社|công việc|việc làm|chỗ làm|đi làm|job|work)/iu.test(source);
+}
+
 function normalizeOptionKey(value: unknown): string {
   const raw = text(value) || '';
   if (!raw) return '';
@@ -1492,6 +1521,50 @@ async function safeReadBody(response: Response) {
   } catch {
     return 'Unable to read response body';
   }
+}
+
+function encodeOpenAIRequestBody(payload: unknown): string {
+  return JSON.stringify(sanitizeForJsonTransport(payload));
+}
+
+function sanitizeForJsonTransport(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  const kind = typeof value;
+  if (kind === 'string') return sanitizeJsonString(value as string);
+  if (kind === 'number' || kind === 'boolean') return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeForJsonTransport(item));
+  if (kind === 'object') {
+    const row = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(row)) {
+      out[key] = sanitizeForJsonTransport(item);
+    }
+    return out;
+  }
+  return String(value);
+}
+
+function sanitizeJsonString(input: string): string {
+  const source = String(input || '');
+  let out = '';
+
+  for (let i = 0; i < source.length; i += 1) {
+    const code = source.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = source.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += source[i] + source[i + 1];
+        i += 1;
+      }
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      continue;
+    }
+    out += source[i];
+  }
+
+  return out;
 }
 
 
