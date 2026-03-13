@@ -617,6 +617,13 @@ export function createLearningRouter() {
       ORDER BY study_date DESC
       LIMIT 90
     `;
+    const streakRows = await prisma.$queryRaw<Array<{ study_date: Date }>>`
+      SELECT DATE(review_time) AS study_date
+      FROM user_kanji_review_log
+      WHERE user_id = ${userBigId}
+      GROUP BY DATE(review_time)
+      ORDER BY study_date ASC
+    `;
 
     const recentStudyDays: Record<string, number> = {};
     let todayReviews = 0;
@@ -626,6 +633,9 @@ export function createLearningRouter() {
       recentStudyDays[key] = items;
       if (key === formatLocalDateKey(today)) todayReviews = items;
     }
+    const longestStreak = calculateLongestStreakFromKeys(
+      streakRows.map((row) => formatLocalDateKey(row.study_date)),
+    );
 
     let streak = 0;
     let cursor = dateOnly(new Date());
@@ -657,6 +667,7 @@ export function createLearningRouter() {
       todayNewKanji: Number(todayNewRow?.total || 0n),
       todayReviews,
       currentStreak: streak,
+      longestStreak,
       recentStudyDays,
     });
   });
@@ -690,6 +701,13 @@ export function createLearningRouter() {
       ORDER BY study_date DESC
       LIMIT 60
     `;
+    const streakRows = await prisma.$queryRaw<Array<{ study_date: Date }>>`
+      SELECT DATE(review_time) AS study_date
+      FROM user_review_log
+      WHERE user_id = ${userBigId}
+      GROUP BY DATE(review_time)
+      ORDER BY study_date ASC
+    `;
 
     const recentStudyDays: Record<string, number> = {};
     let todayReviews = 0;
@@ -699,6 +717,9 @@ export function createLearningRouter() {
       recentStudyDays[key] = words;
       if (key === formatLocalDateKey(today)) todayReviews = words;
     }
+    const longestStreak = calculateLongestStreakFromKeys(
+      streakRows.map((row) => formatLocalDateKey(row.study_date)),
+    );
 
     let streak = 0;
     let cursor = dateOnly(new Date());
@@ -729,11 +750,46 @@ export function createLearningRouter() {
       todayNewWords: Number(todayNewRow?.total || 0n),
       todayReviews,
       currentStreak: streak,
+      longestStreak,
       recentStudyDays,
     });
   });
 
   return router;
+}
+
+function calculateLongestStreakFromKeys(keys: string[]): number {
+  if (!keys.length) return 0;
+  const uniqueSortedKeys = [...new Set(keys)].sort();
+  let best = 1;
+  let run = 1;
+
+  for (let i = 1; i < uniqueSortedKeys.length; i += 1) {
+    const prev = parseDateKey(uniqueSortedKeys[i - 1]);
+    const current = parseDateKey(uniqueSortedKeys[i]);
+    if (!prev || !current) continue;
+    const diff = current.getTime() - prev.getTime();
+    if (diff === 24 * 60 * 60 * 1000) {
+      run += 1;
+      if (run > best) best = run;
+    } else {
+      run = 1;
+    }
+  }
+
+  return best;
+}
+
+function parseDateKey(key: string): Date | null {
+  if (!key) return null;
+  const [yearRaw, monthRaw, dayRaw] = key.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  return new Date(year, month - 1, day);
 }
 
 async function getActivePlan(userId: number) {
