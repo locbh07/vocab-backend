@@ -59,6 +59,31 @@ export function createAdminUsersRouter() {
     return res.json(sanitizeUser(updated));
   });
 
+  router.post('/:idOrUsername/impersonate', async (req: Request, res: Response) => {
+    const admin = await requireAdmin(req);
+    const target = await findUser(req.params.idOrUsername);
+    if (!target) return res.status(404).json({ message: 'User not found' });
+    if (Number(target.id) === admin.id) {
+      return res.status(400).json({ message: 'Cannot impersonate yourself' });
+    }
+    if (String(target.role || '').toUpperCase().includes('ADMIN')) {
+      return res.status(403).json({ message: 'Cannot impersonate admin account' });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
+    return res.json({
+      user: sanitizeUser(target),
+      impersonation: {
+        mode: 'admin_impersonation',
+        adminId: admin.id,
+        adminUsername: admin.username,
+        issuedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
+  });
+
   router.get('/:userId/stats', async (req: Request, res: Response) => {
     await requireAdmin(req);
     const userId = Number(req.params.userId);
