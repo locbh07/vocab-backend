@@ -62,6 +62,49 @@ type ScoredItem = {
   question_json: unknown;
 };
 
+type RawSectionScore = {
+  scoreSec1: number;
+  scoreSec2: number;
+  scoreSec3: number;
+};
+
+type SectionQuestionTotal = {
+  totalSec1: number;
+  totalSec2: number;
+  totalSec3: number;
+};
+
+type JlptScoreResult = {
+  scoreSec1: number;
+  scoreSec2: number;
+  scoreSec3: number;
+  scoreTotal: number;
+  maxPerSection: number;
+  maxTotal: number;
+  minSection: number;
+  minTotal: number;
+  isPass: boolean;
+  isSectionPass: boolean;
+  isTotalPass: boolean;
+  isFailedBySection: boolean;
+  status: 'PASS' | 'FAIL_TOTAL' | 'FAIL_SECTION';
+  statusLabel: 'Đậu' | 'Rớt' | 'Rớt do liệt';
+  failedSections: number[];
+  raw: RawSectionScore;
+  questionTotals: SectionQuestionTotal;
+};
+
+const JLPT_MIN_TOTAL_BY_LEVEL: Record<string, number> = {
+  N1: 100,
+  N2: 90,
+  N3: 95,
+  N4: 90,
+  N5: 80,
+};
+
+const JLPT_SECTION_MIN_SCORE = 19;
+const JLPT_MAX_SCORE_PER_SECTION = 60;
+
 export function createExamRouter() {
   const router = Router();
 
@@ -94,6 +137,119 @@ export function createExamRouter() {
         ORDER BY exam_id DESC
       `;
       return res.json({ level, exams: rows.map((r: { exam_id: string }) => r.exam_id) });
+    } catch (error) {
+      return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
+    }
+  });
+
+  router.get('/history', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    const page = Math.max(Number(req.query.page || 1), 1);
+    const size = Math.min(Math.max(Number(req.query.size || 20), 1), 50);
+    const code = String(req.query.code || '');
+    try {
+      await requireExamAccess(userId, code, null);
+      const rows = await prisma.jlptAttempt.findMany({
+        where: { user_id: BigInt(userId) },
+        orderBy: { started_at: 'desc' },
+        skip: (page - 1) * size,
+        take: size,
+      });
+      const attemptIds = rows.map((row) => row.id);
+      const grouped = attemptIds.length
+        ? await prisma.jlptAttemptItem.groupBy({
+          by: ['attempt_id', 'part'],
+          where: { attempt_id: { in: attemptIds } },
+          _count: { _all: true },
+        })
+        : [];
+      const totalsByAttempt = new Map<string, SectionQuestionTotal>();
+      grouped.forEach((entry) => {
+        const key = String(entry.attempt_id);
+        const current = totalsByAttempt.get(key) || {
+          totalSec1: 0,
+          totalSec2: 0,
+          totalSec3: 0,
+        };
+        const count = Number(entry._count?._all || 0);
+        if (entry.part === 1) current.totalSec1 = count;
+        if (entry.part === 2) current.totalSec2 = count;
+        if (entry.part === 3) current.totalSec3 = count;
+        totalsByAttempt.set(key, current);
+      });
+      const items = rows.map((row) => {
+        const questionTotals = totalsByAttempt.get(String(row.id)) || {
+          totalSec1: 0,
+          totalSec2: 0,
+          totalSec3: 0,
+        };
+        const jlpt = buildJlptScoreResult(
+          row.level,
+          {
+            scoreSec1: Number(row.score_sec1 || 0),
+            scoreSec2: Number(row.score_sec2 || 0),
+            scoreSec3: Number(row.score_sec3 || 0),
+          },
+          questionTotals,
+        );
+        return {
+          ...row,
+          jlpt,
+          jlpt_score_total: jlpt.scoreTotal,
+          jlpt_score_sec1: jlpt.scoreSec1,
+          jlpt_score_sec2: jlpt.scoreSec2,
+          jlpt_score_sec3: jlpt.scoreSec3,
+          jlpt_status: jlpt.status,
+          jlpt_status_label: jlpt.statusLabel,
+        };
+      });
+      return res.json({ items, page, size });
+    } catch (error) {
+      return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
+    }
+  });
+
+  router.get('/history/:attemptId', async (req: Request, res: Response) => {
+    const attemptIdRaw = String(req.params.attemptId || '').trim();
+    if (!/^\d+$/.test(attemptIdRaw)) {
+      return res.status(400).json({ message: 'Invalid attempt id' });
+    }
+    const attemptId = BigInt(attemptIdRaw);
+    const userId = Number(req.query.userId);
+    const code = String(req.query.code || '');
+    try {
+      await requireExamAccess(userId, code, null);
+      const attempt = await prisma.jlptAttempt.findUnique({ where: { id: attemptId } });
+      if (!attempt) return res.status(404).json({ message: 'Attempt not found' });
+      if (Number(attempt.user_id) !== userId) return res.status(403).json({ message: 'Not allowed' });
+      const items = await prisma.jlptAttemptItem.findMany({
+        where: { attempt_id: attemptId },
+        orderBy: [{ part: 'asc' }, { section_index: 'asc' }, { question_index: 'asc' }],
+      });
+      const questionTotals = countQuestionTotalsFromItems(items);
+      const jlpt = buildJlptScoreResult(
+        attempt.level,
+        {
+          scoreSec1: Number(attempt.score_sec1 || 0),
+          scoreSec2: Number(attempt.score_sec2 || 0),
+          scoreSec3: Number(attempt.score_sec3 || 0),
+        },
+        questionTotals,
+      );
+      return res.json({
+        attempt: {
+          ...attempt,
+          jlpt,
+          jlpt_score_total: jlpt.scoreTotal,
+          jlpt_score_sec1: jlpt.scoreSec1,
+          jlpt_score_sec2: jlpt.scoreSec2,
+          jlpt_score_sec3: jlpt.scoreSec3,
+          jlpt_status: jlpt.status,
+          jlpt_status_label: jlpt.statusLabel,
+        },
+        items,
+        jlpt,
+      });
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
     }
@@ -141,6 +297,8 @@ export function createExamRouter() {
       if (!parts.length) return res.status(404).json({ message: 'Exam not found' });
 
       const scored = scoreAttempt(parts, body.answers || {});
+      const questionTotals = countQuestionTotalsFromItems(scored.items);
+      const jlpt = buildJlptScoreResult(body.level, scored, questionTotals);
       const finished = new Date();
       const durationSec = Number(body.durationSec || 0);
       const started = durationSec > 0 ? new Date(finished.getTime() - durationSec * 1000) : finished;
@@ -182,6 +340,13 @@ export function createExamRouter() {
         scoreSec1: scored.scoreSec1,
         scoreSec2: scored.scoreSec2,
         scoreSec3: scored.scoreSec3,
+        jlpt,
+        jlptScoreTotal: jlpt.scoreTotal,
+        jlptScoreSec1: jlpt.scoreSec1,
+        jlptScoreSec2: jlpt.scoreSec2,
+        jlptScoreSec3: jlpt.scoreSec3,
+        jlptStatus: jlpt.status,
+        jlptStatusLabel: jlpt.statusLabel,
         items: scored.items,
       });
     } catch (error) {
@@ -515,44 +680,6 @@ export function createExamRouter() {
       });
     } catch (error) {
       return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
-    }
-  });
-
-  router.get('/history', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    const page = Math.max(Number(req.query.page || 1), 1);
-    const size = Math.min(Math.max(Number(req.query.size || 20), 1), 50);
-    const code = String(req.query.code || '');
-    try {
-      await requireExamAccess(userId, code, null);
-      const rows = await prisma.jlptAttempt.findMany({
-        where: { user_id: BigInt(userId) },
-        orderBy: { started_at: 'desc' },
-        skip: (page - 1) * size,
-        take: size,
-      });
-      return res.json({ items: rows, page, size });
-    } catch (error) {
-      return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
-    }
-  });
-
-  router.get('/history/:attemptId', async (req: Request, res: Response) => {
-    const attemptId = Number(req.params.attemptId);
-    const userId = Number(req.query.userId);
-    const code = String(req.query.code || '');
-    try {
-      await requireExamAccess(userId, code, null);
-      const attempt = await prisma.jlptAttempt.findUnique({ where: { id: BigInt(attemptId) } });
-      if (!attempt) return res.status(404).json({ message: 'Attempt not found' });
-      if (Number(attempt.user_id) !== userId) return res.status(403).json({ message: 'Not allowed' });
-      const items = await prisma.jlptAttemptItem.findMany({
-        where: { attempt_id: BigInt(attemptId) },
-        orderBy: [{ part: 'asc' }, { section_index: 'asc' }, { question_index: 'asc' }],
-      });
-      return res.json({ attempt, items });
-    } catch (error) {
-      return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
     }
   });
 
@@ -1503,6 +1630,88 @@ function toText(value: unknown): string | null {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function countQuestionTotalsFromItems(
+  items: Array<{ part: number }>,
+): SectionQuestionTotal {
+  const out: SectionQuestionTotal = {
+    totalSec1: 0,
+    totalSec2: 0,
+    totalSec3: 0,
+  };
+  for (const item of items) {
+    if (item.part === 1) out.totalSec1 += 1;
+    if (item.part === 2) out.totalSec2 += 1;
+    if (item.part === 3) out.totalSec3 += 1;
+  }
+  return out;
+}
+
+function toScaledScore(raw: number, total: number, maxScore: number): number {
+  const safeRaw = Number(raw || 0);
+  const safeTotal = Number(total || 0);
+  if (!Number.isFinite(safeRaw) || !Number.isFinite(safeTotal) || safeTotal <= 0) return 0;
+  const ratio = Math.max(0, Math.min(1, safeRaw / safeTotal));
+  return Math.round(ratio * maxScore);
+}
+
+function resolveMinTotalByLevel(level: string): number {
+  const key = String(level || '').toUpperCase();
+  return JLPT_MIN_TOTAL_BY_LEVEL[key] ?? JLPT_MIN_TOTAL_BY_LEVEL.N3;
+}
+
+function buildJlptScoreResult(
+  level: string,
+  raw: RawSectionScore,
+  questionTotals: SectionQuestionTotal,
+): JlptScoreResult {
+  const scoreSec1 = toScaledScore(raw.scoreSec1, questionTotals.totalSec1, JLPT_MAX_SCORE_PER_SECTION);
+  const scoreSec2 = toScaledScore(raw.scoreSec2, questionTotals.totalSec2, JLPT_MAX_SCORE_PER_SECTION);
+  const scoreSec3 = toScaledScore(raw.scoreSec3, questionTotals.totalSec3, JLPT_MAX_SCORE_PER_SECTION);
+  const scoreTotal = scoreSec1 + scoreSec2 + scoreSec3;
+  const minTotal = resolveMinTotalByLevel(level);
+  const failedSections = [1, 2, 3].filter((part) => {
+    const value = part === 1 ? scoreSec1 : part === 2 ? scoreSec2 : scoreSec3;
+    return value < JLPT_SECTION_MIN_SCORE;
+  });
+  const isSectionPass = failedSections.length === 0;
+  const isTotalPass = scoreTotal >= minTotal;
+  const isPass = isSectionPass && isTotalPass;
+  const status: JlptScoreResult['status'] = isPass
+    ? 'PASS'
+    : !isSectionPass
+      ? 'FAIL_SECTION'
+      : 'FAIL_TOTAL';
+  const statusLabel: JlptScoreResult['statusLabel'] = isPass
+    ? 'Đậu'
+    : !isSectionPass
+      ? 'Rớt do liệt'
+      : 'Rớt';
+
+  return {
+    scoreSec1,
+    scoreSec2,
+    scoreSec3,
+    scoreTotal,
+    maxPerSection: JLPT_MAX_SCORE_PER_SECTION,
+    maxTotal: JLPT_MAX_SCORE_PER_SECTION * 3,
+    minSection: JLPT_SECTION_MIN_SCORE,
+    minTotal,
+    isPass,
+    isSectionPass,
+    isTotalPass,
+    isFailedBySection: !isSectionPass,
+    status,
+    statusLabel,
+    failedSections,
+    raw: {
+      scoreSec1: Number(raw.scoreSec1 || 0),
+      scoreSec2: Number(raw.scoreSec2 || 0),
+      scoreSec3: Number(raw.scoreSec3 || 0),
+    },
+    questionTotals,
+  };
 }
 
 function scoreAttempt(parts: Array<{ part: number; json_data: unknown }>, answers: Record<string, string[]>) {

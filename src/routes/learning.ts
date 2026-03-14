@@ -1375,6 +1375,8 @@ async function loadKanjiCatalog(): Promise<KanjiCatalog> {
 
 function resolveKanjiCatalogPath(): string | null {
   const candidates = [
+    path.resolve(__dirname, '../../data/kanji/kanji-en.json'),
+    path.resolve(process.cwd(), 'data/kanji/kanji-en.json'),
     path.resolve(__dirname, '../../../vocab-frontend/public/data/kanji/kanji-en.json'),
     path.resolve(process.cwd(), '../vocab-frontend/public/data/kanji/kanji-en.json'),
     path.resolve(process.cwd(), 'public/data/kanji/kanji-en.json'),
