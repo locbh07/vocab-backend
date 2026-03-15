@@ -12,30 +12,77 @@ export function createAdminUsersRouter() {
     const page = Math.max(Number(req.query.page || 0), 0);
     const size = Math.min(Math.max(Number(req.query.size || 20), 1), 200);
     const skip = page * size;
+    const where = keyword
+      ? {
+          OR: [
+            { username: { contains: keyword, mode: 'insensitive' as const } },
+            { fullname: { contains: keyword, mode: 'insensitive' as const } },
+            { email: { contains: keyword, mode: 'insensitive' as const } },
+          ],
+        }
+      : undefined;
 
-    const rows = await prisma.userAccount.findMany({
-      where: keyword
-        ? {
-            OR: [
-              { username: { contains: keyword, mode: 'insensitive' } },
-              { fullname: { contains: keyword, mode: 'insensitive' } },
-              { email: { contains: keyword, mode: 'insensitive' } },
-            ],
-          }
-        : undefined,
-      orderBy: { id: 'desc' },
-      skip,
-      take: size,
+    const [rows, total] = await Promise.all([
+      prisma.userAccount.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        skip,
+        take: size,
+        include: {
+          learningPlans: {
+            where: { is_active: 1 },
+            orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
+            take: 1,
+          },
+        },
+      }),
+      prisma.userAccount.count({ where }),
+    ]);
+
+    const userIds = rows.map((r) => r.id);
+    const examCodeRows =
+      userIds.length > 0
+        ? await prisma.userExamCode.groupBy({
+            by: ['user_id'],
+            where: {
+              user_id: { in: userIds },
+              enabled: true,
+            },
+            _count: { _all: true },
+          })
+        : [];
+    const examCodeUserIdSet = new Set(examCodeRows.map((r) => Number(r.user_id)));
+
+    return res.json({
+      items: rows.map((r: any) =>
+        sanitizeUser(r, {
+          activePlan: r.learningPlans?.[0] || null,
+          hasExamCodeByLevel: examCodeUserIdSet.has(Number(r.id)),
+        }),
+      ),
+      total,
+      page,
+      size,
     });
-
-    return res.json(rows.map((r: any) => sanitizeUser(r)));
   });
 
   router.get('/:idOrUsername', async (req: Request, res: Response) => {
     await requireAdmin(req);
     const user = await findUser(req.params.idOrUsername);
     if (!user) return res.status(404).json({ message: 'User not found' });
-    return res.json(sanitizeUser(user));
+    const activePlan = await prisma.userLearningPlan.findFirst({
+      where: { user_id: user.id, is_active: 1 },
+      orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
+    });
+    const examCodeCount = await prisma.userExamCode.count({
+      where: { user_id: user.id, enabled: true },
+    });
+    return res.json(
+      sanitizeUser(user, {
+        activePlan,
+        hasExamCodeByLevel: examCodeCount > 0,
+      }),
+    );
   });
 
   router.put('/:idOrUsername', async (req: Request, res: Response) => {
@@ -56,7 +103,19 @@ export function createAdminUsersRouter() {
       where: { id: user.id },
       data,
     });
-    return res.json(sanitizeUser(updated));
+    const activePlan = await prisma.userLearningPlan.findFirst({
+      where: { user_id: updated.id, is_active: 1 },
+      orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
+    });
+    const examCodeCount = await prisma.userExamCode.count({
+      where: { user_id: updated.id, enabled: true },
+    });
+    return res.json(
+      sanitizeUser(updated, {
+        activePlan,
+        hasExamCodeByLevel: examCodeCount > 0,
+      }),
+    );
   });
 
   router.post('/:idOrUsername/impersonate', async (req: Request, res: Response) => {
@@ -195,7 +254,8 @@ async function findUser(idOrUsername: string) {
   return prisma.userAccount.findUnique({ where: { username: idOrUsername } });
 }
 
-function sanitizeUser(user: {
+function sanitizeUser(
+  user: {
   id: bigint;
   username: string;
   fullname: string;
@@ -204,7 +264,18 @@ function sanitizeUser(user: {
   createdat: Date;
   exam_enabled: boolean;
   exam_code: string | null;
-}) {
+  },
+  extras?: {
+    activePlan?: { topic_prefix?: string | null } | null;
+    hasExamCodeByLevel?: boolean;
+  },
+) {
+  const topicPrefix = extras?.activePlan?.topic_prefix || null;
+  const currentLevel = inferCurrentLevel(topicPrefix);
+  const hasExamCode =
+    Boolean(user.exam_enabled && user.exam_code && String(user.exam_code).trim()) ||
+    Boolean(extras?.hasExamCodeByLevel);
+
   return {
     id: Number(user.id),
     username: user.username,
@@ -214,5 +285,16 @@ function sanitizeUser(user: {
     createdAt: user.createdat,
     examEnabled: user.exam_enabled,
     examCode: user.exam_code,
+    hasExamCode,
+    currentLevel,
+    topicPrefix,
   };
+}
+
+function inferCurrentLevel(topicPrefix?: string | null) {
+  const raw = String(topicPrefix || '').toUpperCase();
+  if (!raw || raw === 'CORE') return 'Tổng hợp';
+  const match = raw.match(/N[1-5]/);
+  if (match) return match[0];
+  return 'Tổng hợp';
 }
