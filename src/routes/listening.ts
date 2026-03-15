@@ -61,8 +61,8 @@ export function createListeningRouter() {
   router.get('/videos', async (req: Request, res: Response) => {
     const q = String(req.query.q || '').trim();
     const level = normalizeLevel(req.query.level);
-    const limitRaw = Number(req.query.limit || 300);
-    const limit = Math.min(Math.max(limitRaw, 1), 500);
+    const limitRaw = Number(req.query.limit || 5000);
+    const limit = Math.min(Math.max(limitRaw, 1), 5000);
     const predicates: Prisma.Sql[] = [];
 
     if (q) {

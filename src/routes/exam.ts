@@ -390,13 +390,30 @@ export function createExamRouter() {
         return res.status(403).json({ message: 'Only admin can refresh explanation' });
       }
 
-      const questionCtx = await loadQuestionContext(
+      const loadedQuestionCtx = await loadQuestionContext(
         body.level,
         body.examId,
         part,
         sectionIndex,
         questionIndex,
       );
+      let questionCtx = loadedQuestionCtx;
+      if (part === 3 || loadedQuestionCtx.questionType === 'listening') {
+        const listeningScript = extractListeningScriptForExplanation(
+          loadedQuestionCtx.passageText,
+          loadedQuestionCtx.questionText,
+        );
+        if (!listeningScript) {
+          return res.status(422).json({
+            message:
+              'Cau nghe nay chua co script hop le de giai thich. Vui long bo sung transcript roi thu lai.',
+          });
+        }
+        questionCtx = {
+          ...loadedQuestionCtx,
+          passageText: listeningScript,
+        };
+      }
       const readingCache = await getOrCreateQuestionReadingCache({
         level: body.level,
         examId: body.examId,
@@ -543,6 +560,11 @@ export function createExamRouter() {
     }
     if (sectionIndex < 0 || questionIndexes.length === 0) {
       return res.status(400).json({ message: 'Invalid sectionIndex/questionIndexes' });
+    }
+    if (part === 3) {
+      return res.status(400).json({
+        message: 'Phan nghe khong dung passage-explanation. Hay dung question-explanation theo tung cau.',
+      });
     }
 
     try {
@@ -1173,6 +1195,43 @@ function extractPassageText(partJson: Record<string, unknown>, question: Record<
     if (cleaned) texts.push(cleaned);
   }
   return texts.join('\n');
+}
+
+function extractListeningScriptForExplanation(passageText: string, questionText: string): string {
+  const cleanedPassage = normalizeSpace(String(passageText || ''));
+  if (!cleanedPassage) return '';
+
+  const rawLines = cleanedPassage
+    .split(/\n+/)
+    .map((line) => normalizeSpace(line))
+    .filter(Boolean);
+  if (!rawLines.length) return '';
+
+  const contentLines = rawLines.filter((line) => !isLikelyListeningInstructionLine(line));
+  const script = normalizeSpace(contentLines.join('\n'));
+  if (script.length < 20) return '';
+
+  const normalizedQuestion = normalizeSpace(String(questionText || ''));
+  if (normalizedQuestion && script === normalizedQuestion) return '';
+
+  return script;
+}
+
+function isLikelyListeningInstructionLine(line: string): boolean {
+  const text = normalizeSpace(String(line || ''));
+  if (!text) return true;
+  const patterns = [
+    /まず質問を聞いてください/u,
+    /それから.*(話|会話|内容).*(聞いて|聞き).*(選|答)/u,
+    /問題用紙.*[1-4１-４].*中から.*選/u,
+    /最もよいものを一つ選/u,
+    /^問題\s*\d+\s*では/u,
+    /^問題\d+では/u,
+    /メモを取っても.*(かまいません|構いません)/u,
+    /では、?質問を聞いてください/u,
+    /これから.*(話|会話).*(聞|き)/u,
+  ];
+  return patterns.some((pattern) => pattern.test(text));
 }
 
 function buildQuestionHash(question: QuestionContext): string {
