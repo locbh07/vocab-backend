@@ -14,6 +14,7 @@ import { createUserPreferencesRouter } from './routes/userPreferences';
 import { createKanjiRouter } from './routes/kanji';
 import { createListeningRouter } from './routes/listening';
 import { jsonSafe } from './lib/jsonSafe';
+import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 
 dotenv.config();
 
@@ -53,10 +54,10 @@ app.use((req, res, next) => {
 
 app.use('/auth', createAuthRouter());
 app.use('/api/auth', createAuthRouter());
-app.use('/vocabulary', createVocabularyRouter());
-app.use('/api/vocabulary', createVocabularyRouter());
-app.use('/grammar', createGrammarRouter());
-app.use('/api/grammar', createGrammarRouter());
+app.use('/vocabulary', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'vocabulary' }), createVocabularyRouter());
+app.use('/api/vocabulary', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-vocabulary' }), createVocabularyRouter());
+app.use('/grammar', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'grammar' }), createGrammarRouter());
+app.use('/api/grammar', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-grammar' }), createGrammarRouter());
 app.use('/learning', createLearningRouter());
 app.use('/api/learning', createLearningRouter());
 app.use('/exam', createExamRouter());
@@ -71,8 +72,8 @@ app.use('/user/preferences', createUserPreferencesRouter());
 app.use('/api/user/preferences', createUserPreferencesRouter());
 app.use('/kanji', createKanjiRouter());
 app.use('/api/kanji', createKanjiRouter());
-app.use('/listening', createListeningRouter());
-app.use('/api/listening', createListeningRouter());
+app.use('/listening', createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'listening' }), createListeningRouter());
+app.use('/api/listening', createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'api-listening' }), createListeningRouter());
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;

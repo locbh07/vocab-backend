@@ -1,11 +1,26 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
+import { requireAdmin } from '../middleware/adminGuard';
+
+const ALLOWED_PREFIXES = new Set([
+  '3000_common_',
+  '1000_N5_',
+  '1500_N4_',
+  '2000_N3_',
+  '2500_N2_',
+  '3000_N1_',
+]);
+
+function normalizePrefix(value: unknown): string {
+  const prefix = String(value || '3000_common_').trim();
+  return ALLOWED_PREFIXES.has(prefix) ? prefix : '3000_common_';
+}
 
 export function createVocabularyRouter() {
   const router = Router();
 
   router.get('/all', async (req: Request, res: Response) => {
-    const prefix = String(req.query.prefix || '3000_common_');
+    const prefix = normalizePrefix(req.query.prefix);
     const rows = await prisma.vocabulary.findMany({
       where: { topic: { startsWith: prefix } },
       orderBy: { id: 'asc' },
@@ -14,7 +29,7 @@ export function createVocabularyRouter() {
   });
 
   router.get('/topics', async (req: Request, res: Response) => {
-    const prefix = String(req.query.prefix || '3000_common_');
+    const prefix = normalizePrefix(req.query.prefix);
     const rows = await prisma.$queryRaw<Array<{ topic: string }>>`
       SELECT topic
       FROM vocabulary
@@ -31,11 +46,13 @@ export function createVocabularyRouter() {
       const count = await prisma.vocabulary.count({ where: { core_order: { not: null } } });
       return res.json({ count });
     }
-    const count = await prisma.vocabulary.count({ where: { topic: { startsWith: prefix } } });
+    const safePrefix = normalizePrefix(prefix);
+    const count = await prisma.vocabulary.count({ where: { topic: { startsWith: safePrefix } } });
     return res.json({ count });
   });
 
   router.patch('/:id', async (req: Request, res: Response) => {
+    await requireAdmin(req);
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: 'Invalid id' });
     const existing = await prisma.vocabulary.findUnique({ where: { id: BigInt(id) } });

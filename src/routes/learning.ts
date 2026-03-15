@@ -15,6 +15,46 @@ function formatLocalDateKey(dateValue: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+type KanjiTodayCacheEntry = {
+  ts: number;
+  payload: {
+    plan: KanjiLearningPlan | null;
+    newKanji: ReturnType<typeof mapKanjiLearningItem>[];
+    reviewKanji: ReturnType<typeof mapKanjiLearningItem>[];
+  };
+};
+
+const KANJI_TODAY_CACHE_TTL_MS = 15_000;
+const kanjiTodayCacheByUser = new Map<number, KanjiTodayCacheEntry>();
+
+function readKanjiTodayCache(userId: number) {
+  const entry = kanjiTodayCacheByUser.get(userId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > KANJI_TODAY_CACHE_TTL_MS) {
+    kanjiTodayCacheByUser.delete(userId);
+    return null;
+  }
+  return entry.payload;
+}
+
+function writeKanjiTodayCache(
+  userId: number,
+  payload: {
+    plan: KanjiLearningPlan | null;
+    newKanji: ReturnType<typeof mapKanjiLearningItem>[];
+    reviewKanji: ReturnType<typeof mapKanjiLearningItem>[];
+  },
+) {
+  kanjiTodayCacheByUser.set(userId, {
+    ts: Date.now(),
+    payload,
+  });
+}
+
+function invalidateKanjiTodayCache(userId: number) {
+  kanjiTodayCacheByUser.delete(userId);
+}
+
 export function createLearningRouter() {
   const router = Router();
 
@@ -403,6 +443,7 @@ export function createLearningRouter() {
     if (activePlan?.id) {
       await rebuildKanjiPlanItemsForPlan(userId, activePlan);
     }
+    invalidateKanjiTodayCache(userId);
     return res.json(activePlan);
   });
 
@@ -445,15 +486,22 @@ export function createLearningRouter() {
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
     await ensureKanjiLearningTables();
 
+    const cached = readKanjiTodayCache(userId);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const plan = await getActiveKanjiPlan(userId);
     const reviewPromise = listDueKanjiRows(userId);
     if (!plan?.dailyNewKanji || plan.dailyNewKanji <= 0) {
       const reviewRows = await reviewPromise;
-      return res.json({
+      const payload = {
         plan: plan || null,
         newKanji: [],
         reviewKanji: reviewRows.map(mapKanjiLearningItem),
-      });
+      };
+      writeKanjiTodayCache(userId, payload);
+      return res.json(payload);
     }
 
     await ensureKanjiPlanItemsForPlan(userId, plan);
@@ -462,11 +510,13 @@ export function createLearningRouter() {
       reviewPromise,
     ]);
 
-    return res.json({
+    const payload = {
       plan,
       newKanji: newRows.map(mapKanjiLearningItem),
       reviewKanji: reviewRows.map(mapKanjiLearningItem),
-    });
+    };
+    writeKanjiTodayCache(userId, payload);
+    return res.json(payload);
   });
 
   router.post('/kanji/review-result', async (req: Request, res: Response) => {
@@ -584,6 +634,8 @@ export function createLearningRouter() {
         );
       }
     });
+
+    invalidateKanjiTodayCache(userId);
 
     return res.json('OK');
   });
@@ -1099,7 +1151,7 @@ async function listScheduledNewKanjiRows(userId: number, plan: KanjiLearningPlan
         FROM user_kanji_plan_item pi
         WHERE pi.user_id = $1
           AND pi.plan_id = $2
-          AND pi.day_index <= $3
+          AND pi.day_index = $3
           AND pi.status = 'pending'
           AND NOT EXISTS (
             SELECT 1

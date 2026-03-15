@@ -61,6 +61,8 @@ export function createListeningRouter() {
   router.get('/videos', async (req: Request, res: Response) => {
     const q = String(req.query.q || '').trim();
     const level = normalizeLevel(req.query.level);
+    const limitRaw = Number(req.query.limit || 300);
+    const limit = Math.min(Math.max(limitRaw, 1), 500);
     const predicates: Prisma.Sql[] = [];
 
     if (q) {
@@ -90,11 +92,12 @@ export function createListeningRouter() {
         ${whereSql}
         ${predicates.length ? Prisma.sql`AND` : Prisma.sql`WHERE`} duration_sec > 0
         ORDER BY COALESCE(source_order, 2147483647) ASC, inserted_at ASC
+        LIMIT ${limit}
       `,
     );
 
     const items = rows.map(mapVideo);
-    return res.json({ items, total: items.length });
+    return res.json({ items, total: items.length, limit });
   });
 
   router.get('/videos/:videoId', async (req: Request, res: Response) => {
