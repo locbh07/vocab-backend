@@ -13,6 +13,8 @@ import { createAdminExamRouter } from './routes/adminExam';
 import { createUserPreferencesRouter } from './routes/userPreferences';
 import { createKanjiRouter } from './routes/kanji';
 import { createListeningRouter } from './routes/listening';
+import { createFeedbackRouter } from './routes/feedback';
+import { createAdminFeedbackRouter } from './routes/adminFeedback';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 
@@ -23,6 +25,16 @@ const configuredCorsOrigin = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+const localhostCorsOrigins = new Set(['http://localhost:5173', 'http://127.0.0.1:5173']);
+
+function isLocalhostOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 
 if (configuredCorsOrigin.length === 0) {
   app.use(cors());
@@ -34,7 +46,12 @@ if (configuredCorsOrigin.length === 0) {
         callback: (err: Error | null, allow?: boolean) => void,
       ) => {
         // Allow same-origin/server-to-server requests without Origin header.
-        if (!origin || configuredCorsOrigin.includes(origin)) {
+        if (
+          !origin ||
+          configuredCorsOrigin.includes(origin) ||
+          localhostCorsOrigins.has(origin) ||
+          isLocalhostOrigin(origin)
+        ) {
           callback(null, true);
           return;
         }
@@ -74,6 +91,10 @@ app.use('/kanji', createKanjiRouter());
 app.use('/api/kanji', createKanjiRouter());
 app.use('/listening', createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'listening' }), createListeningRouter());
 app.use('/api/listening', createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'api-listening' }), createListeningRouter());
+app.use('/feedback', createSimpleRateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'feedback' }), createFeedbackRouter());
+app.use('/api/feedback', createSimpleRateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'api-feedback' }), createFeedbackRouter());
+app.use('/admin/feedback', createAdminFeedbackRouter());
+app.use('/api/admin/feedback', createAdminFeedbackRouter());
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;
