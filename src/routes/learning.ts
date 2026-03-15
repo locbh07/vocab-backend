@@ -807,6 +807,95 @@ export function createLearningRouter() {
     });
   });
 
+  router.get('/streak-leaderboard', async (req: Request, res: Response) => {
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(20, Math.floor(requestedLimit)))
+      : 5;
+
+    await ensureKanjiLearningTables();
+
+    const vocabRows = await prisma.$queryRaw<
+      Array<{ user_id: bigint; full_name: string | null; longest_streak: bigint }>
+    >`
+      WITH daily AS (
+        SELECT user_id, DATE(review_time) AS study_date
+        FROM user_review_log
+        GROUP BY user_id, DATE(review_time)
+      ),
+      grouped AS (
+        SELECT
+          user_id,
+          study_date,
+          study_date - (ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY study_date)::int) AS streak_group
+        FROM daily
+      ),
+      streaks AS (
+        SELECT user_id, COUNT(*)::bigint AS streak_len
+        FROM grouped
+        GROUP BY user_id, streak_group
+      ),
+      best AS (
+        SELECT user_id, MAX(streak_len)::bigint AS longest_streak
+        FROM streaks
+        GROUP BY user_id
+      )
+      SELECT b.user_id, u.fullname AS full_name, b.longest_streak
+      FROM best b
+      JOIN useraccount u ON u.id = b.user_id
+      ORDER BY b.longest_streak DESC, u.fullname ASC
+      LIMIT ${limit}
+    `;
+
+    const kanjiRows = await prisma.$queryRaw<
+      Array<{ user_id: bigint; full_name: string | null; longest_streak: bigint }>
+    >`
+      WITH daily AS (
+        SELECT user_id, DATE(review_time) AS study_date
+        FROM user_kanji_review_log
+        GROUP BY user_id, DATE(review_time)
+      ),
+      grouped AS (
+        SELECT
+          user_id,
+          study_date,
+          study_date - (ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY study_date)::int) AS streak_group
+        FROM daily
+      ),
+      streaks AS (
+        SELECT user_id, COUNT(*)::bigint AS streak_len
+        FROM grouped
+        GROUP BY user_id, streak_group
+      ),
+      best AS (
+        SELECT user_id, MAX(streak_len)::bigint AS longest_streak
+        FROM streaks
+        GROUP BY user_id
+      )
+      SELECT b.user_id, u.fullname AS full_name, b.longest_streak
+      FROM best b
+      JOIN useraccount u ON u.id = b.user_id
+      ORDER BY b.longest_streak DESC, u.fullname ASC
+      LIMIT ${limit}
+    `;
+
+    return res.json({
+      limit,
+      vocab: vocabRows.map((row, index) => ({
+        rank: index + 1,
+        userId: Number(row.user_id),
+        fullName: String(row.full_name || `User ${row.user_id.toString()}`),
+        longestStreak: Number(row.longest_streak || 0n),
+      })),
+      kanji: kanjiRows.map((row, index) => ({
+        rank: index + 1,
+        userId: Number(row.user_id),
+        fullName: String(row.full_name || `User ${row.user_id.toString()}`),
+        longestStreak: Number(row.longest_streak || 0n),
+      })),
+    });
+  });
+
   return router;
 }
 
