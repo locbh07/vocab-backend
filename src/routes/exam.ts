@@ -1145,9 +1145,11 @@ async function loadQuestionContext(
     hasPassage: Boolean(passageText),
     isClozeQuestion,
   });
-  const questionType = metadata?.questionType || fallbackMeta.questionType;
+  // Always prefer latest runtime inference so upgraded N1/N2 Mondai mapping
+  // applies immediately even when metadata was precomputed by older logic.
+  const questionType = fallbackMeta.questionType || metadata?.questionType || 'unknown';
   const questionTypeDescriptor = describeJlptQuestionType(questionType);
-  const mondaiLabel = metadata?.mondaiLabel || fallbackMeta.mondaiLabel;
+  const mondaiLabel = fallbackMeta.mondaiLabel || metadata?.mondaiLabel || '';
   const rawExpl = toText(q.expl ?? q.explanation ?? q.exp) || '';
   const sentenceOrderExpectedOrder = parseSentenceOrderExpectedOrder(rawExpl, Object.keys(options));
   const questionText = buildQuestionPromptText({

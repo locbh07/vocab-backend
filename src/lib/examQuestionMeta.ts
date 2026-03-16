@@ -424,7 +424,10 @@ function toSectionKind(questionType: JlptQuestionType): ExamSectionKind {
   if (
     questionType === 'vocab_kanji_reading' ||
     questionType === 'vocab_kanji_writing' ||
+    questionType === 'vocab_word_formation' ||
     questionType === 'vocab_context' ||
+    questionType === 'vocab_paraphrase' ||
+    questionType === 'vocab_usage' ||
     questionType === 'grammar_choice'
   ) {
     return 'language';
@@ -437,7 +440,10 @@ function normalizeQuestionType(input: string | null): JlptQuestionType {
   const allowed: JlptQuestionType[] = [
     'vocab_kanji_reading',
     'vocab_kanji_writing',
+    'vocab_word_formation',
     'vocab_context',
+    'vocab_paraphrase',
+    'vocab_usage',
     'grammar_choice',
     'sentence_order',
     'reading_cloze',
