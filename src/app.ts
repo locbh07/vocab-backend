@@ -15,6 +15,7 @@ import { createKanjiRouter } from './routes/kanji';
 import { createListeningRouter } from './routes/listening';
 import { createFeedbackRouter } from './routes/feedback';
 import { createAdminFeedbackRouter } from './routes/adminFeedback';
+import { createAdminListeningRouter } from './routes/adminListening';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 
@@ -95,6 +96,8 @@ app.use('/feedback', createSimpleRateLimit({ windowMs: 60_000, max: 20, keyPrefi
 app.use('/api/feedback', createSimpleRateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'api-feedback' }), createFeedbackRouter());
 app.use('/admin/feedback', createAdminFeedbackRouter());
 app.use('/api/admin/feedback', createAdminFeedbackRouter());
+app.use('/admin/listening', createAdminListeningRouter());
+app.use('/api/admin/listening', createAdminListeningRouter());
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;
