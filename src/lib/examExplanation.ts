@@ -596,7 +596,13 @@ function normalizeExplanation(
   const alignedOptionAnalysis = alignExamOptionReasonsWithOptionContext(optionAnalysis, payload);
 
   const questionJaFallback = payload.questionWithBlank || payload.questionText || '';
-  const forceOriginalQuestionText = payload.questionType === 'reading_content' || payload.questionType === 'reading_cloze';
+  const forceOriginalQuestionText =
+    payload.isClozeQuestion || payload.questionType === 'reading_content' || payload.questionType === 'reading_cloze';
+  const alignedFinalConclusion = buildAlignedFinalConclusion(
+    text(value.final_conclusion_vi) || '',
+    payload,
+    alignedOptionAnalysis,
+  );
 
   return {
     question_ja: forceOriginalQuestionText ? questionJaFallback : text(value.question_ja) || questionJaFallback,
@@ -618,8 +624,25 @@ function normalizeExplanation(
     trap_patterns_vi: asStringArray(value.trap_patterns_vi),
     part_strategy_vi: text(value.part_strategy_vi) || payload.typeStrategyVi || '',
     quick_tip_vi: text(value.quick_tip_vi) || '',
-    final_conclusion_vi: text(value.final_conclusion_vi) || '',
+    final_conclusion_vi: alignedFinalConclusion,
   };
+}
+
+function buildAlignedFinalConclusion(
+  currentConclusion: string,
+  payload: ExamQuestionPayload,
+  optionAnalysis: OptionAnalysis[],
+): string {
+  const correctOption = normalizeOptionKey(payload.correctAnswer);
+  if (!correctOption) return String(currentConclusion || '').trim();
+
+  const correctText = String(payload.options?.[correctOption] || '').trim();
+  const correctAnalysis = optionAnalysis.find((item) => normalizeOptionKey(item.option) === correctOption);
+  const reason = String(correctAnalysis?.reason_vi || '').trim();
+  const coreReason =
+    reason || 'Lựa chọn này khớp ngữ pháp và ý nghĩa trong ngữ cảnh của câu.';
+  const optionLabel = correctText ? ` (${correctText})` : '';
+  return `Đáp án đúng: ${correctOption}${optionLabel}. ${coreReason}`;
 }
 
 function asSentenceOrderSolution(value: unknown, payload: ExamQuestionPayload): SentenceOrderSolution | null {

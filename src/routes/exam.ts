@@ -12,7 +12,7 @@ import { describeJlptQuestionType, inferJlptQuestionMeta, JlptQuestionType } fro
 import { getOrCreateQuestionReadingCache, QuestionReadingCache } from '../lib/examReadingCache';
 import { getExamQuestionMeta, upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
 
-const EXPLANATION_PROMPT_VERSION = 15;
+const EXPLANATION_PROMPT_VERSION = 16;
 let ensureExplainTablePromise: Promise<void> | null = null;
 
 type VerifyRequest = {
