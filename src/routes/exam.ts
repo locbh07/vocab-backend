@@ -38,6 +38,7 @@ type ExplainQuestionRequest = {
   questionIndex: number;
   code?: string;
   forceRefresh?: boolean;
+  manualExplanation?: Partial<ExamQuestionExplanation>;
 };
 
 type ExplainPassageRequest = {
@@ -49,6 +50,7 @@ type ExplainPassageRequest = {
   questionIndexes: number[];
   code?: string;
   forceRefresh?: boolean;
+  manualExplanation?: Partial<PassageExplanation>;
 };
 
 type ScoredItem = {
@@ -427,6 +429,46 @@ export function createExamRouter() {
       });
 
       const questionHash = buildQuestionHash(questionCtx);
+      const hasManualExplanation = Object.prototype.hasOwnProperty.call(body, 'manualExplanation');
+      if (hasManualExplanation) {
+        if (!isAdmin) {
+          return res.status(403).json({ message: 'Only admin can edit explanation' });
+        }
+        const manualPatch = parseQuestionExplanationPatch(body.manualExplanation);
+        const cached = await findCachedExplanation({
+          level: body.level,
+          examId: body.examId,
+          part,
+          sectionIndex,
+          questionIndex,
+          questionHash,
+        });
+        if (!cached) {
+          return res.status(404).json({ message: 'Explanation not found for this question' });
+        }
+
+        const merged = mergeQuestionExplanation(cached.explanation, manualPatch);
+        const hydrated = hydrateQuestionExplanationWithReadingCache(merged, readingCache);
+
+        await saveCachedExplanation({
+          level: body.level,
+          examId: body.examId,
+          part,
+          sectionIndex,
+          questionIndex,
+          questionHash,
+          explanation: hydrated,
+          sourceModel: 'admin-manual',
+        });
+
+        return res.json({
+          source: 'admin-manual',
+          promptVersion: EXPLANATION_PROMPT_VERSION,
+          explanation: hydrated,
+          model: 'admin-manual',
+        });
+      }
+
       if (!forceRefresh) {
         const cached = await findCachedExplanation({
           level: body.level,
@@ -611,6 +653,42 @@ export function createExamRouter() {
           }),
         )
         .digest('hex');
+
+      const hasManualExplanation = Object.prototype.hasOwnProperty.call(body, 'manualExplanation');
+      if (hasManualExplanation) {
+        if (!isAdmin) {
+          return res.status(403).json({ message: 'Only admin can edit explanation' });
+        }
+        const manualPatch = parsePassageExplanationPatch(body.manualExplanation);
+        const cached = await findCachedPassageExplanation({
+          level: body.level,
+          examId: body.examId,
+          part,
+          sectionIndex,
+          groupHash,
+        });
+        if (!cached) {
+          return res.status(404).json({ message: 'Explanation not found for this passage' });
+        }
+
+        const merged = mergePassageExplanation(cached.explanation, manualPatch);
+        await saveCachedPassageExplanation({
+          level: body.level,
+          examId: body.examId,
+          part,
+          sectionIndex,
+          groupHash,
+          explanation: merged,
+          sourceModel: 'admin-manual',
+        });
+
+        return res.json({
+          source: 'admin-manual',
+          promptVersion: EXPLANATION_PROMPT_VERSION,
+          explanation: merged,
+          model: 'admin-manual',
+        });
+      }
 
       if (!forceRefresh) {
         const cached = await findCachedPassageExplanation({
@@ -1511,6 +1589,48 @@ function hydrateQuestionExplanationWithReadingCache(
     question_reading_hira: readingCache.question_reading_hira || explanation.question_reading_hira || '',
     options_with_reading,
     sentence_order_solution,
+  };
+}
+
+function parseQuestionExplanationPatch(value: unknown): Partial<ExamQuestionExplanation> {
+  if (!isObject(value)) {
+    const err = new Error('manualExplanation must be an object') as Error & { status?: number };
+    err.status = 400;
+    throw err;
+  }
+  return value as Partial<ExamQuestionExplanation>;
+}
+
+function mergeQuestionExplanation(
+  current: ExamQuestionExplanation,
+  patch: Partial<ExamQuestionExplanation>,
+): ExamQuestionExplanation {
+  const merged: ExamQuestionExplanation = {
+    ...current,
+    ...patch,
+  };
+  if (Object.prototype.hasOwnProperty.call(patch, 'sentence_order_solution')) {
+    merged.sentence_order_solution = patch.sentence_order_solution ?? null;
+  }
+  return merged;
+}
+
+function parsePassageExplanationPatch(value: unknown): Partial<PassageExplanation> {
+  if (!isObject(value)) {
+    const err = new Error('manualExplanation must be an object') as Error & { status?: number };
+    err.status = 400;
+    throw err;
+  }
+  return value as Partial<PassageExplanation>;
+}
+
+function mergePassageExplanation(
+  current: PassageExplanation,
+  patch: Partial<PassageExplanation>,
+): PassageExplanation {
+  return {
+    ...current,
+    ...patch,
   };
 }
 
