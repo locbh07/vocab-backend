@@ -6,6 +6,90 @@ import { dateOnly } from '../lib/http';
 
 const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
 type JlptLevel = (typeof JLPT_LEVELS)[number];
+type VocabTrack = 'core' | 'book';
+
+type VocabScope = {
+  track: VocabTrack;
+  topicPrefix: string | null;
+  sourceBook: string | null;
+  sourceUnit: string | null;
+};
+
+function normalizeVocabTrack(value: unknown): VocabTrack {
+  const track = String(value || 'core').trim().toLowerCase();
+  return track === 'book' ? 'book' : 'core';
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+  const text = String(value || '').trim();
+  return text.length ? text : null;
+}
+
+function buildScopeFromQuery(query: Request['query']): VocabScope {
+  const track = normalizeVocabTrack(query.track);
+  const topicPrefix = normalizeOptionalText(query.topicPrefix);
+  const sourceBook = normalizeOptionalText(query.sourceBook);
+  const sourceUnit = normalizeOptionalText(query.sourceUnit);
+
+  if (track === 'book') {
+    return {
+      track: 'book',
+      topicPrefix: null,
+      sourceBook,
+      sourceUnit,
+    };
+  }
+
+  return {
+    track: 'core',
+    topicPrefix,
+    sourceBook: null,
+    sourceUnit: null,
+  };
+}
+
+function buildScopeFromPlan(plan: any): VocabScope {
+  const track = normalizeVocabTrack(plan?.track);
+  const topicPrefix = normalizeOptionalText(plan?.topic_prefix);
+  const sourceBook = normalizeOptionalText(plan?.source_book);
+  const sourceUnit = normalizeOptionalText(plan?.source_unit);
+
+  if (track === 'book') {
+    return {
+      track: 'book',
+      topicPrefix: null,
+      sourceBook,
+      sourceUnit,
+    };
+  }
+
+  return {
+    track: 'core',
+    topicPrefix,
+    sourceBook: null,
+    sourceUnit: null,
+  };
+}
+
+function buildVocabularyScopeWhere(scope: VocabScope) {
+  if (scope.track === 'book') {
+    return {
+      track: 'book',
+      ...(scope.sourceBook ? { source_book: scope.sourceBook } : {}),
+      ...(scope.sourceUnit ? { source_unit: scope.sourceUnit } : {}),
+    };
+  }
+  if (scope.topicPrefix) {
+    return {
+      track: 'core',
+      topic: { startsWith: scope.topicPrefix },
+    };
+  }
+  return {
+    track: 'core',
+    core_order: { not: null },
+  };
+}
 
 function formatLocalDateKey(dateValue: Date): string {
   const d = dateOnly(dateValue);
@@ -61,14 +145,16 @@ export function createLearningRouter() {
   router.post('/plan', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     const targetMonths = Number(req.query.targetMonths);
-    const topicPrefix = String(req.query.topicPrefix || '').trim();
+    const scope = buildScopeFromQuery(req.query);
     if (!Number.isFinite(userId) || !Number.isFinite(targetMonths) || targetMonths <= 0) {
       return res.status(400).json({ message: 'Invalid userId or targetMonths' });
     }
 
-    const totalWords = topicPrefix
-      ? await prisma.vocabulary.count({ where: { topic: { startsWith: topicPrefix } } })
-      : await prisma.vocabulary.count({ where: { core_order: { not: null } } });
+    if (scope.track === 'book' && !scope.sourceBook) {
+      return res.status(400).json({ message: 'sourceBook is required when track=book' });
+    }
+
+    const totalWords = await prisma.vocabulary.count({ where: buildVocabularyScopeWhere(scope) });
 
     await prisma.userLearningPlan.updateMany({
       where: { user_id: BigInt(userId), is_active: 1 },
@@ -85,7 +171,10 @@ export function createLearningRouter() {
         user_id: BigInt(userId),
         total_words: totalWords,
         target_months: targetMonths,
-        topic_prefix: topicPrefix || null,
+        topic_prefix: scope.topicPrefix,
+        track: scope.track,
+        source_book: scope.sourceBook,
+        source_unit: scope.sourceUnit,
         start_date: start,
         target_date: target,
         daily_new_words: daily,
@@ -120,12 +209,18 @@ export function createLearningRouter() {
     const remaining = plan.daily_new_words - used;
     if (remaining <= 0) return res.json([]);
 
+    const scope = buildScopeFromPlan(plan);
+    const orderBy =
+      scope.track === 'core'
+        ? ([{ core_order: 'asc' }, { id: 'asc' }] as const)
+        : ([{ source_book: 'asc' }, { source_unit: 'asc' }, { id: 'asc' }] as const);
+
     const rows = await prisma.vocabulary.findMany({
       where: {
-        ...(plan.topic_prefix ? { topic: { startsWith: plan.topic_prefix } } : { core_order: { not: null } }),
+        ...buildVocabularyScopeWhere(scope),
         vocabProgress: { none: { user_id: BigInt(userId) } },
       },
-      orderBy: [{ core_order: 'asc' }, { id: 'asc' }],
+      orderBy: orderBy as any,
       take: remaining,
     });
     return res.json(rows);
@@ -726,23 +821,18 @@ export function createLearningRouter() {
 
   router.get('/dashboard', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
-    const topicPrefix = String(req.query.topicPrefix || '').trim();
+    const scope = buildScopeFromQuery(req.query);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
     const userBigId = BigInt(userId);
 
-    const total = topicPrefix
-      ? await prisma.vocabulary.count({ where: { topic: { startsWith: topicPrefix } } })
-      : await prisma.vocabulary.count({ where: { core_order: { not: null } } });
-    const learned = topicPrefix
-      ? await prisma.userVocabProgress.count({
-          where: { user_id: userBigId, vocabulary: { topic: { startsWith: topicPrefix } } },
-        })
-      : await prisma.userVocabProgress.count({ where: { user_id: userBigId } });
-    const mastered = topicPrefix
-      ? await prisma.userVocabProgress.count({
-          where: { user_id: userBigId, is_mastered: 1, vocabulary: { topic: { startsWith: topicPrefix } } },
-        })
-      : await prisma.userVocabProgress.count({ where: { user_id: userBigId, is_mastered: 1 } });
+    const vocabWhere = buildVocabularyScopeWhere(scope);
+    const total = await prisma.vocabulary.count({ where: vocabWhere as any });
+    const learned = await prisma.userVocabProgress.count({
+      where: { user_id: userBigId, vocabulary: vocabWhere as any },
+    });
+    const mastered = await prisma.userVocabProgress.count({
+      where: { user_id: userBigId, is_mastered: 1, vocabulary: vocabWhere as any },
+    });
 
     const today = dateOnly(new Date());
     const rows = await prisma.$queryRaw<Array<{ study_date: Date; words: bigint }>>`

@@ -172,6 +172,9 @@ model UserLearningPlan {
   created_at    DateTime @map("created_at") @default(now())
   updated_at    DateTime @map("updated_at") @default(now())
   topic_prefix  String? @db.VarChar(50)
+  track         String   @default("core") @db.VarChar(20)
+  source_book   String?  @db.VarChar(64)
+  source_unit   String?  @db.VarChar(64)
 
   user UserAccount @relation(fields: [user_id], references: [id])
   progress UserVocabProgress[]
@@ -228,11 +231,31 @@ model Vocabulary {
   image_url      String?
   audio_url      String?
   core_order     Int?
+  track          String   @default("core") @db.VarChar(20)
+  source_book    String?  @db.VarChar(64)
+  source_unit    String?  @db.VarChar(64)
 
   quizSessionItems QuizSessionItem[]
   vocabProgress UserVocabProgress[]
+  examples      VocabularyExample[]
 
   @@map("vocabulary")
+}
+
+model VocabularyExample {
+  id          BigInt   @id @default(autoincrement())
+  vocab_id    BigInt
+  order_index Int
+  example_ja  String?  @db.Text
+  example_vi  String?  @db.Text
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id], onDelete: Cascade)
+
+  @@unique([vocab_id, order_index])
+  @@index([vocab_id])
+  @@map("vocabulary_example")
 }
 
 // Note: vocabulary_backup_coreorder has no PK in your description  Eskip mapping for now or add a manual model if needed.

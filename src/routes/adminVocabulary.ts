@@ -14,6 +14,9 @@ const PATCH_FIELDS = [
   'image_url',
   'audio_url',
   'core_order',
+  'track',
+  'source_book',
+  'source_unit',
 ] as const;
 
 type PatchKey = (typeof PATCH_FIELDS)[number];
@@ -36,6 +39,9 @@ export function createAdminVocabularyRouter() {
     const keyword = String(req.query.keyword || '').trim();
     const topic = String(req.query.topic || '').trim();
     const level = String(req.query.level || '').trim();
+    const track = String(req.query.track || '').trim();
+    const sourceBook = String(req.query.sourceBook || '').trim();
+    const sourceUnit = String(req.query.sourceUnit || '').trim();
     const page = Math.max(Number(req.query.page || 0), 0);
     const size = Math.min(Math.max(Number(req.query.size || 20), 1), 200);
 
@@ -53,6 +59,9 @@ export function createAdminVocabularyRouter() {
           : {}),
         ...(topic ? { topic } : {}),
         ...(level ? { level } : {}),
+        ...(track ? { track } : {}),
+        ...(sourceBook ? { source_book: sourceBook } : {}),
+        ...(sourceUnit ? { source_unit: sourceUnit } : {}),
       },
       orderBy: { id: 'desc' },
       skip: page * size,
@@ -113,6 +122,9 @@ export function createAdminVocabularyRouter() {
     const keyword = String(req.query.keyword || '').trim();
     const topic = String(req.query.topic || '').trim();
     const level = String(req.query.level || '').trim();
+    const track = String(req.query.track || '').trim();
+    const sourceBook = String(req.query.sourceBook || '').trim();
+    const sourceUnit = String(req.query.sourceUnit || '').trim();
     const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);
     const rows = await prisma.vocabulary.findMany({
       where: {
@@ -128,6 +140,9 @@ export function createAdminVocabularyRouter() {
           : {}),
         ...(topic ? { topic } : {}),
         ...(level ? { level } : {}),
+        ...(track ? { track } : {}),
+        ...(sourceBook ? { source_book: sourceBook } : {}),
+        ...(sourceUnit ? { source_unit: sourceUnit } : {}),
       },
       orderBy: { id: 'desc' },
       take: limit,
@@ -213,6 +228,9 @@ function buildLocalSuggestion(vocab: any, mode = 'fix', warning?: string): Vocab
       image_url: vocab.image_url,
       audio_url: vocab.audio_url,
       core_order: vocab.core_order,
+      track: vocab.track,
+      source_book: vocab.source_book,
+      source_unit: vocab.source_unit,
     },
     imageQuery: String(vocab.word_ja || vocab.word_vi || '').trim(),
     audioQuery: String(vocab.word_ja || vocab.word_hira_kana || '').trim(),
@@ -242,6 +260,9 @@ async function suggestVocabularyWithAi(vocab: any, mode = 'fix'): Promise<VocabS
     image_url: base.suggested.image_url,
     audio_url: base.suggested.audio_url,
     core_order: base.suggested.core_order,
+    track: base.suggested.track,
+    source_book: base.suggested.source_book,
+    source_unit: base.suggested.source_unit,
   };
 
   const systemPrompt =
@@ -266,7 +287,10 @@ Return JSON only in this shape:
     "level": "...",
     "image_url": "...",
     "audio_url": "...",
-    "core_order": 123
+    "core_order": 123,
+    "track": "core|book",
+    "source_book": "...",
+    "source_unit": "..."
   },
   "imageQuery": "...",
   "audioQuery": "..."
