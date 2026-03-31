@@ -16,6 +16,7 @@ import { createListeningRouter } from './routes/listening';
 import { createFeedbackRouter } from './routes/feedback';
 import { createAdminFeedbackRouter } from './routes/adminFeedback';
 import { createAdminListeningRouter } from './routes/adminListening';
+import { createLearningGameRouter } from './routes/learningGame';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
@@ -104,6 +105,18 @@ app.use('/grammar', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefi
 app.use('/api/grammar', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-grammar' }), createGrammarRouter());
 app.use('/learning', createLearningRouter());
 app.use('/api/learning', createLearningRouter());
+app.use(
+  '/learning/game',
+  ...(apiShieldEnabled ? [createRouteShield('learning-game-shield', 140, 100)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 100, keyPrefix: 'learning-game' }),
+  createLearningGameRouter(),
+);
+app.use(
+  '/api/learning/game',
+  ...(apiShieldEnabled ? [createRouteShield('api-learning-game-shield', 140, 100)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 100, keyPrefix: 'api-learning-game' }),
+  createLearningGameRouter(),
+);
 app.use(
   '/exam',
   ...(apiShieldEnabled ? [createRouteShield('exam-shield', 100, 80)] : []),

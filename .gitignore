@@ -9,3 +9,7 @@ dist/
 *.log
 prisma/dev.db
 backups/
+
+# Temporary data exports (avoid noisy git status)
+tmp_*/**/*.json
+tmp_*/**/*.csv
