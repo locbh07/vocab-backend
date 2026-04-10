@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dateOnly } from '../lib/http';
 
-type GameMode = 'matrix' | 'falling' | 'flappy';
+type GameMode = 'matrix' | 'falling' | 'flappy' | 'runner';
 type Difficulty = 'easy' | 'normal' | 'hard' | 'expert';
 type QuestionType = 'kanji_to_vi' | 'vi_to_kanji' | 'kanji_to_reading' | 'reading_to_vi';
 type VocabTrack = 'core' | 'book' | 'today';
@@ -27,6 +27,37 @@ type SubmitItem = {
   questionType?: QuestionType;
 };
 
+type DeckRequestPayload = {
+  userId: number;
+  mode: GameMode;
+  difficulty: Difficulty;
+  questionType: QuestionType;
+  track: VocabTrack;
+  sourceBook: string | null;
+  sourceUnit: string | null;
+  topicPrefix: string | null;
+  boardSize: number;
+  jlptLevels: string[];
+};
+
+type SessionSubmitPayload = {
+  userId: number;
+  mode: GameMode;
+  difficulty: Difficulty;
+  questionType: QuestionType;
+  score: number;
+  durationSec: number;
+  totalQuestions: number;
+  correctCount: number;
+  wrongCount: number;
+  maxCombo: number;
+  boardSize: number;
+  timeLimitSec: number;
+  items: SubmitItem[];
+};
+
+type ValidationResult<T> = { ok: true; value: T } | { ok: false; message: string };
+
 type ModeConfig = {
   mode: GameMode;
   timeLimitSec: number;
@@ -35,7 +66,7 @@ type ModeConfig = {
   defaultQuestionType: QuestionType;
 };
 
-const ALLOWED_GAME_MODES: GameMode[] = ['matrix', 'falling', 'flappy'];
+const ALLOWED_GAME_MODES: GameMode[] = ['matrix', 'falling', 'flappy', 'runner'];
 const ALLOWED_DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard', 'expert'];
 const ALLOWED_QUESTION_TYPES: QuestionType[] = ['kanji_to_vi', 'vi_to_kanji', 'kanji_to_reading', 'reading_to_vi'];
 const ALLOWED_TRACKS: VocabTrack[] = ['core', 'book', 'today'];
@@ -46,6 +77,13 @@ const XP_BY_MODE: Record<GameMode, number> = {
   matrix: 12,
   falling: 14,
   flappy: 16,
+  runner: 18,
+};
+const UNLOCK_XP_BY_MODE: Record<GameMode, number> = {
+  matrix: 0,
+  falling: 120,
+  flappy: 260,
+  runner: 420,
 };
 
 const BASE_MODE_CONFIGS: Record<GameMode, ModeConfig> = {
@@ -68,6 +106,12 @@ const BASE_MODE_CONFIGS: Record<GameMode, ModeConfig> = {
     lives: 1,
     defaultQuestionType: 'vi_to_kanji',
   },
+  runner: {
+    mode: 'runner',
+    timeLimitSec: 75,
+    lives: 3,
+    defaultQuestionType: 'kanji_to_vi',
+  },
 };
 
 let ensureLearningGameTablesPromise: Promise<void> | null = null;
@@ -85,7 +129,7 @@ export function createLearningGameRouter() {
 
     return res.json({
       modes: ALLOWED_GAME_MODES.map((mode) => {
-        const unlockXp = mode === 'matrix' ? 0 : mode === 'falling' ? 120 : 260;
+        const unlockXp = UNLOCK_XP_BY_MODE[mode];
         return {
           ...BASE_MODE_CONFIGS[mode],
           unlockXp,
@@ -161,244 +205,324 @@ export function createLearningGameRouter() {
   });
 
   router.post('/deck', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
-    const mode = normalizeGameMode(req.body?.mode);
-    const difficulty = normalizeDifficulty(req.body?.difficulty);
-    const questionType = normalizeQuestionType(req.body?.questionType, BASE_MODE_CONFIGS[mode].defaultQuestionType);
-    const track = normalizeTrack(req.body?.track);
-    const sourceBook = cleanText(req.body?.sourceBook);
-    const sourceUnit = cleanText(req.body?.sourceUnit);
-    const topicPrefix = cleanText(req.body?.topicPrefix);
-    const requestedSize = Number(req.body?.size || req.body?.boardSize || DEFAULT_BOARD_SIZE);
-    const boardSize = normalizeBoardSize(requestedSize);
+    const payload = validateDeckRequest(req.body);
+    if (!payload.ok) return res.status(400).json({ message: payload.message });
 
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
-    if (track === 'book' && !sourceBook) {
-      return res.status(400).json({ message: 'sourceBook is required when track=book' });
+    try {
+      const deckPayload = await generateDeckPayload(payload.value);
+      return res.json(deckPayload);
+    } catch (error) {
+      const status = (error as { status?: number })?.status || 500;
+      const message = (error as { message?: string })?.message || 'Cannot generate deck';
+      return res.status(status).json({ message });
     }
-
-    const needsPairCount = mode === 'matrix' ? Math.max(2, Math.floor(boardSize / 2)) : Math.max(8, boardSize);
-    const candidateTake = Math.max(needsPairCount * 8, 120);
-    const jlptLevels = normalizeJlptLevels(req.body?.jlptLevels);
-    let candidates;
-
-    if (track === 'today') {
-      const dueRows = await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
-        SELECT vocab_id
-        FROM user_vocab_progress
-        WHERE user_id = ${BigInt(userId)}
-          AND is_mastered = 0
-          AND next_review_date <= CURRENT_DATE
-        ORDER BY next_review_date ASC, vocab_id ASC
-        LIMIT ${Math.min(candidateTake, 500)}
-      `;
-
-      const dueIds = dueRows.map((row) => row.vocab_id);
-      if (!dueIds.length) {
-        return res.status(400).json({ message: 'Khong co tu on tap hom nay' });
-      }
-
-      candidates = await prisma.vocabulary.findMany({
-        where: {
-          id: { in: dueIds },
-          ...(jlptLevels.length ? { level: { in: jlptLevels } } : {}),
-        } as Prisma.VocabularyWhereInput,
-        orderBy: [{ id: 'asc' }],
-        take: Math.min(candidateTake, 2000),
-        select: {
-          id: true,
-          word_ja: true,
-          word_hira_kana: true,
-          word_vi: true,
-          example_ja: true,
-          example_vi: true,
-          level: true,
-          topic: true,
-          audio_url: true,
-        },
-      });
-    } else {
-      const where = buildVocabWhere({
-        track,
-        sourceBook,
-        sourceUnit,
-        topicPrefix,
-        jlptLevels,
-      });
-
-      candidates = await prisma.vocabulary.findMany({
-        where: where as Prisma.VocabularyWhereInput,
-        orderBy: [{ id: 'asc' }],
-        take: Math.min(candidateTake, 2000),
-        select: {
-          id: true,
-          word_ja: true,
-          word_hira_kana: true,
-          word_vi: true,
-          example_ja: true,
-          example_vi: true,
-          level: true,
-          topic: true,
-          audio_url: true,
-        },
-      });
-    }
-
-    const cards = candidates.map((row) => mapVocabCard(row));
-    let effectiveQuestionType = questionType;
-    let filtered = filterByQuestionType(cards, effectiveQuestionType);
-
-    if (!filtered.length) {
-      const fallbackQuestionType = BASE_MODE_CONFIGS[mode].defaultQuestionType;
-      if (fallbackQuestionType !== effectiveQuestionType) {
-        const fallbackFiltered = filterByQuestionType(cards, fallbackQuestionType);
-        if (fallbackFiltered.length) {
-          filtered = fallbackFiltered;
-          effectiveQuestionType = fallbackQuestionType;
-        }
-      }
-    }
-
-    if (!filtered.length) {
-      return res.status(400).json({ message: 'Khong co du tu on tap hom nay phu hop voi kieu cau hoi nay' });
-    }
-
-    const weakIds = await listWeakVocabIds(userId, 60);
-    const selected = pickPrioritizedWords(filtered, weakIds, needsPairCount);
-
-    const result =
-      mode === 'matrix'
-        ? buildMatrixDeck(selected, questionType, boardSize)
-        : buildArcadeDeck(selected, questionType, boardSize, difficulty);
-
-    return res.json({
-      mode,
-      difficulty,
-      questionType: effectiveQuestionType,
-      boardSize,
-      weakPriorityApplied: weakIds.length > 0,
-      ...result,
-    });
   });
 
   router.post('/session/submit', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
-    const mode = normalizeGameMode(req.body?.mode);
-    const difficulty = normalizeDifficulty(req.body?.difficulty);
-    const questionType = normalizeQuestionType(req.body?.questionType, BASE_MODE_CONFIGS[mode].defaultQuestionType);
-    const score = Math.max(0, Number(req.body?.score || 0));
-    const durationSec = Math.max(0, Math.floor(Number(req.body?.durationSec || 0)));
-    const totalQuestions = Math.max(0, Math.floor(Number(req.body?.totalQuestions || 0)));
-    const correctCount = Math.max(0, Math.floor(Number(req.body?.correctCount || 0)));
-    const wrongCount = Math.max(0, Math.floor(Number(req.body?.wrongCount || 0)));
-    const maxCombo = Math.max(0, Math.floor(Number(req.body?.maxCombo || 0)));
-    const accuracy = totalQuestions > 0 ? (correctCount * 100) / totalQuestions : 0;
-    const rawItems: unknown[] = Array.isArray(req.body?.items) ? (req.body.items as unknown[]) : [];
+    const payload = validateSessionSubmitRequest(req.body);
+    if (!payload.ok) return res.status(400).json({ message: payload.message });
 
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
-    if (!rawItems.length) return res.status(400).json({ message: 'items is required' });
+    const result = await submitGameSession(payload.value);
+    return res.json(result);
+  });
 
-    await ensureLearningGameTables();
-    const userBigId = BigInt(userId);
-    const now = new Date();
-    const profileBefore = await ensureGameProfile(userId);
-    const activePlan = await prisma.userLearningPlan.findFirst({
-      where: { user_id: userBigId, is_active: 1 },
-      orderBy: { id: 'desc' },
-      select: { id: true },
-    });
+  return router;
+}
 
-    const items: SubmitItem[] = rawItems
-      .map((item: unknown) => normalizeSubmitItem(item))
-      .filter((item: SubmitItem | null): item is SubmitItem => Boolean(item));
+function validateDeckRequest(body: unknown): ValidationResult<DeckRequestPayload> {
+  const payload = body as Record<string, unknown> | null | undefined;
+  const userId = Number(payload?.userId);
+  if (!Number.isFinite(userId) || userId <= 0) return { ok: false, message: 'Invalid userId' };
 
-    const session = await prisma.$queryRawUnsafe<Array<{ id: bigint }>>(
-      `
-        INSERT INTO user_game_session (
-          user_id, mode, difficulty, question_type, score, accuracy, duration_sec, total_questions, correct_count, wrong_count, max_combo, config_json, result_json, played_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, NOW())
-        RETURNING id
-      `,
-      userBigId,
+  const mode = normalizeGameMode(payload?.mode);
+  const difficulty = normalizeDifficulty(payload?.difficulty);
+  const questionType = normalizeQuestionType(payload?.questionType, BASE_MODE_CONFIGS[mode].defaultQuestionType);
+  const track = normalizeTrack(payload?.track);
+  const sourceBook = cleanText(payload?.sourceBook);
+  const sourceUnit = cleanText(payload?.sourceUnit);
+  const topicPrefix = cleanText(payload?.topicPrefix);
+  const boardSize = normalizeBoardSize(Number(payload?.size || payload?.boardSize || DEFAULT_BOARD_SIZE));
+  const jlptLevels = normalizeJlptLevels(payload?.jlptLevels);
+
+  if (track === 'book' && !sourceBook) {
+    return { ok: false, message: 'sourceBook is required when track=book' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      userId,
       mode,
       difficulty,
       questionType,
-      Math.round(score),
-      Number(accuracy.toFixed(2)),
+      track,
+      sourceBook,
+      sourceUnit,
+      topicPrefix,
+      boardSize,
+      jlptLevels,
+    },
+  };
+}
+
+async function generateDeckPayload(input: DeckRequestPayload) {
+  const needsPairCount =
+    input.mode === 'matrix'
+      ? Math.max(2, Math.floor(input.boardSize / 2))
+      : Math.max(8, input.boardSize);
+  const candidateTake = Math.max(needsPairCount * 8, 120);
+  const candidates = await listDeckCandidates(input, candidateTake);
+
+  const cards = candidates.map((row) => mapVocabCard(row));
+  let effectiveQuestionType = input.questionType;
+  let filtered = filterByQuestionType(cards, effectiveQuestionType);
+
+  if (!filtered.length) {
+    const fallbackQuestionType = BASE_MODE_CONFIGS[input.mode].defaultQuestionType;
+    if (fallbackQuestionType !== effectiveQuestionType) {
+      const fallbackFiltered = filterByQuestionType(cards, fallbackQuestionType);
+      if (fallbackFiltered.length) {
+        filtered = fallbackFiltered;
+        effectiveQuestionType = fallbackQuestionType;
+      }
+    }
+  }
+
+  if (!filtered.length) {
+    throw Object.assign(new Error('Khong co du tu on tap hom nay phu hop voi kieu cau hoi nay'), { status: 400 });
+  }
+
+  const weakIds = await listWeakVocabIds(input.userId, 60);
+  const selected = pickPrioritizedWords(filtered, weakIds, needsPairCount);
+  const result =
+    input.mode === 'matrix'
+      ? buildMatrixDeck(selected, effectiveQuestionType, input.boardSize)
+      : buildArcadeDeck(selected, filtered, effectiveQuestionType, input.boardSize, input.difficulty, input.mode);
+
+  return {
+    mode: input.mode,
+    difficulty: input.difficulty,
+    questionType: effectiveQuestionType,
+    boardSize: input.boardSize,
+    weakPriorityApplied: weakIds.length > 0,
+    ...result,
+  };
+}
+
+async function listDeckCandidates(input: DeckRequestPayload, candidateTake: number) {
+  if (input.track === 'today') {
+    const dueRows = await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
+      SELECT vocab_id
+      FROM user_vocab_progress
+      WHERE user_id = ${BigInt(input.userId)}
+        AND is_mastered = 0
+        AND next_review_date <= CURRENT_DATE
+      ORDER BY next_review_date ASC, vocab_id ASC
+      LIMIT ${Math.min(candidateTake, 500)}
+    `;
+
+    const dueIds = dueRows.map((row) => row.vocab_id);
+    if (!dueIds.length) {
+      throw Object.assign(new Error('Khong co tu on tap hom nay'), { status: 400 });
+    }
+
+    return prisma.vocabulary.findMany({
+      where: {
+        id: { in: dueIds },
+        ...(input.jlptLevels.length ? { level: { in: input.jlptLevels } } : {}),
+      } as Prisma.VocabularyWhereInput,
+      orderBy: [{ id: 'asc' }],
+      take: Math.min(candidateTake, 2000),
+      select: {
+        id: true,
+        word_ja: true,
+        word_hira_kana: true,
+        word_vi: true,
+        example_ja: true,
+        example_vi: true,
+        level: true,
+        topic: true,
+        audio_url: true,
+      },
+    });
+  }
+
+  const where = buildVocabWhere({
+    track: input.track,
+    sourceBook: input.sourceBook,
+    sourceUnit: input.sourceUnit,
+    topicPrefix: input.topicPrefix,
+    jlptLevels: input.jlptLevels,
+  });
+
+  return prisma.vocabulary.findMany({
+    where: where as Prisma.VocabularyWhereInput,
+    orderBy: [{ id: 'asc' }],
+    take: Math.min(candidateTake, 2000),
+    select: {
+      id: true,
+      word_ja: true,
+      word_hira_kana: true,
+      word_vi: true,
+      example_ja: true,
+      example_vi: true,
+      level: true,
+      topic: true,
+      audio_url: true,
+    },
+  });
+}
+
+function validateSessionSubmitRequest(body: unknown): ValidationResult<SessionSubmitPayload> {
+  const payload = body as Record<string, unknown> | null | undefined;
+  const userId = Number(payload?.userId);
+  if (!Number.isFinite(userId) || userId <= 0) return { ok: false, message: 'Invalid userId' };
+
+  const mode = normalizeGameMode(payload?.mode);
+  const difficulty = normalizeDifficulty(payload?.difficulty);
+  const questionType = normalizeQuestionType(payload?.questionType, BASE_MODE_CONFIGS[mode].defaultQuestionType);
+  const score = Math.max(0, Number(payload?.score || 0));
+  const durationSec = Math.max(0, Math.floor(Number(payload?.durationSec || 0)));
+  const totalQuestions = Math.max(0, Math.floor(Number(payload?.totalQuestions || 0)));
+  const correctCount = Math.max(0, Math.floor(Number(payload?.correctCount || 0)));
+  const wrongCount = Math.max(0, Math.floor(Number(payload?.wrongCount || 0)));
+  const maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo || 0)));
+  const boardSize = Math.max(0, Math.floor(Number(payload?.boardSize || 0)));
+  const timeLimitSec = Math.max(0, Math.floor(Number(payload?.timeLimitSec || 0)));
+
+  if (correctCount + wrongCount > totalQuestions && totalQuestions > 0) {
+    return { ok: false, message: 'correctCount + wrongCount cannot exceed totalQuestions' };
+  }
+
+  const rawItems: unknown[] = Array.isArray(payload?.items) ? (payload?.items as unknown[]) : [];
+  const items: SubmitItem[] = rawItems
+    .map((item: unknown) => normalizeSubmitItem(item))
+    .filter((item: SubmitItem | null): item is SubmitItem => Boolean(item));
+  // Keep session submit resilient for client/runtime edge cases (e.g. runner ended before answer event).
+  // When items is empty/invalid, still accept session stats and skip SRS item updates.
+
+  return {
+    ok: true,
+    value: {
+      userId,
+      mode,
+      difficulty,
+      questionType,
+      score,
       durationSec,
       totalQuestions,
       correctCount,
       wrongCount,
       maxCombo,
-      JSON.stringify({
-        mode,
-        difficulty,
-        questionType,
-        boardSize: Number(req.body?.boardSize || 0),
-        timeLimitSec: Number(req.body?.timeLimitSec || 0),
-      }),
-      JSON.stringify({
-        score,
-        accuracy: Number(accuracy.toFixed(2)),
-        totalQuestions,
-        correctCount,
-        wrongCount,
-        maxCombo,
-      }),
-    );
+      boardSize,
+      timeLimitSec,
+      items,
+    },
+  };
+}
 
-    for (const item of items) {
-      await applyLearningReview({
-        userId,
-        userBigId,
-        vocabId: item.vocabId,
-        correct: item.correct,
-        mode: `game:${mode}`,
-        at: now,
-        planId: activePlan?.id || null,
-      });
-    }
-
-    const gainedXp = Math.max(
-      5,
-      Math.round(correctCount * 2 + (accuracy >= 80 ? 10 : 0) + (score / 20) + XP_BY_MODE[mode]),
-    );
-    const streakUpdate = computeStreakUpdate(
-      profileBefore.last_played_date,
-      Number(profileBefore.current_streak || 0),
-    );
-
-    await prisma.$executeRawUnsafe(
-      `
-        UPDATE user_game_profile
-        SET
-          xp = xp + $2,
-          total_games = total_games + 1,
-          current_streak = $3,
-          longest_streak = GREATEST(longest_streak, $3),
-          last_played_date = $4,
-          updated_at = NOW()
-        WHERE user_id = $1
-      `,
-      userBigId,
-      gainedXp,
-      streakUpdate.currentStreak,
-      streakUpdate.lastPlayedDate,
-    );
-
-    const weakWords = await listWeakWords(userId, 8);
-
-    return res.json({
-      sessionId: Number(session?.[0]?.id || 0n),
-      gainedXp,
-      streak: streakUpdate.currentStreak,
-      weakWords,
-      replayPack: weakWords.map((item) => item.id),
-    });
+async function submitGameSession(input: SessionSubmitPayload) {
+  await ensureLearningGameTables();
+  const userBigId = BigInt(input.userId);
+  const now = new Date();
+  const accuracy = input.totalQuestions > 0 ? (input.correctCount * 100) / input.totalQuestions : 0;
+  const profileBefore = await ensureGameProfile(input.userId);
+  const activePlan = await prisma.userLearningPlan.findFirst({
+    where: { user_id: userBigId, is_active: 1 },
+    orderBy: { id: 'desc' },
+    select: { id: true },
   });
 
-  return router;
+  const session = await prisma.$queryRawUnsafe<Array<{ id: bigint }>>(
+    `
+      INSERT INTO user_game_session (
+        user_id, mode, difficulty, question_type, score, accuracy, duration_sec, total_questions, correct_count, wrong_count, max_combo, config_json, result_json, played_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, NOW())
+      RETURNING id
+    `,
+    userBigId,
+    input.mode,
+    input.difficulty,
+    input.questionType,
+    Math.round(input.score),
+    Number(accuracy.toFixed(2)),
+    input.durationSec,
+    input.totalQuestions,
+    input.correctCount,
+    input.wrongCount,
+    input.maxCombo,
+    JSON.stringify({
+      mode: input.mode,
+      difficulty: input.difficulty,
+      questionType: input.questionType,
+      boardSize: input.boardSize,
+      timeLimitSec: input.timeLimitSec,
+    }),
+    JSON.stringify({
+      score: input.score,
+      accuracy: Number(accuracy.toFixed(2)),
+      totalQuestions: input.totalQuestions,
+      correctCount: input.correctCount,
+      wrongCount: input.wrongCount,
+      maxCombo: input.maxCombo,
+    }),
+  );
+
+  // SRS update: answer đúng tăng stage, sai giảm stage và dời lịch ôn theo REVIEW_INTERVALS.
+  for (const item of input.items) {
+    await applyLearningReview({
+      userId: input.userId,
+      userBigId,
+      vocabId: item.vocabId,
+      correct: item.correct,
+      mode: `game:${input.mode}`,
+      at: now,
+      planId: activePlan?.id || null,
+    });
+  }
+
+  // XP formula keeps mode bonus and rewards speed/accuracy while ensuring minimum +5 XP.
+  const gainedXp = Math.max(
+    5,
+    Math.round(
+      input.correctCount * 2 +
+      (accuracy >= 80 ? 10 : 0) +
+      (input.score / 20) +
+      XP_BY_MODE[input.mode],
+    ),
+  );
+  const streakUpdate = computeStreakUpdate(
+    profileBefore.last_played_date,
+    Number(profileBefore.current_streak || 0),
+  );
+
+  await prisma.$executeRawUnsafe(
+    `
+      UPDATE user_game_profile
+      SET
+        xp = xp + $2,
+        total_games = total_games + 1,
+        current_streak = $3,
+        longest_streak = GREATEST(longest_streak, $3),
+        last_played_date = $4,
+        updated_at = NOW()
+      WHERE user_id = $1
+    `,
+    userBigId,
+    gainedXp,
+    streakUpdate.currentStreak,
+    streakUpdate.lastPlayedDate,
+  );
+
+  const weakWords = await listWeakWords(input.userId, 8);
+  return {
+    sessionId: Number(session?.[0]?.id || 0n),
+    gainedXp,
+    streak: streakUpdate.currentStreak,
+    weakWords,
+    replayPack: weakWords.map((item) => item.id),
+  };
 }
 
 function normalizeGameMode(value: unknown): GameMode {
@@ -517,10 +641,24 @@ function buildMatrixDeck(items: VocabCard[], questionType: QuestionType, boardSi
   };
 }
 
-function buildArcadeDeck(items: VocabCard[], questionType: QuestionType, boardSize: number, difficulty: Difficulty) {
+function buildArcadeDeck(
+  items: VocabCard[],
+  answerPoolSource: VocabCard[],
+  questionType: QuestionType,
+  boardSize: number,
+  difficulty: Difficulty,
+  mode: GameMode,
+) {
   const count = Math.max(8, Math.min(items.length, boardSize));
   const selected = items.slice(0, count);
-  const poolByAnswer = selected.map((item) => getAnswerText(item, questionType));
+  const poolByAnswer = Array.from(
+    new Set(answerPoolSource.map((item) => getAnswerText(item, questionType)).filter((text) => String(text || '').trim().length > 0)),
+  );
+  if (mode === 'runner' && poolByAnswer.length < 3) {
+    throw Object.assign(new Error('Chưa đủ dữ liệu đa dạng để chơi Runner 3 làn. Vui lòng ôn thêm từ hoặc đổi track.'), {
+      status: 400,
+    });
+  }
   const speed = difficulty === 'easy' ? 1 : difficulty === 'normal' ? 1.15 : difficulty === 'hard' ? 1.3 : 1.45;
 
   const questions = selected.map((item, index) => {
@@ -530,6 +668,7 @@ function buildArcadeDeck(items: VocabCard[], questionType: QuestionType, boardSi
       qid: index + 1,
       vocabId: item.id,
       prompt: getPromptText(item, questionType),
+      promptReading: getPromptReadingText(item, questionType),
       correct,
       options,
     };
@@ -543,6 +682,13 @@ function buildArcadeDeck(items: VocabCard[], questionType: QuestionType, boardSi
       questions,
     },
   };
+}
+
+function getPromptReadingText(item: VocabCard, questionType: QuestionType): string {
+  if ((questionType === 'kanji_to_vi' || questionType === 'kanji_to_reading') && item.word_ja && item.reading) {
+    return String(item.reading || '');
+  }
+  return '';
 }
 
 function buildOptions(correct: string, pool: string[], needed: number): string[] {
