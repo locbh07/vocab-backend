@@ -17,6 +17,8 @@ import { createFeedbackRouter } from './routes/feedback';
 import { createAdminFeedbackRouter } from './routes/adminFeedback';
 import { createAdminListeningRouter } from './routes/adminListening';
 import { createLearningGameRouter } from './routes/learningGame';
+import { createMailboxRouter } from './routes/mailbox';
+import { createAdminMailboxRouter } from './routes/adminMailbox';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
@@ -157,6 +159,10 @@ app.use('/admin/feedback', createAdminFeedbackRouter());
 app.use('/api/admin/feedback', createAdminFeedbackRouter());
 app.use('/admin/listening', createAdminListeningRouter());
 app.use('/api/admin/listening', createAdminListeningRouter());
+app.use('/mailbox', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'mailbox' }), createMailboxRouter());
+app.use('/api/mailbox', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'api-mailbox' }), createMailboxRouter());
+app.use('/admin/mailbox', createAdminMailboxRouter());
+app.use('/api/admin/mailbox', createAdminMailboxRouter());
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;
