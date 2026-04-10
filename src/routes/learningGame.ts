@@ -659,7 +659,7 @@ function buildArcadeDeck(
       status: 400,
     });
   }
-  const speed = difficulty === 'easy' ? 1 : difficulty === 'normal' ? 1.15 : difficulty === 'hard' ? 1.3 : 1.45;
+  const speed = resolveArcadeSpeedMultiplier(mode, difficulty);
 
   const questions = selected.map((item, index) => {
     const correct = getAnswerText(item, questionType);
@@ -682,6 +682,16 @@ function buildArcadeDeck(
       questions,
     },
   };
+}
+
+function resolveArcadeSpeedMultiplier(mode: GameMode, difficulty: Difficulty): number {
+  if (mode === 'runner') {
+    if (difficulty === 'easy') return 0.65;
+    if (difficulty === 'normal') return 0.82;
+    if (difficulty === 'hard') return 1.0;
+    return 1.16;
+  }
+  return difficulty === 'easy' ? 1 : difficulty === 'normal' ? 1.15 : difficulty === 'hard' ? 1.3 : 1.45;
 }
 
 function getPromptReadingText(item: VocabCard, questionType: QuestionType): string {
