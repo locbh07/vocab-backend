@@ -192,6 +192,24 @@ export function createLearningRouter() {
     return res.json(await getActivePlan(userId));
   });
 
+  router.put('/plan/daily-limit', async (req: Request, res: Response) => {
+    const userId = Number(req.body?.userId);
+    const dailyLimit = Number(req.body?.dailyLimit);
+    if (!Number.isFinite(userId) || !Number.isFinite(dailyLimit) || dailyLimit <= 0) {
+      return res.status(400).json({ message: 'Invalid userId or dailyLimit' });
+    }
+
+    const plan = await getActivePlan(userId);
+    if (!plan) return res.status(404).json({ message: 'No active plan found' });
+
+    await prisma.userLearningPlan.update({
+      where: { id: plan.id },
+      data: { daily_new_words: dailyLimit },
+    });
+
+    return res.json(await getActivePlan(userId));
+  });
+
   router.get('/new-words', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
@@ -591,6 +609,39 @@ export function createLearningRouter() {
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
     await ensureKanjiLearningTables();
     return res.json(await getActiveKanjiPlan(userId));
+  });
+
+  router.put('/kanji/plan/daily-limit', async (req: Request, res: Response) => {
+    const userId = Number(req.body?.userId);
+    const dailyLimit = Number(req.body?.dailyLimit);
+    if (!Number.isFinite(userId) || !Number.isFinite(dailyLimit) || dailyLimit <= 0) {
+      return res.status(400).json({ message: 'Invalid userId or dailyLimit' });
+    }
+
+    await ensureKanjiLearningTables();
+    const plan = await getActiveKanjiPlan(userId);
+    if (!plan) return res.status(404).json({ message: 'No active plan found' });
+
+    const start = dateOnly(new Date());
+
+    await prisma.$executeRawUnsafe(
+      `
+        UPDATE user_kanji_learning_plan
+        SET daily_new_kanji = $1, start_date = $2, updated_at = NOW()
+        WHERE id = $3
+      `,
+      dailyLimit,
+      start,
+      BigInt(plan.id),
+    );
+
+    const updatedPlan = await getActiveKanjiPlan(userId);
+    if (updatedPlan?.id) {
+      await rebuildKanjiPlanItemsForPlan(userId, updatedPlan);
+    }
+    invalidateKanjiTodayCache(userId);
+
+    return res.json(updatedPlan);
   });
 
   router.get('/kanji/count', async (req: Request, res: Response) => {
