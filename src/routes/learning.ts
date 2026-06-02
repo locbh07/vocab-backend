@@ -215,7 +215,7 @@ export function createLearningRouter() {
         ? ([{ core_order: 'asc' }, { id: 'asc' }] as const)
         : ([{ source_book: 'asc' }, { source_unit: 'asc' }, { id: 'asc' }] as const);
 
-    const rows = await prisma.vocabulary.findMany({
+    let rows = await prisma.vocabulary.findMany({
       where: {
         ...buildVocabularyScopeWhere(scope),
         vocabProgress: { none: { user_id: BigInt(userId) } },
@@ -223,6 +223,50 @@ export function createLearningRouter() {
       orderBy: orderBy as any,
       take: remaining,
     });
+
+    if (rows.length < remaining) {
+      const shortfall = remaining - rows.length;
+      
+      let fallbackOrderSql = "ORDER BY p.last_reviewed_at ASC NULLS FIRST, v.id ASC";
+      if (scope.track === 'core') {
+        fallbackOrderSql = "ORDER BY p.last_reviewed_at ASC NULLS FIRST, v.core_order ASC, v.id ASC";
+      } else if (scope.track === 'book') {
+        fallbackOrderSql = "ORDER BY p.last_reviewed_at ASC NULLS FIRST, v.source_book ASC, v.source_unit ASC, v.id ASC";
+      }
+
+      const conditions: string[] = ["v.track = '" + scope.track + "'"];
+      if (scope.track === 'core' && scope.topicPrefix) {
+        conditions.push("v.topic LIKE '" + scope.topicPrefix + "''");
+      } else if (scope.track === 'core') {
+        conditions.push("v.core_order IS NOT NULL");
+      } else if (scope.track === 'book') {
+        if (scope.sourceBook) conditions.push("v.source_book = '" + scope.sourceBook + "'");
+        if (scope.sourceUnit) conditions.push("v.source_unit = '" + scope.sourceUnit + "'");
+      }
+      const whereSql = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+
+      const extraRows = await prisma.$queryRawUnsafe<Array<{ id: bigint }>>(
+        "SELECT v.id \r\n" +
+        "FROM vocabulary v \r\n" +
+        "JOIN user_vocab_progress p ON p.vocab_id = v.id AND p.user_id = $1 \r\n" +
+        "WHERE v.id NOT IN ( \r\n" +
+        "  SELECT vocab_id FROM user_review_log \r\n" +
+        "  WHERE user_id = $1 AND mode = 'new' AND DATE(review_time) = CURRENT_DATE \r\n" +
+        ") \r\n" + whereSql + "\r\n" + fallbackOrderSql + "\r\n" + "LIMIT $2",
+        BigInt(userId), shortfall
+      );
+
+      if (extraRows.length > 0) {
+        const extraIds = extraRows.map((r) => r.id);
+        const extraWords = await prisma.vocabulary.findMany({
+          where: { id: { in: extraIds } }
+        });
+        const orderMap = new Map(extraIds.map((id, idx) => [String(id), idx]));
+        extraWords.sort((a, b) => (orderMap.get(String(a.id)) ?? 0) - (orderMap.get(String(b.id)) ?? 0));
+        rows = rows.concat(extraWords as any);
+      }
+    }
+
     return res.json(rows);
   });
 
