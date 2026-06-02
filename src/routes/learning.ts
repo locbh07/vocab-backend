@@ -1448,7 +1448,6 @@ async function listScheduledNewKanjiRows(userId: number, plan: KanjiLearningPlan
         FROM kanji_compound k2
         WHERE k2.kanji_char = s.kanji_char
         ORDER BY
-          CASE WHEN COALESCE(k2.meaning_vi, '') <> '' THEN 0 ELSE 1 END,
           k2.priority ASC,
           k2.word_ja ASC
         LIMIT 1
