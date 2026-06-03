@@ -1413,7 +1413,11 @@ async function rebuildKanjiPlanItemsForPlan(userId: number, plan: KanjiLearningP
 async function listScheduledNewKanjiRows(userId: number, plan: KanjiLearningPlan): Promise<KanjiLearningItemRow[]> {
   if (!plan?.id || !plan.dailyNewKanji || plan.dailyNewKanji <= 0) return [];
   const dayIndex = getKanjiPlanDayIndex(plan.startDate);
-  const limit = Math.max(1, Math.floor(plan.dailyNewKanji));
+  
+  const used = await countTodayLearnedKanji(userId);
+  const remaining = plan.dailyNewKanji - used;
+  if (remaining <= 0) return [];
+  const limit = Math.max(1, Math.floor(remaining));
 
   return prisma.$queryRawUnsafe<Array<KanjiLearningItemRow>>(
     `
@@ -1425,7 +1429,7 @@ async function listScheduledNewKanjiRows(userId: number, plan: KanjiLearningPlan
         FROM user_kanji_plan_item pi
         WHERE pi.user_id = $1
           AND pi.plan_id = $2
-          AND pi.day_index = $3
+          AND pi.day_index <= $3
           AND pi.status = 'pending'
           AND NOT EXISTS (
             SELECT 1
@@ -1525,7 +1529,6 @@ async function listDueKanjiRows(userId: number): Promise<KanjiLearningItemRow[]>
         FROM kanji_compound k2
         WHERE k2.kanji_char = d.kanji_char
         ORDER BY
-          CASE WHEN COALESCE(k2.meaning_vi, '') <> '' THEN 0 ELSE 1 END,
           k2.priority ASC,
           k2.word_ja ASC
         LIMIT 1
@@ -1586,7 +1589,6 @@ async function pickNewKanjiRowsForUser(args: PickNewKanjiRowsArgs): Promise<Kanj
         FROM kanji_compound k2
         WHERE k2.kanji_char = l.kanji_char
         ORDER BY
-          CASE WHEN COALESCE(k2.meaning_vi, '') <> '' THEN 0 ELSE 1 END,
           k2.priority ASC,
           k2.word_ja ASC
         LIMIT 1
