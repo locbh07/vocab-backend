@@ -137,6 +137,9 @@ model UserAccount {
   createdat    DateTime @map("createdat") @default(now())
   exam_enabled Boolean @map("exam_enabled") @default(false)
   exam_code    String? @map("exam_code")
+  level        String? @db.VarChar(10)
+  googleId     String? @unique @map("google_id") @db.VarChar(255)
+  authUserId   String? @unique @map("auth_user_id") @db.VarChar(255)
 
   attempts JlptAttempt[]
   learningPlans UserLearningPlan[]

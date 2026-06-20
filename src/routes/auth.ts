@@ -1,7 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { getSupabaseAdmin, getSupabaseAnon } from '../lib/supabase';
 import bcrypt from 'bcryptjs';
+import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../lib/prisma';
+
+const googleOAuthClient = new OAuth2Client();
+const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
 
 export function createAuthRouter() {
   const router = Router();
@@ -10,11 +14,21 @@ export function createAuthRouter() {
     try {
       const username = String(req.body?.username || '').trim();
       const password = String(req.body?.password || '').trim();
+      const confirmPassword = String(
+        req.body?.confirmPassword || req.body?.passwordConfirm || req.body?.rePassword || '',
+      ).trim();
       const fullName = String(req.body?.fullName || req.body?.fullname || '').trim();
-      const email = String(req.body?.email || '').trim();
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const level = normalizeJlptLevel(req.body?.level);
 
-      if (!username || !password || !fullName || !email) {
-        return res.status(400).json({ success: false, message: 'Missing fields' });
+      if (!username || !password || !confirmPassword || !fullName || !email) {
+        return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ thông tin đăng ký.' });
+      }
+      if (password !== confirmPassword) {
+        return res.status(400).json({ success: false, message: 'Mật khẩu nhập lại không khớp.' });
+      }
+      if (!level) {
+        return res.status(400).json({ success: false, message: 'Trình độ không hợp lệ. Vui lòng chọn từ N5 đến N1.' });
       }
 
       if (!isSupabaseConfigured()) {
@@ -24,7 +38,7 @@ export function createAuthRouter() {
           },
         });
         if (existing) {
-          return res.status(409).json({ success: false, message: 'Username or email already exists' });
+          return res.status(409).json({ success: false, message: 'Tên đăng nhập hoặc email đã tồn tại.' });
         }
 
         const passwordhash = await bcrypt.hash(password, 10);
@@ -36,6 +50,7 @@ export function createAuthRouter() {
             email,
             role: 'USER',
             exam_enabled: false,
+            level,
           },
         });
 
@@ -54,7 +69,7 @@ export function createAuthRouter() {
         .limit(1);
 
       if (existing && existing.length > 0) {
-        return res.status(409).json({ success: false, message: 'Username or email already exists' });
+        return res.status(409).json({ success: false, message: 'Tên đăng nhập hoặc email đã tồn tại.' });
       }
 
       const { data: created, error: createError } = await admin.auth.admin.createUser({
@@ -78,8 +93,9 @@ export function createAuthRouter() {
           role: 'USER',
           exam_enabled: false,
           auth_user_id: authUserId,
+          level,
         })
-        .select('id, username, fullname, email, role, exam_enabled, exam_code')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id')
         .maybeSingle();
 
       if (insertError) {
@@ -99,6 +115,8 @@ export function createAuthRouter() {
               role: inserted.role,
               examEnabled: inserted.exam_enabled,
               examCode: inserted.exam_code,
+              level: inserted.level,
+              googleId: inserted.google_id,
             }
           : null,
       });
@@ -156,7 +174,7 @@ export function createAuthRouter() {
       const authUserId = signInData.user.id;
       const { data: byAuth } = await admin
         .from('useraccount')
-        .select('id, username, fullname, email, role, exam_enabled, exam_code')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id')
         .eq('auth_user_id', authUserId)
         .maybeSingle();
 
@@ -165,7 +183,7 @@ export function createAuthRouter() {
         : (
             await admin
               .from('useraccount')
-              .select('id, username, fullname, email, role, exam_enabled, exam_code')
+              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id')
               .eq('email', email)
               .maybeSingle()
           ).data;
@@ -182,12 +200,114 @@ export function createAuthRouter() {
               role: profile.role,
               examEnabled: profile.exam_enabled,
               examCode: profile.exam_code,
+              level: profile.level,
+              googleId: profile.google_id,
             }
           : null,
         session: signInData.session,
       });
     } catch (error) {
-      return res.status(500).json({ success: false, message: (error as Error).message });
+      const status = (error as { status?: number })?.status || 500;
+      return res.status(status).json({ success: false, message: (error as Error).message });
+    }
+  });
+
+  router.post('/google', async (req: Request, res: Response) => {
+    try {
+      const idToken = String(req.body?.credential || req.body?.idToken || req.body?.token || '').trim();
+      const level = normalizeJlptLevel(req.body?.level) || 'N5';
+
+      if (!idToken) {
+        return res.status(400).json({ success: false, message: 'Missing Google credential' });
+      }
+
+      const googleProfile = await verifyGoogleIdToken(idToken);
+      if (!googleProfile.email || !googleProfile.googleId) {
+        return res.status(401).json({ success: false, message: 'Invalid Google credential' });
+      }
+
+      const email = googleProfile.email;
+      const fullName = googleProfile.fullName || email.split('@')[0];
+      const googleId = googleProfile.googleId;
+      let authUserId: string | null = null;
+      let session: unknown = null;
+
+      if (isSupabaseConfigured()) {
+        const anon = getSupabaseAnon();
+        const { data: signInData, error: signInError } = await anon.auth.signInWithIdToken({
+          provider: 'google',
+          token: idToken,
+        });
+        if (signInError || !signInData?.user?.id) {
+          return res.status(401).json({ success: false, message: signInError?.message || 'Google login failed' });
+        }
+        authUserId = signInData.user.id;
+        session = signInData.session;
+      }
+
+      let user = authUserId
+        ? await prisma.userAccount.findUnique({ where: { authUserId } })
+        : await prisma.userAccount.findUnique({
+            where: { googleId },
+          });
+
+      if (!user) {
+        user =
+          (await prisma.userAccount.findUnique({
+            where: { googleId },
+          })) ||
+          (await prisma.userAccount.findUnique({
+            where: { email },
+          }));
+
+        if (user) {
+          user = await prisma.userAccount.update({
+            where: { id: user.id },
+            data: {
+              googleId,
+              ...(authUserId && !user.authUserId ? { authUserId } : {}),
+              ...(level && !user.level ? { level } : {}),
+            },
+          });
+        } else {
+          const username = await createUniqueUsername(email);
+          const passwordhash = await bcrypt.hash(Math.random().toString(36), 10);
+          user = await prisma.userAccount.create({
+            data: {
+              username,
+              passwordhash,
+              fullname: fullName,
+              email,
+              role: 'USER',
+              exam_enabled: false,
+              level,
+              googleId,
+              ...(authUserId ? { authUserId } : {}),
+            },
+          });
+        }
+      } else {
+        if (!user.level || (authUserId && !user.authUserId) || !user.googleId) {
+          user = await prisma.userAccount.update({
+            where: { id: user.id },
+            data: {
+              ...(!user.level ? { level } : {}),
+              ...(authUserId && !user.authUserId ? { authUserId } : {}),
+              ...(!user.googleId ? { googleId } : {}),
+            },
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: 'Google login success',
+        user: sanitizeUser(user),
+        session,
+      });
+    } catch (error) {
+      const status = (error as { status?: number })?.status || 500;
+      return res.status(status).json({ success: false, message: (error as Error).message });
     }
   });
 
@@ -198,6 +318,50 @@ function isSupabaseConfigured() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+function normalizeJlptLevel(value: unknown): string | null {
+  const level = String(value || '').trim().toUpperCase();
+  return JLPT_LEVELS.has(level) ? level : null;
+}
+
+async function verifyGoogleIdToken(idToken: string): Promise<{ googleId: string; email: string; fullName: string }> {
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+  const ticket = await googleOAuthClient.verifyIdToken({
+    idToken,
+    ...(clientId ? { audience: clientId } : {}),
+  });
+  const payload = ticket.getPayload();
+  if (!payload?.sub || !payload.email || payload.email_verified === false) {
+    const error = new Error('Invalid Google credential') as Error & { status?: number };
+    error.status = 401;
+    throw error;
+  }
+  return {
+    googleId: payload.sub,
+    email: payload.email.toLowerCase(),
+    fullName: payload.name || payload.email.split('@')[0],
+  };
+}
+
+async function createUniqueUsername(email: string): Promise<string> {
+  const normalized = email
+    .split('@')[0]
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 30);
+  const baseUsername = normalized || 'google_user';
+  let username = baseUsername;
+  let attempt = 0;
+  while (true) {
+    const existing = await prisma.userAccount.findUnique({
+      where: { username },
+    });
+    if (!existing) return username;
+    attempt += 1;
+    username = `${baseUsername.slice(0, 25)}_${attempt}`;
+  }
+}
+
 function sanitizeUser(user: {
   id: bigint;
   username: string;
@@ -206,6 +370,8 @@ function sanitizeUser(user: {
   role: string;
   exam_enabled: boolean;
   exam_code: string | null;
+  level: string | null;
+  googleId: string | null;
 }) {
   return {
     id: Number(user.id),
@@ -215,5 +381,7 @@ function sanitizeUser(user: {
     role: user.role,
     examEnabled: user.exam_enabled,
     examCode: user.exam_code,
+    level: user.level,
+    googleId: user.googleId,
   };
 }

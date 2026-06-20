@@ -3,6 +3,8 @@ import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
 import { dateOnly } from '../lib/http';
 
+const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
+
 export function createAdminUsersRouter() {
   const router = Router();
 
@@ -97,6 +99,11 @@ export function createAdminUsersRouter() {
     if (body.role !== undefined) data.role = body.role;
     if (body.examEnabled !== undefined) data.exam_enabled = Boolean(body.examEnabled);
     if (body.examCode !== undefined) data.exam_code = body.examCode;
+    if (body.level !== undefined) {
+      const level = normalizeJlptLevel(body.level);
+      if (!level) return res.status(400).json({ message: 'Invalid level. Choose N5, N4, N3, N2 or N1' });
+      data.level = level;
+    }
     if (Object.keys(data).length === 0) return res.status(400).json({ message: 'No fields to update' });
 
     const updated = await prisma.userAccount.update({
@@ -264,6 +271,8 @@ function sanitizeUser(
   createdat: Date;
   exam_enabled: boolean;
   exam_code: string | null;
+  level: string | null;
+  googleId: string | null;
   },
   extras?: {
     activePlan?: { topic_prefix?: string | null } | null;
@@ -271,7 +280,7 @@ function sanitizeUser(
   },
 ) {
   const topicPrefix = extras?.activePlan?.topic_prefix || null;
-  const currentLevel = inferCurrentLevel(topicPrefix);
+  const currentLevel = user.level || inferCurrentLevel(topicPrefix);
   const hasExamCode =
     Boolean(user.exam_enabled && user.exam_code && String(user.exam_code).trim()) ||
     Boolean(extras?.hasExamCodeByLevel);
@@ -286,9 +295,16 @@ function sanitizeUser(
     examEnabled: user.exam_enabled,
     examCode: user.exam_code,
     hasExamCode,
+    level: user.level,
     currentLevel,
     topicPrefix,
+    googleId: user.googleId,
   };
+}
+
+function normalizeJlptLevel(value: unknown): string | null {
+  const level = String(value || '').trim().toUpperCase();
+  return JLPT_LEVELS.has(level) ? level : null;
 }
 
 function inferCurrentLevel(topicPrefix?: string | null) {
