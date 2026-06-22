@@ -113,6 +113,21 @@ export function createAdminFeedbackRouter() {
     return res.json(toResponse(updatedRows[0]));
   });
 
+  router.delete('/:id', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    await ensureFeedbackTable();
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: 'Invalid feedback id' });
+    }
+
+    const deleted = await prisma.$executeRaw`
+      DELETE FROM user_feedback WHERE id = ${BigInt(id)}
+    `;
+    if (!deleted) return res.status(404).json({ message: 'Feedback not found' });
+    return res.status(204).send();
+  });
+
   return router;
 }
 
