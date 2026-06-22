@@ -47,7 +47,11 @@ const configuredCorsOrigin = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-const localhostCorsOrigins = new Set(['http://localhost:5173', 'http://127.0.0.1:5173']);
+const builtInCorsOrigins = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://jp-vocab-frontend.vercel.app',
+]);
 
 function isLocalhostOrigin(origin: string): boolean {
   try {
@@ -71,7 +75,7 @@ if (configuredCorsOrigin.length === 0) {
         if (
           !origin ||
           configuredCorsOrigin.includes(origin) ||
-          localhostCorsOrigins.has(origin) ||
+          builtInCorsOrigins.has(origin) ||
           isLocalhostOrigin(origin)
         ) {
           callback(null, true);
