@@ -215,6 +215,37 @@ model PageComment {
   @@map("page_comment")
 }
 
+model SiteContactSettings {
+  id          Int      @id @db.SmallInt
+  eyebrow     String   @db.VarChar(80)
+  title       String   @db.VarChar(200)
+  description String   @db.Text
+  email       String?  @db.VarChar(255)
+  phone       String?  @db.VarChar(50)
+  address     String?  @db.VarChar(500)
+  updatedBy   BigInt?  @map("updated_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @map("updated_at")
+
+  @@map("site_contact_settings")
+}
+
+model SiteContactChannel {
+  id        BigInt   @id @default(autoincrement())
+  platform  String   @db.VarChar(30)
+  label     String   @db.VarChar(80)
+  handle    String?  @db.VarChar(120)
+  url       String?  @db.Text
+  qrImage   String?  @map("qr_image") @db.Text
+  enabled   Boolean  @default(true)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @map("updated_at")
+
+  @@index([enabled, sortOrder, id], map: "idx_site_contact_channel_order")
+  @@map("site_contact_channel")
+}
+
 model UserVocabProgress {
   id              BigInt   @id @default(autoincrement())
   user_id         BigInt   @map("user_id")

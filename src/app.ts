@@ -21,6 +21,8 @@ import { createMailboxRouter } from './routes/mailbox';
 import { createAdminMailboxRouter } from './routes/adminMailbox';
 import { createCommentsRouter } from './routes/comments';
 import { createAdminCommentsRouter } from './routes/adminComments';
+import { createContactRouter } from './routes/contact';
+import { createAdminContactRouter } from './routes/adminContact';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
@@ -86,7 +88,7 @@ if (configuredCorsOrigin.length === 0) {
     }),
   );
 }
-app.use(express.json());
+app.use(express.json({ limit: '6mb' }));
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.use((req, res, next) => {
@@ -167,6 +169,10 @@ app.use('/comments', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefi
 app.use('/api/comments', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'api-comments' }), createCommentsRouter());
 app.use('/admin/comments', createAdminCommentsRouter());
 app.use('/api/admin/comments', createAdminCommentsRouter());
+app.use('/contact', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'contact' }), createContactRouter());
+app.use('/api/contact', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'api-contact' }), createContactRouter());
+app.use('/admin/contact', createAdminContactRouter());
+app.use('/api/admin/contact', createAdminContactRouter());
 app.use('/admin/listening', createAdminListeningRouter());
 app.use('/api/admin/listening', createAdminListeningRouter());
 app.use('/mailbox', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'mailbox' }), createMailboxRouter());
