@@ -305,36 +305,40 @@ export function createExamRouter() {
       const durationSec = Number(body.durationSec || 0);
       const started = durationSec > 0 ? new Date(finished.getTime() - durationSec * 1000) : finished;
 
-      const attempt = await prisma.jlptAttempt.create({
-        data: {
-          user_id: BigInt(body.userId),
-          level: body.level,
-          exam_id: body.examId,
-          started_at: started,
-          finished_at: finished,
-          duration_sec: durationSec || null,
-          score_total: scored.scoreTotal,
-          score_sec1: scored.scoreSec1,
-          score_sec2: scored.scoreSec2,
-          score_sec3: scored.scoreSec3,
-        },
-      });
-
-      for (const item of scored.items) {
-        await prisma.jlptAttemptItem.create({
+      const attempt = await prisma.$transaction(async (tx) => {
+        const createdAttempt = await tx.jlptAttempt.create({
           data: {
-            attempt_id: attempt.id,
-            part: item.part,
-            section_index: item.section_index,
-            question_index: item.question_index,
-            question_id: item.question_id,
-            selected: item.selected,
-            correct_answer: item.correct_answer,
-            is_correct: item.is_correct,
-            question_json: item.question_json as any,
+            user_id: BigInt(body.userId),
+            level: body.level,
+            exam_id: body.examId,
+            started_at: started,
+            finished_at: finished,
+            duration_sec: durationSec || null,
+            score_total: scored.scoreTotal,
+            score_sec1: scored.scoreSec1,
+            score_sec2: scored.scoreSec2,
+            score_sec3: scored.scoreSec3,
           },
         });
-      }
+
+        if (scored.items.length) {
+          await tx.jlptAttemptItem.createMany({
+            data: scored.items.map((item) => ({
+              attempt_id: createdAttempt.id,
+              part: item.part,
+              section_index: item.section_index,
+              question_index: item.question_index,
+              question_id: item.question_id,
+              selected: item.selected,
+              correct_answer: item.correct_answer,
+              is_correct: item.is_correct,
+              question_json: item.question_json as any,
+            })),
+          });
+        }
+
+        return createdAttempt;
+      });
 
       return res.json({
         attemptId: Number(attempt.id),
