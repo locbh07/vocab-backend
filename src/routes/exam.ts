@@ -406,6 +406,7 @@ export function createExamRouter() {
       let questionCtx = loadedQuestionCtx;
       if (part === 3 || loadedQuestionCtx.questionType === 'listening') {
         const listeningScript = extractListeningScriptForExplanation(
+          loadedQuestionCtx.listeningScriptText,
           loadedQuestionCtx.passageText,
           loadedQuestionCtx.questionText,
         );
@@ -848,6 +849,7 @@ type QuestionContext = {
   options: Record<string, string>;
   correctAnswer: string;
   passageText: string;
+  listeningScriptText: string;
   questionWordReadings: Record<string, string>;
   sentenceOrderExpectedOrder: string[];
 };
@@ -1256,6 +1258,7 @@ async function loadQuestionContext(
     options,
     correctAnswer,
     passageText,
+    listeningScriptText: normalizeSpace(stripHtml(rawExpl)),
     questionWordReadings,
     sentenceOrderExpectedOrder,
   };
@@ -1281,10 +1284,16 @@ function extractPassageText(partJson: Record<string, unknown>, question: Record<
   return texts.join('\n');
 }
 
-function extractListeningScriptForExplanation(passageText: string, questionText: string): string {
+function extractListeningScriptForExplanation(
+  questionScriptText: string,
+  passageText: string,
+  questionText: string,
+): string {
+  const scriptFromQuestion = validateListeningScript(questionScriptText, questionText);
+  if (scriptFromQuestion) return scriptFromQuestion;
+
   const cleanedPassage = normalizeSpace(String(passageText || ''));
   if (!cleanedPassage) return '';
-
   const rawLines = cleanedPassage
     .split(/\n+/)
     .map((line) => normalizeSpace(line))
@@ -1292,7 +1301,11 @@ function extractListeningScriptForExplanation(passageText: string, questionText:
   if (!rawLines.length) return '';
 
   const contentLines = rawLines.filter((line) => !isLikelyListeningInstructionLine(line));
-  const script = normalizeSpace(contentLines.join('\n'));
+  return validateListeningScript(contentLines.join('\n'), questionText);
+}
+
+function validateListeningScript(candidate: string, questionText: string): string {
+  const script = normalizeSpace(String(candidate || ''));
   if (script.length < 20) return '';
 
   const normalizedQuestion = normalizeSpace(String(questionText || ''));
@@ -1319,7 +1332,11 @@ function isLikelyListeningInstructionLine(line: string): boolean {
 }
 
 function buildQuestionHash(question: QuestionContext): string {
-  return createHash('sha256').update(stableSerialize(question)).digest('hex');
+  // The raw per-question transcript is only an input used to resolve passageText.
+  // Excluding it keeps existing hashes stable; the resolved script is already
+  // represented by passageText for listening questions.
+  const { listeningScriptText: _listeningScriptText, ...hashableQuestion } = question;
+  return createHash('sha256').update(stableSerialize(hashableQuestion)).digest('hex');
 }
 
 function buildQuestionPromptText(args: {
