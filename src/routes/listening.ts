@@ -43,6 +43,15 @@ type ListeningAccessPolicy = {
 const DEFAULT_GUEST_LISTENING_VIDEO_LIMIT = Math.max(1, Number(process.env.GUEST_LISTENING_VIDEO_LIMIT || 7));
 const DEFAULT_USER_LISTENING_VIDEO_LIMIT = Math.max(1, Number(process.env.USER_LISTENING_VIDEO_LIMIT || 15));
 const GUEST_COOKIE_NAME = 'jp_listening_guest_id';
+const SUPPORTED_TRANSLATION_LANGUAGES = new Set(['vi', 'en']);
+const translationCache = new Map<string, string>();
+const MAX_TRANSLATION_CACHE_SIZE = 1000;
+const TRANSCRIPT_LINE_CORRECTIONS = new Map([
+  ['串で紙を溶かします', '櫛で髪をとかします'],
+  ['櫛で髪を溶かします', '櫛で髪をとかします'],
+]);
+const COMB_HAIR_RUBY_HTML =
+  '<ruby>櫛<rt>くし</rt></ruby>で<ruby>髪<rt>かみ</rt></ruby>をとかします';
 let ensureListeningGuestAccessTablePromise: Promise<void> | null = null;
 
 function normalizeLevel(input: unknown) {
@@ -375,6 +384,82 @@ async function enforceListeningAccess(req: Request, res: Response, videoId: stri
 export function createListeningRouter() {
   const router = Router();
 
+  router.post('/translate', async (req: Request, res: Response) => {
+    const text = String(req.body?.text || '').trim();
+    const targetLanguage = String(req.body?.targetLanguage || 'vi').trim().toLowerCase();
+
+    if (!text) {
+      return res.status(400).json({ success: false, message: 'Nội dung cần dịch không được để trống.' });
+    }
+    if (text.length > 1000) {
+      return res.status(400).json({ success: false, message: 'Mỗi câu dịch không được vượt quá 1000 ký tự.' });
+    }
+    if (!SUPPORTED_TRANSLATION_LANGUAGES.has(targetLanguage)) {
+      return res.status(400).json({ success: false, message: 'Ngôn ngữ đích không được hỗ trợ.' });
+    }
+
+    const cacheKey = `${targetLanguage}::${text}`;
+    const cached = translationCache.get(cacheKey);
+    if (cached) {
+      return res.json({ success: true, translation: cached, cached: true });
+    }
+
+    const apiKey = String(process.env.GOOGLE_TRANSLATE_API_KEY || '').trim();
+    if (!apiKey) {
+      return res.status(503).json({
+        success: false,
+        code: 'TRANSLATION_NOT_CONFIGURED',
+        message: 'Dịch phụ đề chưa được cấu hình trên máy chủ.',
+      });
+    }
+
+    const params = new URLSearchParams({
+      'params.client': 'gtx',
+      'query.source_language': 'ja',
+      'query.target_language': targetLanguage,
+      'query.display_language': 'en-US',
+      'query.text': text,
+      key: apiKey,
+    });
+    params.append('data_types', 'TRANSLATION');
+    params.append('data_types', 'SENTENCE_SPLITS');
+    params.append('data_types', 'BILINGUAL_DICTIONARY_FULL');
+
+    try {
+      const response = await fetch(`https://translate-pa.googleapis.com/v1/translate?${params.toString()}`);
+      if (!response.ok) {
+        return res.status(502).json({
+          success: false,
+          code: 'TRANSLATION_PROVIDER_ERROR',
+          message: 'Dịch phụ đề đang tạm thời gián đoạn.',
+        });
+      }
+
+      const payload = (await response.json()) as { translation?: unknown };
+      const translation = String(payload?.translation || '').trim();
+      if (!translation) {
+        return res.status(502).json({
+          success: false,
+          code: 'TRANSLATION_EMPTY_RESPONSE',
+          message: 'Dịch vụ không trả về bản dịch.',
+        });
+      }
+
+      if (translationCache.size >= MAX_TRANSLATION_CACHE_SIZE) {
+        const oldestKey = translationCache.keys().next().value;
+        if (oldestKey) translationCache.delete(oldestKey);
+      }
+      translationCache.set(cacheKey, translation);
+      return res.json({ success: true, translation, cached: false });
+    } catch {
+      return res.status(502).json({
+        success: false,
+        code: 'TRANSLATION_PROVIDER_UNAVAILABLE',
+        message: 'Không kết nối được dịch vụ dịch phụ đề.',
+      });
+    }
+  });
+
   router.get('/videos', async (req: Request, res: Response) => {
     const q = String(req.query.q || '').trim();
     const level = normalizeLevel(req.query.level);
@@ -457,13 +542,17 @@ export function createListeningRouter() {
       `,
     );
 
-    const lines = rows.map((line) => ({
-      text: line.text,
-      start: line.start_sec,
-      end: line.end_sec,
-      dur: line.dur_sec,
-      rubyHtml: line.ruby_html || '',
-    }));
+    const lines = rows.map((line) => {
+      const correctedText = TRANSCRIPT_LINE_CORRECTIONS.get(line.text) || line.text;
+      const wasCorrected = correctedText !== line.text;
+      return {
+        text: correctedText,
+        start: line.start_sec,
+        end: line.end_sec,
+        dur: line.dur_sec,
+        rubyHtml: wasCorrected ? COMB_HAIR_RUBY_HTML : line.ruby_html || '',
+      };
+    });
 
     return res.json({ videoId, lines });
   });
