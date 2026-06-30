@@ -1931,8 +1931,8 @@ function scoreAttempt(parts: Array<{ part: number; json_data: unknown }>, answer
       const questions = Array.isArray(sections[si]?.questions) ? (sections[si]?.questions as Array<Record<string, unknown>>) : [];
       for (let qi = 0; qi < questions.length; qi += 1) {
         const q = questions[qi] || {};
-        const correctAnswer = text(q.answer ?? q.correct_answer);
-        const selected = text(answerList[flatIndex]);
+        const correctAnswer = normalizeAnswerValue(q.correct_answer ?? q.answer);
+        const selected = normalizeAnswerValue(answerList[flatIndex]);
         const isCorrect = Boolean(selected && correctAnswer && selected === correctAnswer);
         items.push({
           part: part.part,
@@ -1967,5 +1967,18 @@ function text(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const str = String(value);
   return str.length ? str : null;
+}
+
+function normalizeAnswerValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value)
+    .replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+    .replace(/[①❶➀]/g, '1')
+    .replace(/[②❷➁]/g, '2')
+    .replace(/[③❸➂]/g, '3')
+    .replace(/[④❹➃]/g, '4')
+    .trim()
+    .match(/[1-4]/)?.[0] || '';
+  return normalized.length ? normalized : null;
 }
 
