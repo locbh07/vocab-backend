@@ -33,6 +33,10 @@ type CountRow = {
   total: bigint | number;
 };
 
+type StoredTranslationRow = {
+  translation: string;
+};
+
 type ListeningAccessPolicy = {
   guestGateEnabled: boolean;
   guestVideoLimit: number;
@@ -53,6 +57,7 @@ const TRANSCRIPT_LINE_CORRECTIONS = new Map([
 const COMB_HAIR_RUBY_HTML =
   '<ruby>櫛<rt>くし</rt></ruby>で<ruby>髪<rt>かみ</rt></ruby>をとかします';
 let ensureListeningGuestAccessTablePromise: Promise<void> | null = null;
+let ensureListeningTranslationTablePromise: Promise<void> | null = null;
 
 function normalizeLevel(input: unknown) {
   return String(input || '').trim().toLowerCase();
@@ -381,12 +386,155 @@ async function enforceListeningAccess(req: Request, res: Response, videoId: stri
   return enforceGuestListeningAccess(req, res, videoId, policy);
 }
 
+function rememberTranslation(cacheKey: string, translation: string) {
+  if (translationCache.size >= MAX_TRANSLATION_CACHE_SIZE) {
+    const oldestKey = translationCache.keys().next().value;
+    if (oldestKey) translationCache.delete(oldestKey);
+  }
+  translationCache.set(cacheKey, translation);
+}
+
+async function translateWithApiKey(text: string, targetLanguage: string, apiKey: string): Promise<string> {
+  const params = new URLSearchParams({
+    'params.client': 'gtx',
+    'query.source_language': 'ja',
+    'query.target_language': targetLanguage,
+    'query.display_language': 'en-US',
+    'query.text': text,
+    key: apiKey,
+  });
+  params.append('data_types', 'TRANSLATION');
+  params.append('data_types', 'SENTENCE_SPLITS');
+  params.append('data_types', 'BILINGUAL_DICTIONARY_FULL');
+
+  const response = await fetch(`https://translate-pa.googleapis.com/v1/translate?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`translate-pa failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as { translation?: unknown };
+  return String(payload?.translation || '').trim();
+}
+
+async function translateWithPublicEndpoint(text: string, targetLanguage: string): Promise<string> {
+  const params = new URLSearchParams({
+    client: 'gtx',
+    sl: 'ja',
+    tl: targetLanguage,
+    dt: 't',
+    q: text,
+  });
+  const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`translate.googleapis.com failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  const segments = Array.isArray(payload) && Array.isArray(payload[0]) ? payload[0] : [];
+  return segments
+    .map((item) => (Array.isArray(item) ? String(item[0] || '') : ''))
+    .join('')
+    .trim();
+}
+
+function normalizeVideoIdForTranslation(input: unknown): string {
+  const value = String(input || '').trim();
+  return /^[a-zA-Z0-9_-]{11}$/.test(value) ? value : '';
+}
+
+function normalizeLineIndexForTranslation(input: unknown): number | null {
+  const value = Number(input);
+  if (!Number.isInteger(value) || value < 0) return null;
+  return value;
+}
+
+async function ensureListeningTranslationTable() {
+  if (!ensureListeningTranslationTablePromise) {
+    ensureListeningTranslationTablePromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS listening_transcript_translation (
+          id BIGSERIAL PRIMARY KEY,
+          video_id VARCHAR(20) NOT NULL,
+          line_index INTEGER NOT NULL,
+          language VARCHAR(10) NOT NULL,
+          source_text TEXT NOT NULL,
+          translation TEXT NOT NULL,
+          provider VARCHAR(50) NOT NULL DEFAULT 'google',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT listening_transcript_translation_video_fk
+            FOREIGN KEY (video_id) REFERENCES listening_video(video_id) ON DELETE CASCADE,
+          CONSTRAINT listening_transcript_translation_line_lang_uniq
+            UNIQUE(video_id, line_index, language)
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_listening_transcript_translation_lookup
+        ON listening_transcript_translation (video_id, line_index, language);
+      `);
+    })().catch((error) => {
+      ensureListeningTranslationTablePromise = null;
+      throw error;
+    });
+  }
+  return ensureListeningTranslationTablePromise;
+}
+
+async function readStoredTranslation(
+  videoId: string,
+  lineIndex: number,
+  language: string,
+  sourceText: string,
+): Promise<string> {
+  await ensureListeningTranslationTable();
+  const rows = await prisma.$queryRaw<StoredTranslationRow[]>(
+    Prisma.sql`
+      SELECT translation
+      FROM listening_transcript_translation
+      WHERE video_id = ${videoId}
+        AND line_index = ${lineIndex}
+        AND language = ${language}
+        AND source_text = ${sourceText}
+      LIMIT 1
+    `,
+  );
+  return String(rows[0]?.translation || '').trim();
+}
+
+async function saveStoredTranslation(
+  videoId: string,
+  lineIndex: number,
+  language: string,
+  sourceText: string,
+  translation: string,
+  provider: string,
+) {
+  await ensureListeningTranslationTable();
+  await prisma.$executeRaw(
+    Prisma.sql`
+      INSERT INTO listening_transcript_translation (
+        video_id, line_index, language, source_text, translation, provider, created_at, updated_at
+      )
+      VALUES (${videoId}, ${lineIndex}, ${language}, ${sourceText}, ${translation}, ${provider}, NOW(), NOW())
+      ON CONFLICT (video_id, line_index, language)
+      DO UPDATE SET
+        source_text = EXCLUDED.source_text,
+        translation = EXCLUDED.translation,
+        provider = EXCLUDED.provider,
+        updated_at = NOW()
+    `,
+  );
+}
+
 export function createListeningRouter() {
   const router = Router();
 
   router.post('/translate', async (req: Request, res: Response) => {
     const text = String(req.body?.text || '').trim();
     const targetLanguage = String(req.body?.targetLanguage || 'vi').trim().toLowerCase();
+    const videoId = normalizeVideoIdForTranslation(req.body?.videoId);
+    const lineIndex = normalizeLineIndexForTranslation(req.body?.lineIndex);
+    const canPersistTranslation = Boolean(videoId && lineIndex !== null);
 
     if (!text) {
       return res.status(400).json({ success: false, message: 'Nội dung cần dịch không được để trống.' });
@@ -399,65 +547,61 @@ export function createListeningRouter() {
     }
 
     const cacheKey = `${targetLanguage}::${text}`;
+    if (canPersistTranslation) {
+      const storedTranslation = await readStoredTranslation(videoId, lineIndex as number, targetLanguage, text);
+      if (storedTranslation) {
+        rememberTranslation(cacheKey, storedTranslation);
+        return res.json({ success: true, translation: storedTranslation, cached: true, source: 'database' });
+      }
+    }
+
     const cached = translationCache.get(cacheKey);
     if (cached) {
-      return res.json({ success: true, translation: cached, cached: true });
+      if (canPersistTranslation) {
+        await saveStoredTranslation(videoId, lineIndex as number, targetLanguage, text, cached, 'memory-cache');
+      }
+      return res.json({ success: true, translation: cached, cached: true, source: 'memory' });
     }
 
-    const apiKey = String(process.env.GOOGLE_TRANSLATE_API_KEY || '').trim();
-    if (!apiKey) {
-      return res.status(503).json({
-        success: false,
-        code: 'TRANSLATION_NOT_CONFIGURED',
-        message: 'Dịch phụ đề chưa được cấu hình trên máy chủ.',
-      });
-    }
+    {
+      try {
+        const apiKey = String(process.env.GOOGLE_TRANSLATE_API_KEY || '').trim();
+        let translation = '';
+        let provider = 'google-public';
+        if (apiKey) {
+          try {
+            translation = await translateWithApiKey(text, targetLanguage, apiKey);
+            provider = 'google-translate-pa';
+          } catch {
+            translation = '';
+          }
+        }
+        if (!translation) {
+          translation = await translateWithPublicEndpoint(text, targetLanguage);
+          provider = 'google-public';
+        }
+        if (!translation) {
+          return res.status(502).json({
+            success: false,
+            code: 'TRANSLATION_EMPTY_RESPONSE',
+            message: 'Dich vu khong tra ve ban dich.',
+          });
+        }
 
-    const params = new URLSearchParams({
-      'params.client': 'gtx',
-      'query.source_language': 'ja',
-      'query.target_language': targetLanguage,
-      'query.display_language': 'en-US',
-      'query.text': text,
-      key: apiKey,
-    });
-    params.append('data_types', 'TRANSLATION');
-    params.append('data_types', 'SENTENCE_SPLITS');
-    params.append('data_types', 'BILINGUAL_DICTIONARY_FULL');
-
-    try {
-      const response = await fetch(`https://translate-pa.googleapis.com/v1/translate?${params.toString()}`);
-      if (!response.ok) {
+        rememberTranslation(cacheKey, translation);
+        if (canPersistTranslation) {
+          await saveStoredTranslation(videoId, lineIndex as number, targetLanguage, text, translation, provider);
+        }
+        return res.json({ success: true, translation, cached: false, source: provider });
+      } catch {
         return res.status(502).json({
           success: false,
-          code: 'TRANSLATION_PROVIDER_ERROR',
-          message: 'Dịch phụ đề đang tạm thời gián đoạn.',
+          code: 'TRANSLATION_PROVIDER_UNAVAILABLE',
+          message: 'Khong ket noi duoc dich vu dich.',
         });
       }
-
-      const payload = (await response.json()) as { translation?: unknown };
-      const translation = String(payload?.translation || '').trim();
-      if (!translation) {
-        return res.status(502).json({
-          success: false,
-          code: 'TRANSLATION_EMPTY_RESPONSE',
-          message: 'Dịch vụ không trả về bản dịch.',
-        });
-      }
-
-      if (translationCache.size >= MAX_TRANSLATION_CACHE_SIZE) {
-        const oldestKey = translationCache.keys().next().value;
-        if (oldestKey) translationCache.delete(oldestKey);
-      }
-      translationCache.set(cacheKey, translation);
-      return res.json({ success: true, translation, cached: false });
-    } catch {
-      return res.status(502).json({
-        success: false,
-        code: 'TRANSLATION_PROVIDER_UNAVAILABLE',
-        message: 'Không kết nối được dịch vụ dịch phụ đề.',
-      });
     }
+
   });
 
   router.get('/videos', async (req: Request, res: Response) => {

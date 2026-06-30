@@ -334,6 +334,7 @@ model ListeningVideo {
   updated_at       DateTime @default(now())
 
   transcripts ListeningTranscriptLine[]
+  transcriptTranslations ListeningTranscriptTranslation[]
 
   @@index([inserted_at])
   @@map("listening_video")
@@ -355,4 +356,22 @@ model ListeningTranscriptLine {
   @@unique([video_id, line_index])
   @@index([video_id])
   @@map("listening_transcript_line")
+}
+
+model ListeningTranscriptTranslation {
+  id          BigInt   @id @default(autoincrement())
+  video_id    String   @db.VarChar(20)
+  line_index  Int
+  language    String   @db.VarChar(10)
+  source_text String   @db.Text
+  translation String   @db.Text
+  provider    String   @default("google") @db.VarChar(50)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  video ListeningVideo @relation(fields: [video_id], references: [video_id], onDelete: Cascade)
+
+  @@unique([video_id, line_index, language])
+  @@index([video_id, line_index, language])
+  @@map("listening_transcript_translation")
 }
