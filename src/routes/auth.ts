@@ -238,11 +238,10 @@ export function createAuthRouter() {
           provider: 'google',
           token: idToken,
         });
-        if (signInError || !signInData?.user?.id) {
-          return res.status(401).json({ success: false, message: signInError?.message || 'Google login failed' });
+        if (!signInError && signInData?.user?.id) {
+          authUserId = signInData.user.id;
+          session = signInData.session;
         }
-        authUserId = signInData.user.id;
-        session = signInData.session;
       }
 
       let user = authUserId
@@ -324,7 +323,7 @@ function normalizeJlptLevel(value: unknown): string | null {
 }
 
 async function verifyGoogleIdToken(idToken: string): Promise<{ googleId: string; email: string; fullName: string }> {
-  const clientId = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim();
   const ticket = await googleOAuthClient.verifyIdToken({
     idToken,
     ...(clientId ? { audience: clientId } : {}),
