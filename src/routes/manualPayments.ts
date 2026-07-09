@@ -187,20 +187,6 @@ function buildVietQrImageUrl(args: {
   return `https://img.vietqr.io/image/${encodeURIComponent(bankId)}-${encodeURIComponent(accountNo)}-${encodeURIComponent(template)}.png?${params.toString()}`;
 }
 
-function buildGenericQrImageUrl(value: string) {
-  if (!value) return '';
-  const params = new URLSearchParams({
-    size: '320x320',
-    margin: '12',
-    data: value,
-  });
-  return `https://api.qrserver.com/v1/create-qr-code/?${params.toString()}`;
-}
-
-function buildPayPayAppUrl() {
-  return 'https://paypay.ne.jp/rd/web/app-top/';
-}
-
 function buildPremiumUntil(existing: Date | null, plan: ManualPaymentPlan) {
   const base = existing && existing.getTime() > Date.now() ? existing.getTime() : Date.now();
   return new Date(base + premiumDays(plan) * 24 * 60 * 60 * 1000);
@@ -334,31 +320,29 @@ export function createManualPaymentRouter() {
     const user = await requireUser(req);
     const provider = normalizeProvider(req.body?.provider);
     const billingPeriod = normalizePlan(req.body?.billingPeriod || req.body?.plan);
+    if (provider === 'PAYPAY') {
+      return res.status(400).json({
+        message: 'PayPay dang xu ly thu cong. Vui long lien he admin de duoc huong dan thanh toan.',
+      });
+    }
     const config = await getManualPaymentConfig(provider, billingPeriod);
     if (!config.enabled) {
       return res.status(400).json({ message: 'Phuong thuc thanh toan nay dang tam tat.' });
     }
     const paymentCode = buildPaymentCode(user.id);
-    const paymentUrl = provider === 'PAYPAY' ? buildPayPayAppUrl() : '';
-    const qrImageUrl = provider === 'MSB'
-      ? buildVietQrImageUrl({
-        amount: config.amount,
-        paymentCode,
-        bankId: config.bankId,
-        accountNo: config.accountNo,
-        accountName: config.accountName,
-        template: config.qrTemplate,
-      })
-      : buildGenericQrImageUrl(paymentUrl);
+    const paymentUrl = '';
+    const qrImageUrl = buildVietQrImageUrl({
+      amount: config.amount,
+      paymentCode,
+      bankId: config.bankId,
+      accountNo: config.accountNo,
+      accountName: config.accountName,
+      template: config.qrTemplate,
+    });
     if (!qrImageUrl && !paymentUrl) {
       return res.status(400).json({
-        message: provider === 'MSB'
-          ? 'Admin chua cau hinh so tai khoan MSB de tao QR.'
-          : 'Admin chua cau hinh PayPay ID.',
+        message: 'Admin chua cau hinh so tai khoan MSB de tao QR.',
       });
-    }
-    if (provider === 'PAYPAY' && !config.accountNo) {
-      return res.status(400).json({ message: 'Admin chua cau hinh PayPay ID.' });
     }
 
     const [row] = await prisma.$queryRaw<any[]>(Prisma.sql`
@@ -377,12 +361,10 @@ export function createManualPaymentRouter() {
       request: mapPaymentRow(row),
       account: {
         provider,
-        accountName: config.accountName,
-        accountNo: config.accountNo,
+        accountName: null,
+        accountNo: null,
       },
-      note: provider === 'PAYPAY'
-        ? 'QR PayPay chi dung de mo ung dung. Vui long tim PayPay ID, ket ban neu can, roi chuyen dung so tien va ghi ma thanh toan neu PayPay cho nhap ghi chu.'
-        : '',
+      note: 'Thong tin tai khoan nhan khong hien thi tren web. Vui long kiem tra ten nguoi nhan trong app ngan hang sau khi quet QR.',
     });
   });
 
