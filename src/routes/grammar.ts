@@ -51,13 +51,13 @@ export function createGrammarRouter() {
           ORDER BY COALESCE(priority, 2147483647) ASC, grammar_id ASC
         `,
       );
-      return res.json(rows);
+      return res.json((rows as any[]).map((row) => ({ ...row, isLocked: false })));
     } catch (_err) {
       const rows = await prisma.grammar.findMany({
         where: { level },
         orderBy: { grammar_id: 'asc' },
       });
-      return res.json(rows);
+      return res.json((rows as any[]).map((row) => ({ ...row, isLocked: false })));
     }
   });
 
@@ -66,6 +66,8 @@ export function createGrammarRouter() {
     if (!Number.isFinite(id)) return res.status(400).json({ message: 'Invalid grammar id' });
 
     const grammar = await prisma.grammar.findUnique({ where: { grammar_id: BigInt(id) } });
+    if (!grammar) return res.status(404).json({ message: 'Grammar not found' });
+
     const usages = await prisma.grammarUsage.findMany({
       where: { grammar_id: BigInt(id) },
       orderBy: { usage_id: 'asc' },

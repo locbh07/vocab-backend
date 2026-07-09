@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
+import { resolveContentAccess } from '../lib/contentAccess';
+import { vocabularyMaskRule } from '../lib/contentMasking';
 
 const ALLOWED_PREFIXES = new Set([
   '3000_common_',
@@ -12,6 +14,8 @@ const ALLOWED_PREFIXES = new Set([
   '3000_N1_',
 ]);
 const ALLOWED_TRACKS = new Set(['core', 'book']);
+const FREE_CORE_PREFIXES = ['3000_common_', '1000_N5_', '1500_N4_', '2000_N3_', '2500_N2_', '3000_N1_'];
+const TANGO_JLPT_SOURCE_BOOKS = new Set(['N1', 'N2', 'N3', 'N4', 'N5']);
 
 type VocabTrack = 'core' | 'book';
 
@@ -34,10 +38,50 @@ function normalizeBoolean(value: unknown): boolean {
   return text === '1' || text === 'true' || text === 'yes' || text === 'on';
 }
 
+function isTangoJlptVocabulary(item: { track?: unknown; topic?: unknown; source_book?: unknown }): boolean {
+  const track = String(item.track || '').trim().toLowerCase();
+  if (track === 'core') {
+    const topic = String(item.topic || '').trim();
+    return FREE_CORE_PREFIXES.some((prefix) => topic.startsWith(prefix));
+  }
+
+  if (track === 'book') {
+    return TANGO_JLPT_SOURCE_BOOKS.has(String(item.source_book || '').trim().toUpperCase());
+  }
+
+  return false;
+}
+
+function maskVocabularyListForAccess(items: any[], isPremium: boolean) {
+  return items.map((item) => {
+    if (isPremium || isTangoJlptVocabulary(item)) {
+      return { ...item, isLocked: false };
+    }
+    return maskLockedVocabulary(item);
+  });
+}
+
+function maskLockedVocabulary(item: any) {
+  const out: Record<string, any> = {};
+  for (const field of vocabularyMaskRule.keepFields) {
+    const key = String(field);
+    if (key in item) out[key] = item[key];
+  }
+  for (const field of vocabularyMaskRule.maskFields || []) {
+    out[String(field)] = null;
+  }
+  out.isFreePreview = false;
+  out.is_free_preview = false;
+  out.isLocked = true;
+  out.lockReason = vocabularyMaskRule.marker || 'PREMIUM_REQUIRED';
+  return out;
+}
+
 export function createVocabularyRouter() {
   const router = Router();
 
   router.get('/all', async (req: Request, res: Response) => {
+    const access = await resolveContentAccess(req);
     const track = normalizeTrack(req.query.track);
     const prefix = normalizePrefix(req.query.prefix);
     const sourceBook = cleanText(req.query.sourceBook);
@@ -62,7 +106,7 @@ export function createVocabularyRouter() {
 
     const rows = await prisma.vocabulary.findMany({ where, orderBy });
     if (!includeExamples || !rows.length) {
-      return res.json(rows);
+      return res.json(maskVocabularyListForAccess(rows as any[], access.isPremium));
     }
 
     const vocabIds = rows.map((row) => Number(row.id)).filter(Number.isFinite);
@@ -92,12 +136,12 @@ export function createVocabularyRouter() {
       byVocabId.set(id, list);
     }
 
-    return res.json(
-      rows.map((row) => ({
+    const items = rows.map((row) => ({
         ...row,
         examples: byVocabId.get(Number(row.id)) || [],
-      })),
-    );
+      }));
+
+    return res.json(maskVocabularyListForAccess(items as any[], access.isPremium));
   });
 
   router.get('/topics', async (req: Request, res: Response) => {

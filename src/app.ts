@@ -23,9 +23,12 @@ import { createCommentsRouter } from './routes/comments';
 import { createAdminCommentsRouter } from './routes/adminComments';
 import { createContactRouter } from './routes/contact';
 import { createAdminContactRouter } from './routes/adminContact';
+import { createBillingRouter, createStripeWebhookRouter } from './routes/billing';
+import { createAdminManualPaymentRouter, createManualPaymentRouter } from './routes/manualPayments';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
+import { contentGuard } from './middleware/contentGuard';
 
 dotenv.config();
 
@@ -100,6 +103,8 @@ if (configuredCorsOrigin.length === 0) {
     }),
   );
 }
+app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), createStripeWebhookRouter());
+app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), createStripeWebhookRouter());
 app.use(express.json({ limit: '6mb' }));
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
@@ -111,27 +116,35 @@ app.use((req, res, next) => {
 
 app.use('/auth', createAuthRouter());
 app.use('/api/auth', createAuthRouter());
+app.use('/billing', createBillingRouter());
+app.use('/api/billing', createBillingRouter());
+app.use('/manual-payments', createManualPaymentRouter());
+app.use('/api/manual-payments', createManualPaymentRouter());
 app.use(
   '/vocabulary',
   ...(apiShieldEnabled ? [createRouteShield('vocabulary-shield', 180, 140)] : []),
+  contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'vocabulary' }),
   createVocabularyRouter(),
 );
 app.use(
   '/api/vocabulary',
   ...(apiShieldEnabled ? [createRouteShield('api-vocabulary-shield', 180, 140)] : []),
+  contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-vocabulary' }),
   createVocabularyRouter(),
 );
 app.use(
   '/grammar',
   ...(apiShieldEnabled ? [createRouteShield('grammar-shield', 160, 120)] : []),
+  contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'grammar' }),
   createGrammarRouter(),
 );
 app.use(
   '/api/grammar',
   ...(apiShieldEnabled ? [createRouteShield('api-grammar-shield', 160, 120)] : []),
+  contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-grammar' }),
   createGrammarRouter(),
 );
@@ -192,12 +205,14 @@ app.use(
 app.use(
   '/listening',
   ...(apiShieldEnabled ? [createRouteShield('listening-shield', 120, 90)] : []),
+  contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'listening' }),
   createListeningRouter(),
 );
 app.use(
   '/api/listening',
   ...(apiShieldEnabled ? [createRouteShield('api-listening-shield', 120, 90)] : []),
+  contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'api-listening' }),
   createListeningRouter(),
 );
@@ -213,6 +228,8 @@ app.use('/contact', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix
 app.use('/api/contact', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'api-contact' }), createContactRouter());
 app.use('/admin/contact', createAdminContactRouter());
 app.use('/api/admin/contact', createAdminContactRouter());
+app.use('/admin/manual-payments', createAdminManualPaymentRouter());
+app.use('/api/admin/manual-payments', createAdminManualPaymentRouter());
 app.use('/admin/listening', createAdminListeningRouter());
 app.use('/api/admin/listening', createAdminListeningRouter());
 app.use('/mailbox', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'mailbox' }), createMailboxRouter());

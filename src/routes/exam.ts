@@ -11,8 +11,10 @@ import {
 import { describeJlptQuestionType, inferJlptQuestionMeta, JlptQuestionType } from '../lib/jlptQuestionType';
 import { getOrCreateQuestionReadingCache, QuestionReadingCache } from '../lib/examReadingCache';
 import { getExamQuestionMeta, upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
+import { hasActivePremium } from '../lib/contentAccess';
 
 const EXPLANATION_PROMPT_VERSION = 16;
+const CODE_EXAM_LIMIT_PER_LEVEL = Math.max(1, Number(process.env.CODE_EXAM_LIMIT_PER_LEVEL || 5));
 let ensureExplainTablePromise: Promise<void> | null = null;
 
 type VerifyRequest = {
@@ -116,8 +118,14 @@ export function createExamRouter() {
       return res.json({ allowed: false, message: 'Missing userId or code' });
     }
     try {
-      const levels = await requireExamAccess(body.userId, body.code, null);
-      return res.json({ allowed: true, message: 'OK', levels });
+      const access = await requireExamAccess(body.userId, body.code, null);
+      return res.json({
+        allowed: true,
+        message: 'OK',
+        levels: access.levels,
+        fullAccess: access.fullAccess,
+        examLimitPerLevel: access.fullAccess ? null : CODE_EXAM_LIMIT_PER_LEVEL,
+      });
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({
         allowed: false,
@@ -131,14 +139,31 @@ export function createExamRouter() {
     const userId = Number(req.query.userId);
     const code = String(req.query.code || '');
     try {
-      await requireExamAccess(userId, code, level);
+      const access = await resolveExamListAccess(userId, code, level);
       const rows = await prisma.$queryRaw<Array<{ exam_id: string }>>`
         SELECT DISTINCT exam_id
         FROM jlpt_exam
         WHERE level = ${level}
         ORDER BY exam_id DESC
       `;
-      return res.json({ level, exams: rows.map((r: { exam_id: string }) => r.exam_id) });
+      const allExamIds = rows.map((r: { exam_id: string }) => r.exam_id);
+      const hasCodeAccessForLevel = access.levels.includes(level);
+      const accessibleExamIds = access.fullAccess
+        ? allExamIds
+        : hasCodeAccessForLevel
+          ? allExamIds.slice(0, CODE_EXAM_LIMIT_PER_LEVEL)
+          : [];
+      const accessibleSet = new Set(accessibleExamIds);
+      const lockedExamIds = access.fullAccess ? [] : allExamIds.filter((examId) => !accessibleSet.has(examId));
+      return res.json({
+        level,
+        exams: allExamIds,
+        total: allExamIds.length,
+        accessibleExamIds,
+        lockedExamIds,
+        fullAccess: access.fullAccess,
+        examLimitPerLevel: access.fullAccess ? null : CODE_EXAM_LIMIT_PER_LEVEL,
+      });
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
     }
@@ -263,7 +288,7 @@ export function createExamRouter() {
     const userId = Number(req.query.userId);
     const code = String(req.query.code || '');
     try {
-      await requireExamAccess(userId, code, level);
+      await requireExamAccess(userId, code, level, examId);
       const parts = await prisma.jlptExam.findMany({
         where: { level, exam_id: examId },
         orderBy: { part: 'asc' },
@@ -291,7 +316,7 @@ export function createExamRouter() {
       return res.status(400).json({ message: 'Missing required fields' });
     }
     try {
-      await requireExamAccess(body.userId, body.code || '', body.level);
+      await requireExamAccess(body.userId, body.code || '', body.level, body.examId);
       const parts = await prisma.jlptExam.findMany({
         where: { level: body.level, exam_id: body.examId },
         orderBy: { part: 'asc' },
@@ -385,7 +410,7 @@ export function createExamRouter() {
     }
 
     try {
-      await requireExamAccess(body.userId, body.code || '', body.level);
+      await requireExamAccess(body.userId, body.code || '', body.level, body.examId);
       await ensureQuestionExplanationTable();
       const user = await prisma.userAccount.findUnique({
         where: { id: BigInt(body.userId) },
@@ -615,7 +640,7 @@ export function createExamRouter() {
     }
 
     try {
-      await requireExamAccess(body.userId, body.code || '', body.level);
+      await requireExamAccess(body.userId, body.code || '', body.level, body.examId);
       await ensureQuestionExplanationTable();
       const user = await prisma.userAccount.findUnique({
         where: { id: BigInt(body.userId) },
@@ -791,7 +816,12 @@ export function createExamRouter() {
   return router;
 }
 
-async function requireExamAccess(userId: number, code: string, level: string | null) {
+type ExamAccessResult = {
+  levels: string[];
+  fullAccess: boolean;
+};
+
+async function resolveExamListAccess(userId: number, code: string, level: string): Promise<ExamAccessResult> {
   if (!Number.isFinite(userId)) {
     const err = new Error('User not found') as Error & { status?: number };
     err.status = 404;
@@ -803,8 +833,53 @@ async function requireExamAccess(userId: number, code: string, level: string | n
     err.status = 404;
     throw err;
   }
-  if (String(user.role || '').toUpperCase() === 'ADMIN') {
-    return ['N5', 'N4', 'N3', 'N2', 'N1'];
+  if (hasActivePremium(user)) {
+    return { levels: ['N5', 'N4', 'N3', 'N2', 'N1'], fullAccess: true };
+  }
+  if (!user.exam_enabled || !code?.trim()) {
+    return { levels: [], fullAccess: false };
+  }
+  const rows = await prisma.userExamCode.findMany({
+    where: { user_id: BigInt(userId), enabled: true, code },
+    orderBy: { level: 'asc' },
+  });
+  const levels = rows.map((r: { level: string }) => r.level);
+  if (!levels.includes(level)) {
+    return { levels, fullAccess: false };
+  }
+  return { levels, fullAccess: false };
+}
+
+async function getLimitedExamIds(level: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<Array<{ exam_id: string }>>`
+    SELECT DISTINCT exam_id
+    FROM jlpt_exam
+    WHERE level = ${level}
+    ORDER BY exam_id DESC
+    LIMIT ${CODE_EXAM_LIMIT_PER_LEVEL}
+  `;
+  return rows.map((row) => row.exam_id);
+}
+
+async function requireExamAccess(
+  userId: number,
+  code: string,
+  level: string | null,
+  examId?: string | null,
+): Promise<ExamAccessResult> {
+  if (!Number.isFinite(userId)) {
+    const err = new Error('User not found') as Error & { status?: number };
+    err.status = 404;
+    throw err;
+  }
+  const user = await prisma.userAccount.findUnique({ where: { id: BigInt(userId) } });
+  if (!user) {
+    const err = new Error('User not found') as Error & { status?: number };
+    err.status = 404;
+    throw err;
+  }
+  if (hasActivePremium(user)) {
+    return { levels: ['N5', 'N4', 'N3', 'N2', 'N1'], fullAccess: true };
   }
   if (!user.exam_enabled) {
     const err = new Error('Exam access not enabled') as Error & { status?: number };
@@ -831,7 +906,15 @@ async function requireExamAccess(userId: number, code: string, level: string | n
     err.status = 403;
     throw err;
   }
-  return levels;
+  if (level && examId) {
+    const allowedExamIds = await getLimitedExamIds(level);
+    if (!allowedExamIds.includes(examId)) {
+      const err = new Error('Premium account required for this exam') as Error & { status?: number };
+      err.status = 403;
+      throw err;
+    }
+  }
+  return { levels, fullAccess: false };
 }
 
 type QuestionContext = {

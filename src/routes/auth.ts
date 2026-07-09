@@ -95,7 +95,7 @@ export function createAuthRouter() {
           auth_user_id: authUserId,
           level,
         })
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until')
         .maybeSingle();
 
       if (insertError) {
@@ -117,6 +117,8 @@ export function createAuthRouter() {
               examCode: inserted.exam_code,
               level: inserted.level,
               googleId: inserted.google_id,
+              plan: inserted.plan,
+              premiumValidUntil: inserted.premium_valid_until,
             }
           : null,
       });
@@ -174,7 +176,7 @@ export function createAuthRouter() {
       const authUserId = signInData.user.id;
       const { data: byAuth } = await admin
         .from('useraccount')
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until')
         .eq('auth_user_id', authUserId)
         .maybeSingle();
 
@@ -183,7 +185,7 @@ export function createAuthRouter() {
         : (
             await admin
               .from('useraccount')
-              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id')
+              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until')
               .eq('email', email)
               .maybeSingle()
           ).data;
@@ -202,6 +204,8 @@ export function createAuthRouter() {
               examCode: profile.exam_code,
               level: profile.level,
               googleId: profile.google_id,
+              plan: profile.plan,
+              premiumValidUntil: profile.premium_valid_until,
             }
           : null,
         session: signInData.session,
@@ -371,6 +375,8 @@ function sanitizeUser(user: {
   exam_code: string | null;
   level: string | null;
   googleId: string | null;
+  plan?: string | null;
+  premiumValidUntil?: Date | string | null;
 }) {
   return {
     id: Number(user.id),
@@ -382,5 +388,7 @@ function sanitizeUser(user: {
     examCode: user.exam_code,
     level: user.level,
     googleId: user.googleId,
+    plan: user.plan || 'FREE',
+    premiumValidUntil: user.premiumValidUntil || null,
   };
 }

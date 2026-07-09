@@ -17,6 +17,7 @@ const PATCH_FIELDS = [
   'track',
   'source_book',
   'source_unit',
+  'isFreePreview',
 ] as const;
 
 type PatchKey = (typeof PATCH_FIELDS)[number];
@@ -205,6 +206,10 @@ function toPatch(payload: Record<string, unknown>, includeEmpty = false): Record
     if (key === 'core_order') {
       const n = Number(value);
       if (Number.isFinite(n)) out[key] = n;
+      continue;
+    }
+    if (key === 'isFreePreview') {
+      out[key] = Boolean(value);
       continue;
     }
     const text = String(value);

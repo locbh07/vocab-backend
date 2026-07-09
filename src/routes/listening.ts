@@ -6,6 +6,8 @@ import os from 'os';
 import path from 'path';
 import youtubeDl from 'youtube-dl-exec';
 import { prisma } from '../lib/prisma';
+import { resolveContentAccess } from '../lib/contentAccess';
+import { listeningVideoMaskRule } from '../lib/contentMasking';
 
 type ListeningVideoRow = {
   source_id: string | null;
@@ -23,6 +25,7 @@ type ListeningVideoRow = {
   updated_at_src: Date | null;
   video_url: string | null;
   embed_url: string | null;
+  is_free_preview: boolean | null;
 };
 
 type TranscriptRow = {
@@ -71,6 +74,7 @@ type ListeningAccessPolicy = {
 
 const DEFAULT_GUEST_LISTENING_VIDEO_LIMIT = Math.max(1, Number(process.env.GUEST_LISTENING_VIDEO_LIMIT || 7));
 const DEFAULT_USER_LISTENING_VIDEO_LIMIT = Math.max(1, Number(process.env.USER_LISTENING_VIDEO_LIMIT || 15));
+const LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL = Math.max(1, Number(process.env.LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL || 10));
 const REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT = String(process.env.LISTENING_YOUTUBE_IMPORT_REQUIRE_PREMIUM || 'true').toLowerCase() !== 'false';
 const LISTENING_AI_TRANSCRIPT_ENABLED = String(process.env.LISTENING_AI_TRANSCRIPT_ENABLED || 'true').toLowerCase() !== 'false';
 const LISTENING_AI_TRANSCRIPT_MODEL = String(process.env.OPENAI_LISTENING_TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1').trim();
@@ -119,7 +123,109 @@ function mapVideo(row: ListeningVideoRow) {
     updatedAt: row.updated_at_src,
     videoUrl: row.video_url || `https://www.youtube.com/watch?v=${row.video_id}`,
     embedUrl: row.embed_url || `https://www.youtube.com/embed/${row.video_id}`,
+    isFreePreview: Boolean(row.is_free_preview),
   };
+}
+
+function listeningVideoLevels(item: { levels?: unknown }): string[] {
+  return Array.from(
+    new Set(
+      (Array.isArray(item.levels) ? item.levels : [])
+        .map((level) => String(level || '').trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function unlockedListeningVideoIdsByLevel(items: Array<{ videoId?: string; levels?: unknown }>): Set<string> {
+  const byLevel = new Map<string, string[]>();
+  for (const item of items) {
+    const videoId = String(item.videoId || '').trim();
+    if (!videoId) continue;
+    for (const level of listeningVideoLevels(item)) {
+      const list = byLevel.get(level) || [];
+      if (!list.includes(videoId)) list.push(videoId);
+      byLevel.set(level, list);
+    }
+  }
+
+  const out = new Set<string>();
+  for (const ids of byLevel.values()) {
+    ids.slice(0, LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL).forEach((id) => out.add(id));
+  }
+  return out;
+}
+
+function unlockedListeningVideoIdsForCurrentList(items: Array<{ videoId?: string }>): Set<string> {
+  const out = new Set<string>();
+  for (const item of items) {
+    const id = String(item.videoId || '').trim();
+    if (id) out.add(id);
+    if (out.size >= LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL) break;
+  }
+  return out;
+}
+
+function listeningLevelSql(level: string): Prisma.Sql {
+  return Prisma.sql`(
+    ${level} = ANY(normalized_levels)
+    OR (COALESCE(array_length(normalized_levels, 1), 0) = 0 AND ${level} = ANY(levels))
+  )`;
+}
+
+async function isUnlockedListeningPreviewVideo(videoId: string, requestedLevel?: string): Promise<boolean> {
+  const level = normalizeLevel(requestedLevel);
+  const predicates: Prisma.Sql[] = [Prisma.sql`(duration_sec > 0 OR 'youtube-import' = ANY(tags))`];
+  if (level && level !== 'all') {
+    predicates.push(listeningLevelSql(level));
+  }
+
+  const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
+    Prisma.sql`
+      SELECT
+        source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
+        category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
+        is_free_preview
+      FROM listening_video
+      WHERE ${Prisma.join(predicates, ' AND ')}
+      ORDER BY COALESCE(source_order, 2147483647) ASC, inserted_at ASC
+    `,
+  );
+
+  const items = rows.map(mapVideo);
+  const unlockedIds = level && level !== 'all'
+    ? unlockedListeningVideoIdsForCurrentList(items)
+    : unlockedListeningVideoIdsByLevel(items);
+  return unlockedIds.has(videoId);
+}
+
+function maskListeningVideosForAccess(items: any[], isPremium: boolean, requestedLevel?: string) {
+  if (isPremium) return items.map((item) => ({ ...item, isLocked: false }));
+  const level = normalizeLevel(requestedLevel);
+  const unlockedIds = level && level !== 'all'
+    ? unlockedListeningVideoIdsForCurrentList(items)
+    : unlockedListeningVideoIdsByLevel(items);
+  return items.map((item) => {
+    const videoId = String(item.videoId || '').trim();
+    if (unlockedIds.has(videoId)) return { ...item, isLocked: false };
+    return maskLockedListeningVideo(item);
+  });
+}
+
+function maskLockedListeningVideo(item: any) {
+  const out: Record<string, any> = {};
+  for (const field of listeningVideoMaskRule.keepFields) {
+    const key = String(field);
+    if (key in item) out[key] = item[key];
+  }
+  for (const field of listeningVideoMaskRule.maskFields || []) {
+    out[String(field)] = null;
+  }
+  out.isFreePreview = false;
+  out.is_free_preview = false;
+  out.isLocked = true;
+  out.lockReason = listeningVideoMaskRule.marker || 'PREMIUM_REQUIRED';
+  return out;
 }
 
 async function ensureListeningGuestAccessTable() {
@@ -1170,8 +1276,8 @@ export function createListeningRouter() {
   });
 
   router.post('/import-youtube', async (req: Request, res: Response) => {
-    const role = await readUserRole(req);
-    if (REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT && !isPremiumRole(role)) {
+    const access = await resolveContentAccess(req);
+    if (REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT && !access.isPremium) {
       return res.status(403).json({
         success: false,
         code: 'PREMIUM_REQUIRED',
@@ -1219,6 +1325,7 @@ export function createListeningRouter() {
   });
 
   router.get('/videos', async (req: Request, res: Response) => {
+    const access = await resolveContentAccess(req);
     const q = String(req.query.q || '').trim();
     const level = normalizeLevel(req.query.level);
     const limitRaw = Number(req.query.limit || 5000);
@@ -1230,13 +1337,8 @@ export function createListeningRouter() {
         Prisma.sql`(title ILIKE ${`%${q}%`} OR video_id ILIKE ${`%${q}%`})`,
       );
     }
-    if (level) {
-      predicates.push(
-        Prisma.sql`(
-          ${level} = ANY(normalized_levels)
-          OR (COALESCE(array_length(normalized_levels, 1), 0) = 0 AND ${level} = ANY(levels))
-        )`,
-      );
+    if (level && level !== 'all') {
+      predicates.push(listeningLevelSql(level));
     }
 
     const whereSql = predicates.length
@@ -1247,7 +1349,8 @@ export function createListeningRouter() {
       Prisma.sql`
         SELECT
           source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
-          category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url
+          category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
+          is_free_preview
         FROM listening_video
         ${whereSql}
         ${predicates.length ? Prisma.sql`AND` : Prisma.sql`WHERE`} (duration_sec > 0 OR 'youtube-import' = ANY(tags))
@@ -1257,21 +1360,26 @@ export function createListeningRouter() {
     );
 
     const items = rows.map(mapVideo);
-    return res.json({ items, total: items.length, limit });
+    return res.json({
+      items: maskListeningVideosForAccess(items as any[], access.isPremium, level),
+      total: items.length,
+      limit,
+    });
   });
 
   router.get('/videos/:videoId', async (req: Request, res: Response) => {
+    const access = await resolveContentAccess(req);
     const videoId = String(req.params.videoId || '').trim();
     if (!videoId) {
       return res.status(400).json({ message: 'videoId is required' });
     }
-    if (!(await enforceListeningAccess(req, res, videoId))) return;
 
     const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
       Prisma.sql`
         SELECT
           source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
-          category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url
+          category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
+          is_free_preview
         FROM listening_video
         WHERE video_id = ${videoId}
         LIMIT 1
@@ -1281,12 +1389,22 @@ export function createListeningRouter() {
     if (!rows.length) {
       return res.status(404).json({ message: 'Video not found' });
     }
-    return res.json(mapVideo(rows[0]));
+    const item = mapVideo(rows[0]);
+    if (!access.isPremium && !(await isUnlockedListeningPreviewVideo(videoId, String(req.query.level || '')))) {
+      return res.status(403).json({
+        success: false,
+        code: 'PREMIUM_REQUIRED',
+        item: maskLockedListeningVideo(item as any),
+        message: 'Video nay danh cho thanh vien Premium.',
+      });
+    }
+    if (!(await enforceListeningAccess(req, res, videoId))) return;
+    return res.json(item);
   });
 
   router.post('/videos/:videoId/transcript', async (req: Request, res: Response) => {
-    const role = await readUserRole(req);
-    if (!isPremiumRole(role)) {
+    const access = await resolveContentAccess(req);
+    if (!access.isPremium) {
       return res.status(403).json({
         success: false,
         code: 'PREMIUM_REQUIRED',
@@ -1336,9 +1454,29 @@ export function createListeningRouter() {
   });
 
   router.get('/videos/:videoId/transcript', async (req: Request, res: Response) => {
+    const access = await resolveContentAccess(req);
     const videoId = String(req.params.videoId || '').trim();
     if (!videoId) {
       return res.status(400).json({ message: 'videoId is required' });
+    }
+
+    const videoRows = await prisma.$queryRaw<Array<{ is_free_preview: boolean | null }>>(
+      Prisma.sql`
+        SELECT is_free_preview
+        FROM listening_video
+        WHERE video_id = ${videoId}
+        LIMIT 1
+      `,
+    );
+    if (!videoRows.length) {
+      return res.status(404).json({ message: 'Video not found' });
+    }
+    if (!access.isPremium && !(await isUnlockedListeningPreviewVideo(videoId, String(req.query.level || '')))) {
+      return res.status(403).json({
+        success: false,
+        code: 'PREMIUM_REQUIRED',
+        message: 'Transcript nay danh cho thanh vien Premium.',
+      });
     }
     if (!(await enforceListeningAccess(req, res, videoId))) return;
 

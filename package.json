@@ -41,6 +41,7 @@
     "kanji:compounds:prewarm": "node scripts/build-kanji-compounds.cjs --prewarm-only",
     "listening:import:json": "node scripts/import-listening-from-json.cjs",
     "vocab:import:books": "node scripts/import-book-vocabulary-from-export.cjs",
+    "content:mark-free-preview": "node scripts/mark-free-preview.cjs",
     "db:sync:staging-to-local": "powershell -ExecutionPolicy Bypass -File scripts/sync-db-from-server.ps1 -From staging",
     "db:sync:production-to-local": "powershell -ExecutionPolicy Bypass -File scripts/sync-db-from-server.ps1 -From production",
     "prisma": "prisma",
@@ -60,6 +61,7 @@
     "express-async-errors": "^3.1.1",
     "google-auth-library": "^10.7.0",
     "kuromoji": "^0.1.2",
+    "stripe": "^22.3.0",
     "youtube-dl-exec": "^3.1.9"
   },
   "devDependencies": {

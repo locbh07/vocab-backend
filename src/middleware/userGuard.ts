@@ -6,6 +6,8 @@ export type UserIdentity = {
   username: string;
   fullName: string;
   role: string;
+  plan: string;
+  premiumValidUntil: Date | null;
 };
 
 export async function requireUser(req: Request): Promise<UserIdentity> {
@@ -20,7 +22,7 @@ export async function requireUser(req: Request): Promise<UserIdentity> {
 
   const user = await prisma.userAccount.findUnique({
     where: { id: BigInt(userId) },
-    select: { id: true, username: true, fullname: true, role: true },
+    select: { id: true, username: true, fullname: true, role: true, plan: true, premiumValidUntil: true },
   });
 
   if (!user) {
@@ -34,5 +36,7 @@ export async function requireUser(req: Request): Promise<UserIdentity> {
     username: user.username,
     fullName: user.fullname,
     role: user.role,
+    plan: user.plan,
+    premiumValidUntil: user.premiumValidUntil,
   };
 }

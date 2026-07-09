@@ -7,46 +7,52 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserPlan {
+  FREE
+  PREMIUM
+}
+
 // Mapped models from your provided schema. Review column types/lengths after pull.
 
 model Grammar {
-  grammar_id           BigInt           @id @default(autoincrement()) @map("grammar_id")
-  grammar_point        String           @db.VarChar(255)
-  grammar_point_romaji String?          @db.VarChar(255)
-  level                String           @db.VarChar(5)
-  source_book          String?          @db.VarChar(64)
-  source_unit          String?          @db.VarChar(64)
-  track                String           @default("core") @db.VarChar(20)
+  grammar_id           BigInt         @id @default(autoincrement()) @map("grammar_id")
+  grammar_point        String         @db.VarChar(255)
+  grammar_point_romaji String?        @db.VarChar(255)
+  level                String         @db.VarChar(5)
+  source_book          String?        @db.VarChar(64)
+  source_unit          String?        @db.VarChar(64)
+  track                String         @default("core") @db.VarChar(20)
   priority             Int?
-  topic                String?          @db.VarChar(255)
-  meaning_vi           String?          @db.Text
-  grammar_usage_text   String?          @db.Text @map("grammar_usage")
-  note                 String?          @db.Text
-  usages               GrammarUsage[]   @relation("GrammarToUsage", fields: [], references: [])
+  topic                String?        @db.VarChar(255)
+  meaning_vi           String?        @db.Text
+  grammar_usage_text   String?        @map("grammar_usage") @db.Text
+  note                 String?        @db.Text
+  isFreePreview        Boolean        @default(false) @map("is_free_preview")
+  usages               GrammarUsage[] @relation("GrammarToUsage", fields: [], references: [])
 
   @@map("grammar")
 }
 
 model GrammarUsage {
-  usage_id    BigInt  @id @default(autoincrement()) @map("usage_id")
-  grammar_id  BigInt  @map("grammar_id")
-  formation    String? @db.VarChar(255)
-  example_ja   String? @db.Text
-  example_vi   String? @db.Text
+  usage_id   BigInt  @id @default(autoincrement()) @map("usage_id")
+  grammar_id BigInt  @map("grammar_id")
+  formation  String? @db.VarChar(255)
+  example_ja String? @db.Text
+  example_vi String? @db.Text
 
-  grammar      Grammar @relation("GrammarToUsage", fields: [grammar_id], references: [grammar_id])
+  grammar Grammar @relation("GrammarToUsage", fields: [grammar_id], references: [grammar_id])
 
   @@map("grammar_usage")
 }
 
 model JlptExam {
-  id         BigInt   @id @default(autoincrement())
-  level      String
-  exam_id    String   @map("exam_id")
-  part       Int      @db.SmallInt
-  source_file String  @map("source_file")
-  json_data  Json     @map("json_data")
-  created_at DateTime @map("created_at") @default(now())
+  id          BigInt   @id @default(autoincrement())
+  level       String
+  exam_id     String   @map("exam_id")
+  part        Int      @db.SmallInt
+  source_file String   @map("source_file")
+  json_data   Json     @map("json_data")
+  created_at  DateTime @default(now()) @map("created_at")
 
   @@unique([level, exam_id, part])
   @@map("jlpt_exam")
@@ -60,41 +66,41 @@ model JlptExamRevision {
   editor_id  BigInt?  @map("editor_id")
   note       String?  @db.Text
   json_data  Json     @map("json_data")
-  created_at DateTime @map("created_at") @default(now())
+  created_at DateTime @default(now()) @map("created_at")
 
   @@map("jlpt_exam_revision")
 }
 
 model JlptAttempt {
-  id          BigInt    @id @default(autoincrement())
-  user_id     BigInt    @map("user_id")
-  level       String
-  exam_id     String    @map("exam_id")
-  started_at  DateTime? @map("started_at") @default(now())
-  finished_at DateTime? @map("finished_at")
+  id           BigInt    @id @default(autoincrement())
+  user_id      BigInt    @map("user_id")
+  level        String
+  exam_id      String    @map("exam_id")
+  started_at   DateTime? @default(now()) @map("started_at")
+  finished_at  DateTime? @map("finished_at")
   duration_sec Int?
-  score_total  Int      @default(0)
-  score_sec1   Int      @default(0)
-  score_sec2   Int      @default(0)
-  score_sec3   Int      @default(0)
+  score_total  Int       @default(0)
+  score_sec1   Int       @default(0)
+  score_sec2   Int       @default(0)
+  score_sec3   Int       @default(0)
 
-  user UserAccount @relation(fields: [user_id], references: [id])
+  user  UserAccount       @relation(fields: [user_id], references: [id])
   items JlptAttemptItem[] @relation("AttemptItems")
 
   @@map("jlpt_attempt")
 }
 
 model JlptAttemptItem {
-  id           BigInt  @id @default(autoincrement())
-  attempt_id   BigInt  @map("attempt_id")
-  part         Int     @db.SmallInt
-  section_index Int
+  id             BigInt  @id @default(autoincrement())
+  attempt_id     BigInt  @map("attempt_id")
+  part           Int     @db.SmallInt
+  section_index  Int
   question_index Int
-  question_id   String?
-  selected      String?
+  question_id    String?
+  selected       String?
   correct_answer String?
-  is_correct    Boolean @map("is_correct") @default(false)
-  question_json Json?   @map("question_json")
+  is_correct     Boolean @default(false) @map("is_correct")
+  question_json  Json?   @map("question_json")
 
   attempt JlptAttempt @relation("AttemptItems", fields: [attempt_id], references: [id])
 
@@ -102,12 +108,12 @@ model JlptAttemptItem {
 }
 
 model QuizSession {
-  id          BigInt   @id @default(autoincrement())
-  user_id     BigInt   @map("user_id")
-  session_date DateTime @map("session_date")
-  session_index Int    @map("session_index")
-  batch_size  Int      @default(5) @map("batch_size")
-  created_at  DateTime @map("created_at") @default(now())
+  id            BigInt   @id @default(autoincrement())
+  user_id       BigInt   @map("user_id")
+  session_date  DateTime @map("session_date")
+  session_index Int      @map("session_index")
+  batch_size    Int      @default(5) @map("batch_size")
+  created_at    DateTime @default(now()) @map("created_at")
 
   items QuizSessionItem[]
 
@@ -115,37 +121,40 @@ model QuizSession {
 }
 
 model QuizSessionItem {
-  id         BigInt  @id @default(autoincrement())
-  session_id BigInt  @map("session_id")
-  vocab_id   BigInt  @map("vocab_id")
-  item_order Int     @map("item_order")
-  created_at DateTime @map("created_at") @default(now())
+  id         BigInt   @id @default(autoincrement())
+  session_id BigInt   @map("session_id")
+  vocab_id   BigInt   @map("vocab_id")
+  item_order Int      @map("item_order")
+  created_at DateTime @default(now()) @map("created_at")
 
-  session QuizSession @relation(fields: [session_id], references: [id])
-  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id])
+  session    QuizSession @relation(fields: [session_id], references: [id])
+  vocabulary Vocabulary  @relation(fields: [vocab_id], references: [id])
 
   @@map("quiz_session_item")
 }
 
 model UserAccount {
-  id           BigInt  @id @default(autoincrement())
-  username     String  @db.VarChar(50)
-  passwordhash String  @map("passwordhash")
-  fullname     String  @db.VarChar(100)
-  email        String  @db.VarChar(255)
-  role         String  @db.VarChar(20)
-  createdat    DateTime @map("createdat") @default(now())
-  exam_enabled Boolean @map("exam_enabled") @default(false)
-  exam_code    String? @map("exam_code")
-  level        String? @db.VarChar(10)
-  googleId     String? @unique @map("google_id") @db.VarChar(255)
-  authUserId   String? @unique @map("auth_user_id") @db.VarChar(255)
+  id                BigInt    @id @default(autoincrement())
+  username          String    @db.VarChar(50)
+  passwordhash      String    @map("passwordhash")
+  fullname          String    @db.VarChar(100)
+  email             String    @db.VarChar(255)
+  role              String    @db.VarChar(20)
+  createdat         DateTime  @default(now()) @map("createdat")
+  exam_enabled      Boolean   @default(false) @map("exam_enabled")
+  exam_code         String?   @map("exam_code")
+  level             String?   @db.VarChar(10)
+  googleId          String?   @unique @map("google_id") @db.VarChar(255)
+  authUserId        String?   @unique @map("auth_user_id") @db.VarChar(255)
+  plan              UserPlan  @default(FREE)
+  premiumValidUntil DateTime? @map("premium_valid_until")
+  stripeCustomerId  String?   @unique @map("stripe_customer_id") @db.VarChar(255)
 
-  attempts JlptAttempt[]
+  attempts      JlptAttempt[]
   learningPlans UserLearningPlan[]
-  reviewLogs UserReviewLog[]
+  reviewLogs    UserReviewLog[]
   vocabProgress UserVocabProgress[]
-  pageComments PageComment[]
+  pageComments  PageComment[]
 
   @@unique([username])
   @@unique([email])
@@ -153,46 +162,46 @@ model UserAccount {
 }
 
 model UserExamCode {
-  id       BigInt  @id @default(autoincrement())
-  user_id  BigInt  @map("user_id")
-  level    String
-  code     String
-  enabled  Boolean @default(true)
-  updated_at DateTime @map("updated_at") @default(now())
+  id         BigInt   @id @default(autoincrement())
+  user_id    BigInt   @map("user_id")
+  level      String
+  code       String
+  enabled    Boolean  @default(true)
+  updated_at DateTime @default(now()) @map("updated_at")
 
   @@unique([user_id, level])
   @@map("user_exam_code")
 }
 
 model UserLearningPlan {
-  id            BigInt  @id @default(autoincrement())
-  user_id       BigInt  @map("user_id")
-  total_words   Int?
-  target_months Int?
-  start_date    DateTime?
-  target_date   DateTime?
+  id              BigInt    @id @default(autoincrement())
+  user_id         BigInt    @map("user_id")
+  total_words     Int?
+  target_months   Int?
+  start_date      DateTime?
+  target_date     DateTime?
   daily_new_words Int?
-  is_active     Int     @map("is_active") @default(1)
-  created_at    DateTime @map("created_at") @default(now())
-  updated_at    DateTime @map("updated_at") @default(now())
-  topic_prefix  String? @db.VarChar(50)
-  track         String   @default("core") @db.VarChar(20)
-  source_book   String?  @db.VarChar(64)
-  source_unit   String?  @db.VarChar(64)
+  is_active       Int       @default(1) @map("is_active")
+  created_at      DateTime  @default(now()) @map("created_at")
+  updated_at      DateTime  @default(now()) @map("updated_at")
+  topic_prefix    String?   @db.VarChar(50)
+  track           String    @default("core") @db.VarChar(20)
+  source_book     String?   @db.VarChar(64)
+  source_unit     String?   @db.VarChar(64)
 
-  user UserAccount @relation(fields: [user_id], references: [id])
+  user     UserAccount         @relation(fields: [user_id], references: [id])
   progress UserVocabProgress[]
 
   @@map("user_learning_plan")
 }
 
 model UserReviewLog {
-  id         BigInt  @id @default(autoincrement())
-  user_id    BigInt  @map("user_id")
-  vocab_id   BigInt  @map("vocab_id")
+  id          BigInt   @id @default(autoincrement())
+  user_id     BigInt   @map("user_id")
+  vocab_id    BigInt   @map("vocab_id")
   review_time DateTime @map("review_time")
-  result     Int     @map("result")
-  mode       String  @map("mode") @db.VarChar(20)
+  result      Int      @map("result")
+  mode        String   @map("mode") @db.VarChar(20)
 
   user UserAccount @relation(fields: [user_id], references: [id])
 
@@ -200,13 +209,13 @@ model UserReviewLog {
 }
 
 model PageComment {
-  id        BigInt      @id @default(autoincrement())
-  userId    BigInt      @map("user_id")
-  pageKey   String      @map("page_key") @db.VarChar(300)
-  pageUrl   String?     @map("page_url") @db.Text
-  content   String      @db.Text
-  createdAt DateTime    @default(now()) @map("created_at")
-  updatedAt DateTime    @default(now()) @map("updated_at")
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt   @map("user_id")
+  pageKey   String   @map("page_key") @db.VarChar(300)
+  pageUrl   String?  @map("page_url") @db.Text
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @map("updated_at")
 
   user UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -247,48 +256,49 @@ model SiteContactChannel {
 }
 
 model UserVocabProgress {
-  id              BigInt   @id @default(autoincrement())
-  user_id         BigInt   @map("user_id")
-  vocab_id        BigInt   @map("vocab_id")
-  plan_id         BigInt?  @map("plan_id")
-  stage           Int      @default(0)
+  id               BigInt    @id @default(autoincrement())
+  user_id          BigInt    @map("user_id")
+  vocab_id         BigInt    @map("vocab_id")
+  plan_id          BigInt?   @map("plan_id")
+  stage            Int       @default(0)
   next_review_date DateTime?
   last_reviewed_at DateTime?
-  times_reviewed  Int      @default(0)
-  last_result     Int?
-  is_mastered     Int      @default(0)
-  created_at      DateTime @map("created_at") @default(now())
-  updated_at      DateTime @map("updated_at") @default(now())
-  first_seen_date DateTime?
+  times_reviewed   Int       @default(0)
+  last_result      Int?
+  is_mastered      Int       @default(0)
+  created_at       DateTime  @default(now()) @map("created_at")
+  updated_at       DateTime  @default(now()) @map("updated_at")
+  first_seen_date  DateTime?
 
-  user UserAccount @relation(fields: [user_id], references: [id])
-  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id])
-  plan UserLearningPlan? @relation(fields: [plan_id], references: [id])
+  user       UserAccount       @relation(fields: [user_id], references: [id])
+  vocabulary Vocabulary        @relation(fields: [vocab_id], references: [id])
+  plan       UserLearningPlan? @relation(fields: [plan_id], references: [id])
 
   @@unique([user_id, vocab_id])
   @@map("user_vocab_progress")
 }
 
 model Vocabulary {
-  id             BigInt   @id @default(autoincrement())
-  word_ja        String?  @db.VarChar(255)
-  word_hira_kana String?  @db.VarChar(255)
-  word_romaji    String?  @db.VarChar(255)
-  word_vi        String?  @db.VarChar(1000)
-  example_ja     String?  @db.VarChar(1000)
-  example_vi     String?  @db.VarChar(1000)
-  topic          String?  @db.VarChar(100)
-  level          String?  @db.VarChar(50)
+  id             BigInt  @id @default(autoincrement())
+  word_ja        String? @db.VarChar(255)
+  word_hira_kana String? @db.VarChar(255)
+  word_romaji    String? @db.VarChar(255)
+  word_vi        String? @db.VarChar(1000)
+  example_ja     String? @db.VarChar(1000)
+  example_vi     String? @db.VarChar(1000)
+  topic          String? @db.VarChar(100)
+  level          String? @db.VarChar(50)
   image_url      String?
   audio_url      String?
   core_order     Int?
-  track          String   @default("core") @db.VarChar(20)
-  source_book    String?  @db.VarChar(64)
-  source_unit    String?  @db.VarChar(64)
+  track          String  @default("core") @db.VarChar(20)
+  source_book    String? @db.VarChar(64)
+  source_unit    String? @db.VarChar(64)
+  isFreePreview  Boolean @default(false) @map("is_free_preview")
 
   quizSessionItems QuizSessionItem[]
-  vocabProgress UserVocabProgress[]
-  examples      VocabularyExample[]
+  vocabProgress    UserVocabProgress[]
+  examples         VocabularyExample[]
 
   @@map("vocabulary")
 }
@@ -311,33 +321,42 @@ model VocabularyExample {
 
 // Note: vocabulary_backup_coreorder has no PK in your description  Eskip mapping for now or add a manual model if needed.
 
-
 model ListeningVideo {
-  id               BigInt   @id @default(autoincrement())
-  source_id        String?  @db.VarChar(100)
-  video_id         String   @unique @db.VarChar(20)
-  source_order     Int?
-  title            String   @db.Text
-  duration_sec     Int      @default(0)
-  thumbnail        String?  @db.Text
-  levels           String[] @default([])
-  normalized_levels String[] @default([])
-  tags             String[] @default([])
-  category_label   String?  @db.VarChar(100)
-  created_relative String?  @db.VarChar(50)
-  views            BigInt   @default(0)
-  created_at_src   DateTime?
-  updated_at_src   DateTime?
-  video_url        String?  @db.Text
-  embed_url        String?  @db.Text
-  inserted_at      DateTime @default(now())
-  updated_at       DateTime @default(now())
+  id                BigInt    @id @default(autoincrement())
+  source_id         String?   @db.VarChar(100)
+  video_id          String    @unique @db.VarChar(20)
+  source_order      Int?
+  title             String    @db.Text
+  duration_sec      Int       @default(0)
+  thumbnail         String?   @db.Text
+  levels            String[]  @default([])
+  normalized_levels String[]  @default([])
+  tags              String[]  @default([])
+  category_label    String?   @db.VarChar(100)
+  created_relative  String?   @db.VarChar(50)
+  views             BigInt    @default(0)
+  created_at_src    DateTime?
+  updated_at_src    DateTime?
+  video_url         String?   @db.Text
+  embed_url         String?   @db.Text
+  isFreePreview     Boolean   @default(false) @map("is_free_preview")
+  inserted_at       DateTime  @default(now())
+  updated_at        DateTime  @default(now())
 
-  transcripts ListeningTranscriptLine[]
+  transcripts            ListeningTranscriptLine[]
   transcriptTranslations ListeningTranscriptTranslation[]
 
   @@index([inserted_at])
   @@map("listening_video")
+}
+
+model StripeWebhookEvent {
+  id          BigInt   @id @default(autoincrement())
+  eventId     String   @unique @map("event_id") @db.VarChar(255)
+  eventType   String   @map("event_type") @db.VarChar(120)
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("stripe_webhook_event")
 }
 
 model ListeningTranscriptLine {
