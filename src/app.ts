@@ -34,6 +34,12 @@ const apiShieldEnabled = String(process.env.API_SHIELD_ENABLED || 'true').toLowe
 const apiShieldWindowMs = Number(process.env.API_SHIELD_WINDOW_MS || 60_000);
 const apiShieldDistinctWindowMs = Number(process.env.API_SHIELD_DISTINCT_WINDOW_MS || 300_000);
 const apiShieldBlockMs = Number(process.env.API_SHIELD_BLOCK_MS || 600_000);
+const apiShieldSuspiciousScoreWindowMs = Number(process.env.API_SHIELD_SUSPICIOUS_SCORE_WINDOW_MS || 300_000);
+const apiShieldSuspiciousScoreThreshold = Number(process.env.API_SHIELD_SUSPICIOUS_SCORE_THRESHOLD || 14);
+const apiShieldMaxDistinctTargetsPerIp = Number(process.env.API_SHIELD_MAX_DISTINCT_TARGETS_PER_IP || 80);
+const apiShieldRapidRequestIntervalMs = Number(process.env.API_SHIELD_RAPID_REQUEST_INTERVAL_MS || 250);
+const apiShieldRapidRequestBurst = Number(process.env.API_SHIELD_RAPID_REQUEST_BURST || 18);
+const apiShieldMaxSequentialNumericTargets = Number(process.env.API_SHIELD_MAX_SEQUENTIAL_NUMERIC_TARGETS || 12);
 
 const createRouteShield = (keyPrefix: string, maxRequestsPerIp: number, maxRequestsPerUser: number) =>
   createApiShield({
@@ -43,6 +49,12 @@ const createRouteShield = (keyPrefix: string, maxRequestsPerIp: number, maxReque
     maxDistinctUsersPerIp: Number(process.env.API_SHIELD_MAX_DISTINCT_USERS_PER_IP || 6),
     maxRequestsPerIp: Number(process.env.API_SHIELD_MAX_REQUESTS_PER_IP || maxRequestsPerIp),
     maxRequestsPerUser: Number(process.env.API_SHIELD_MAX_REQUESTS_PER_USER || maxRequestsPerUser),
+    suspiciousScoreWindowMs: apiShieldSuspiciousScoreWindowMs,
+    suspiciousScoreThreshold: apiShieldSuspiciousScoreThreshold,
+    maxDistinctTargetsPerIp: apiShieldMaxDistinctTargetsPerIp,
+    rapidRequestIntervalMs: apiShieldRapidRequestIntervalMs,
+    rapidRequestBurst: apiShieldRapidRequestBurst,
+    maxSequentialNumericTargets: apiShieldMaxSequentialNumericTargets,
     keyPrefix,
   });
 const configuredCorsOrigin = (process.env.CORS_ORIGIN || '')
@@ -111,10 +123,28 @@ app.use(
   createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-vocabulary' }),
   createVocabularyRouter(),
 );
-app.use('/grammar', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'grammar' }), createGrammarRouter());
-app.use('/api/grammar', createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-grammar' }), createGrammarRouter());
-app.use('/learning', createLearningRouter());
-app.use('/api/learning', createLearningRouter());
+app.use(
+  '/grammar',
+  ...(apiShieldEnabled ? [createRouteShield('grammar-shield', 160, 120)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'grammar' }),
+  createGrammarRouter(),
+);
+app.use(
+  '/api/grammar',
+  ...(apiShieldEnabled ? [createRouteShield('api-grammar-shield', 160, 120)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-grammar' }),
+  createGrammarRouter(),
+);
+app.use(
+  '/learning',
+  ...(apiShieldEnabled ? [createRouteShield('learning-shield', 160, 120)] : []),
+  createLearningRouter(),
+);
+app.use(
+  '/api/learning',
+  ...(apiShieldEnabled ? [createRouteShield('api-learning-shield', 160, 120)] : []),
+  createLearningRouter(),
+);
 app.use(
   '/learning/game',
   ...(apiShieldEnabled ? [createRouteShield('learning-game-shield', 140, 100)] : []),
@@ -147,8 +177,18 @@ app.use('/admin/exam', createAdminExamRouter());
 app.use('/api/admin/exam', createAdminExamRouter());
 app.use('/user/preferences', createUserPreferencesRouter());
 app.use('/api/user/preferences', createUserPreferencesRouter());
-app.use('/kanji', createKanjiRouter());
-app.use('/api/kanji', createKanjiRouter());
+app.use(
+  '/kanji',
+  ...(apiShieldEnabled ? [createRouteShield('kanji-shield', 160, 120)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'kanji' }),
+  createKanjiRouter(),
+);
+app.use(
+  '/api/kanji',
+  ...(apiShieldEnabled ? [createRouteShield('api-kanji-shield', 160, 120)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'api-kanji' }),
+  createKanjiRouter(),
+);
 app.use(
   '/listening',
   ...(apiShieldEnabled ? [createRouteShield('listening-shield', 120, 90)] : []),
