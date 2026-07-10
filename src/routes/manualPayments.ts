@@ -10,6 +10,16 @@ type ManualPaymentStatus = 'PENDING' | 'PAID_REPORTED' | 'APPROVED' | 'REJECTED'
 
 const PROVIDERS = new Set<ManualPaymentProvider>(['MSB', 'PAYPAY']);
 const PLANS = new Set<ManualPaymentPlan>(['monthly', 'six_months', 'yearly']);
+const MSB_OLD_DEFAULT_AMOUNTS = {
+  monthly: 99000,
+  sixMonths: 499000,
+  yearly: 999000,
+};
+const MSB_DEFAULT_AMOUNTS = {
+  monthly: 149000,
+  sixMonths: 699000,
+  yearly: 1099000,
+};
 
 let ensureManualPaymentTablePromise: Promise<void> | null = null;
 
@@ -65,6 +75,29 @@ async function ensureManualPaymentTable() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+      `);
+      await prisma.$executeRaw(Prisma.sql`
+        UPDATE manual_payment_setting
+        SET
+          monthly_amount = CASE
+            WHEN monthly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.monthly} THEN ${MSB_DEFAULT_AMOUNTS.monthly}
+            ELSE monthly_amount
+          END,
+          six_months_amount = CASE
+            WHEN six_months_amount = ${MSB_OLD_DEFAULT_AMOUNTS.sixMonths} THEN ${MSB_DEFAULT_AMOUNTS.sixMonths}
+            ELSE six_months_amount
+          END,
+          yearly_amount = CASE
+            WHEN yearly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.yearly} THEN ${MSB_DEFAULT_AMOUNTS.yearly}
+            ELSE yearly_amount
+          END,
+          updated_at = NOW()
+        WHERE provider = 'MSB'
+          AND (
+            monthly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.monthly}
+            OR six_months_amount = ${MSB_OLD_DEFAULT_AMOUNTS.sixMonths}
+            OR yearly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.yearly}
+          )
       `);
     })();
   }
@@ -143,7 +176,7 @@ async function getManualPaymentConfig(provider: ManualPaymentProvider, plan: Man
   return {
     amount: Number.isFinite(settingAmount) && settingAmount > 0
       ? Math.round(settingAmount)
-      : envNumber(`MANUAL_PAYMENT_MSB_${amountEnv}_AMOUNT`, plan === 'yearly' ? 999000 : plan === 'six_months' ? 499000 : 99000),
+      : envNumber(`MANUAL_PAYMENT_MSB_${amountEnv}_AMOUNT`, plan === 'yearly' ? MSB_DEFAULT_AMOUNTS.yearly : plan === 'six_months' ? MSB_DEFAULT_AMOUNTS.sixMonths : MSB_DEFAULT_AMOUNTS.monthly),
     currency: String(setting?.currency || 'VND'),
     accountName: String(setting?.account_name || envText('MANUAL_PAYMENT_MSB_ACCOUNT_NAME')),
     accountNo: String(setting?.account_no || envText('MANUAL_PAYMENT_MSB_ACCOUNT_NO')),
@@ -238,9 +271,9 @@ function mapSettingRow(row: any, provider: ManualPaymentProvider) {
     paymentUrlTemplate: '',
     qrImageUrlTemplate: '',
     qrTemplate: row?.qr_template || (provider === 'MSB' ? envText('MANUAL_PAYMENT_MSB_QR_TEMPLATE', 'compact2') : ''),
-    monthlyAmount: Number(row?.monthly_amount || envNumber(`MANUAL_PAYMENT_${provider}_MONTHLY_AMOUNT`, provider === 'MSB' ? 99000 : 599)),
-    sixMonthsAmount: Number(row?.six_months_amount || envNumber(`MANUAL_PAYMENT_${provider}_SIX_MONTHS_AMOUNT`, provider === 'MSB' ? 499000 : 2999)),
-    yearlyAmount: Number(row?.yearly_amount || envNumber(`MANUAL_PAYMENT_${provider}_YEARLY_AMOUNT`, provider === 'MSB' ? 999000 : 5999)),
+    monthlyAmount: Number(row?.monthly_amount || envNumber(`MANUAL_PAYMENT_${provider}_MONTHLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.monthly : 599)),
+    sixMonthsAmount: Number(row?.six_months_amount || envNumber(`MANUAL_PAYMENT_${provider}_SIX_MONTHS_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.sixMonths : 2999)),
+    yearlyAmount: Number(row?.yearly_amount || envNumber(`MANUAL_PAYMENT_${provider}_YEARLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.yearly : 5999)),
     currency: row?.currency || (provider === 'MSB' ? 'VND' : 'JPY'),
     note: row?.note || '',
     updatedAt: row?.updated_at || null,
