@@ -671,6 +671,39 @@ export function createLearningRouter() {
     return res.json(rows.map(mapKanjiLearningItem));
   });
 
+  router.get('/kanji/progress-map', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const chars = String(req.query.chars || '')
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (chars.length === 0) return res.json({});
+    await ensureKanjiLearningTables();
+
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{ kanji_char: string; stage: number; is_mastered: number; next_review_date: Date | null }>
+    >(
+      `
+        SELECT kanji_char, stage, is_mastered, next_review_date
+        FROM user_kanji_progress
+        WHERE user_id = $1 AND kanji_char = ANY($2::text[])
+      `,
+      BigInt(userId),
+      chars,
+    );
+
+    const map: Record<string, { stage: number; isMastered: boolean; nextReviewDate: string | null }> = {};
+    for (const row of rows) {
+      map[row.kanji_char] = {
+        stage: Number(row.stage) || 0,
+        isMastered: Number(row.is_mastered) === 1,
+        nextReviewDate: row.next_review_date ? new Date(row.next_review_date).toISOString() : null,
+      };
+    }
+    return res.json(map);
+  });
+
   router.get('/kanji/today', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });

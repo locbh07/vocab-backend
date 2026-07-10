@@ -1,0 +1,3256 @@
+[
+  {
+    "number": 1,
+    "char": "一",
+    "strokes": 1,
+    "hanViet": "nhất",
+    "meaningVi": "một, 1",
+    "meaningEn": "One",
+    "readingOn": [
+      "いち",
+      "いつ"
+    ],
+    "readingKun": [
+      "ひと-",
+      "ひと.つ"
+    ]
+  },
+  {
+    "number": 2,
+    "char": "丨",
+    "strokes": 1,
+    "hanViet": "cổn",
+    "meaningVi": "nét xổ",
+    "meaningEn": "Number One",
+    "readingOn": [
+      "こん",
+      "し",
+      "じょ",
+      "にょ"
+    ],
+    "readingKun": [
+      "すす.む",
+      "しりぞ.く"
+    ]
+  },
+  {
+    "number": 3,
+    "char": "丶",
+    "strokes": 1,
+    "hanViet": "chủ",
+    "meaningVi": "dấu đánh để ghi nhớ hoặc phân biệt",
+    "meaningEn": "Dot",
+    "readingOn": [
+      "ちゅ"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 4,
+    "char": "丿",
+    "strokes": 1,
+    "hanViet": "phiệt thiên triệt",
+    "meaningVi": "nét phảy, nét phẩy",
+    "meaningEn": "Katakana No Radical (no. 4)",
+    "readingOn": [
+      "へつ"
+    ],
+    "readingKun": [
+      "えい",
+      "よう"
+    ]
+  },
+  {
+    "number": 5,
+    "char": "乙",
+    "strokes": 1,
+    "hanViet": "ất",
+    "meaningVi": "Ất (ngôi thứ hai thuộc hàng Can)",
+    "meaningEn": "The Latter",
+    "readingOn": [
+      "おつ",
+      "いつ"
+    ],
+    "readingKun": [
+      "おと-",
+      "きのと"
+    ]
+  },
+  {
+    "number": 6,
+    "char": "亅",
+    "strokes": 1,
+    "hanViet": "quyết",
+    "meaningVi": "nét xổ có móc",
+    "meaningEn": "Feathered Stick",
+    "readingOn": [
+      "けつ"
+    ],
+    "readingKun": [
+      "かぎ"
+    ]
+  },
+  {
+    "number": 7,
+    "char": "二",
+    "strokes": 2,
+    "hanViet": "nhị",
+    "meaningVi": "hai, 2",
+    "meaningEn": "Two",
+    "readingOn": [
+      "に",
+      "じ"
+    ],
+    "readingKun": [
+      "ふた",
+      "ふた.つ",
+      "ふたたび"
+    ]
+  },
+  {
+    "number": 8,
+    "char": "亠",
+    "strokes": 2,
+    "hanViet": "đầu",
+    "meaningVi": "bộ đầu",
+    "meaningEn": "Kettle Lid Radical (no. 8)",
+    "readingOn": [
+      "とう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 9,
+    "char": "人",
+    "strokes": 2,
+    "hanViet": "nhân nhơn",
+    "meaningVi": "người",
+    "meaningEn": "Person",
+    "readingOn": [
+      "じん",
+      "にん"
+    ],
+    "readingKun": [
+      "ひと",
+      "-り",
+      "-と"
+    ]
+  },
+  {
+    "number": 10,
+    "char": "儿",
+    "strokes": 2,
+    "hanViet": "nhi nhân",
+    "meaningVi": "đứa trẻ",
+    "meaningEn": "Legs Radical (no. 10)",
+    "readingOn": [
+      "じん",
+      "にん"
+    ],
+    "readingKun": [
+      "がい"
+    ]
+  },
+  {
+    "number": 11,
+    "char": "入",
+    "strokes": 2,
+    "hanViet": "nhập",
+    "meaningVi": "vào trong",
+    "meaningEn": "Enter",
+    "readingOn": [
+      "にゅう",
+      "じゅ"
+    ],
+    "readingKun": [
+      "い.る",
+      "-い.る",
+      "-い.り",
+      "い.れる",
+      "-い.れ",
+      "はい.る"
+    ]
+  },
+  {
+    "number": 12,
+    "char": "八",
+    "strokes": 2,
+    "hanViet": "bát",
+    "meaningVi": "tám, 8",
+    "meaningEn": "Eight",
+    "readingOn": [
+      "はち"
+    ],
+    "readingKun": [
+      "や",
+      "や.つ",
+      "やっ.つ",
+      "よう"
+    ]
+  },
+  {
+    "number": 13,
+    "char": "冂",
+    "strokes": 2,
+    "hanViet": "quynh",
+    "meaningVi": "đất ở xa ngoài cõi nước",
+    "meaningEn": "Upside-down Box Radical (no. 13)",
+    "readingOn": [
+      "きょう",
+      "けい"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 14,
+    "char": "冖",
+    "strokes": 2,
+    "hanViet": "mịch",
+    "meaningVi": "trùm khăn lên đầu",
+    "meaningEn": "Wa-shaped Crown Radical (no. 14)",
+    "readingOn": [
+      "べき"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 15,
+    "char": "冫",
+    "strokes": 2,
+    "hanViet": "băng",
+    "meaningVi": "bộ băng",
+    "meaningEn": "Two-stroke Water Radical Or Ice Radical (no. 15)",
+    "readingOn": [
+      "ひょう"
+    ],
+    "readingKun": [
+      "こおり"
+    ]
+  },
+  {
+    "number": 16,
+    "char": "几",
+    "strokes": 2,
+    "hanViet": "cơ ki ky kì kỉ kỷ ỷ",
+    "meaningVi": "hầu như, gần như",
+    "meaningEn": "Table",
+    "readingOn": [
+      "き"
+    ],
+    "readingKun": [
+      "きにょう"
+    ]
+  },
+  {
+    "number": 17,
+    "char": "凵",
+    "strokes": 2,
+    "hanViet": "khảm",
+    "meaningVi": "há mồm",
+    "meaningEn": "Open Box Enclosure",
+    "readingOn": [
+      "かん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 18,
+    "char": "刀",
+    "strokes": 2,
+    "hanViet": "đao",
+    "meaningVi": "con dao, cái đao",
+    "meaningEn": "Sword",
+    "readingOn": [
+      "とう"
+    ],
+    "readingKun": [
+      "かたな",
+      "そり"
+    ]
+  },
+  {
+    "number": 19,
+    "char": "力",
+    "strokes": 2,
+    "hanViet": "lực",
+    "meaningVi": "sức lực",
+    "meaningEn": "Power",
+    "readingOn": [
+      "りょく",
+      "りき",
+      "りい"
+    ],
+    "readingKun": [
+      "ちから"
+    ]
+  },
+  {
+    "number": 20,
+    "char": "勹",
+    "strokes": 2,
+    "hanViet": "bao",
+    "meaningVi": "bộ bao",
+    "meaningEn": "Wrapping Enclosure",
+    "readingOn": [
+      "ほう"
+    ],
+    "readingKun": [
+      "つつ.む"
+    ]
+  },
+  {
+    "number": 21,
+    "char": "匕",
+    "strokes": 2,
+    "hanViet": "chuỷ truỷ tỷ",
+    "meaningVi": "cái thìa, cái muôi",
+    "meaningEn": "Spoon",
+    "readingOn": [
+      "ひ"
+    ],
+    "readingKun": [
+      "さじ"
+    ]
+  },
+  {
+    "number": 22,
+    "char": "匚",
+    "strokes": 2,
+    "hanViet": "phương",
+    "meaningVi": "vật đựng đồ",
+    "meaningEn": "Box-on-side Enclosure Radical (no. 22)",
+    "readingOn": [
+      "ほう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 23,
+    "char": "匸",
+    "strokes": 2,
+    "hanViet": "hễ hệ",
+    "meaningVi": "che đậy",
+    "meaningEn": "Hiding Enclosure Radical (no. 23)",
+    "readingOn": [
+      "けい"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 24,
+    "char": "十",
+    "strokes": 2,
+    "hanViet": "thập",
+    "meaningVi": "mười, 10",
+    "meaningEn": "Ten",
+    "readingOn": [
+      "じゅう",
+      "じっ",
+      "じゅっ"
+    ],
+    "readingKun": [
+      "とお",
+      "と"
+    ]
+  },
+  {
+    "number": 25,
+    "char": "卜",
+    "strokes": 2,
+    "hanViet": "bặc bốc",
+    "meaningVi": "bói xem tốt xấu",
+    "meaningEn": "Divining",
+    "readingOn": [
+      "ぼく"
+    ],
+    "readingKun": [
+      "うらな.う",
+      "うらない"
+    ]
+  },
+  {
+    "number": 26,
+    "char": "卩",
+    "strokes": 2,
+    "hanViet": "tiết",
+    "meaningVi": "bộ tiết",
+    "meaningEn": "Seal Radical (no. 26)",
+    "readingOn": [
+      "せつ"
+    ],
+    "readingKun": [
+      "わりふ"
+    ]
+  },
+  {
+    "number": 27,
+    "char": "厂",
+    "strokes": 2,
+    "hanViet": "hán xưởng",
+    "meaningVi": "chỗ sườn núi có thể ở được",
+    "meaningEn": "Wild Goose",
+    "readingOn": [
+      "かん"
+    ],
+    "readingKun": [
+      "かりがね"
+    ]
+  },
+  {
+    "number": 28,
+    "char": "厶",
+    "strokes": 2,
+    "hanViet": "khư mỗ",
+    "meaningVi": "bộ khư",
+    "meaningEn": "I",
+    "readingOn": [
+      "し",
+      "ぼう",
+      "む"
+    ],
+    "readingKun": [
+      "わたくし",
+      "ござ.る"
+    ]
+  },
+  {
+    "number": 29,
+    "char": "又",
+    "strokes": 2,
+    "hanViet": "hữu hựu",
+    "meaningVi": "cũng, lại còn",
+    "meaningEn": "Or Again",
+    "readingOn": [
+      "ゆう"
+    ],
+    "readingKun": [
+      "また",
+      "また-",
+      "また.の-"
+    ]
+  },
+  {
+    "number": 30,
+    "char": "口",
+    "strokes": 3,
+    "hanViet": "khẩu",
+    "meaningVi": "mồm, miệng",
+    "meaningEn": "Mouth",
+    "readingOn": [
+      "こう",
+      "く"
+    ],
+    "readingKun": [
+      "くち"
+    ]
+  },
+  {
+    "number": 31,
+    "char": "囗",
+    "strokes": 3,
+    "hanViet": "vi vy",
+    "meaningVi": "vây quanh",
+    "meaningEn": "Box",
+    "readingOn": [
+      "い",
+      "こく"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 32,
+    "char": "土",
+    "strokes": 3,
+    "hanViet": "thổ đỗ độ",
+    "meaningVi": "đất",
+    "meaningEn": "Soil",
+    "readingOn": [
+      "ど",
+      "と"
+    ],
+    "readingKun": [
+      "つち"
+    ]
+  },
+  {
+    "number": 33,
+    "char": "士",
+    "strokes": 3,
+    "hanViet": "sĩ",
+    "meaningVi": "học trò",
+    "meaningEn": "Gentleman",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "さむらい"
+    ]
+  },
+  {
+    "number": 34,
+    "char": "夂",
+    "strokes": 3,
+    "hanViet": "tri truy",
+    "meaningVi": "bộ tri",
+    "meaningEn": "Late",
+    "readingOn": [
+      "ち"
+    ],
+    "readingKun": [
+      "しゅう"
+    ]
+  },
+  {
+    "number": 35,
+    "char": "夊",
+    "strokes": 3,
+    "hanViet": "truy tuy",
+    "meaningVi": "đến sau",
+    "meaningEn": "Winter Variant Radical (no. 34)",
+    "readingOn": [
+      "すい"
+    ],
+    "readingKun": [
+      "ゆき"
+    ]
+  },
+  {
+    "number": 36,
+    "char": "夕",
+    "strokes": 3,
+    "hanViet": "tịch",
+    "meaningVi": "buổi chiều, buổi tối",
+    "meaningEn": "Evening",
+    "readingOn": [
+      "せき"
+    ],
+    "readingKun": [
+      "ゆう"
+    ]
+  },
+  {
+    "number": 37,
+    "char": "大",
+    "strokes": 3,
+    "hanViet": "thái đại",
+    "meaningVi": "to, lớn",
+    "meaningEn": "Large",
+    "readingOn": [
+      "だい",
+      "たい"
+    ],
+    "readingKun": [
+      "おお-",
+      "おお.きい",
+      "-おお.いに"
+    ]
+  },
+  {
+    "number": 38,
+    "char": "女",
+    "strokes": 3,
+    "hanViet": "nhữ nứ nữ nự",
+    "meaningVi": "đàn bà, con gái",
+    "meaningEn": "Woman",
+    "readingOn": [
+      "じょ",
+      "にょ",
+      "にょう"
+    ],
+    "readingKun": [
+      "おんな",
+      "め"
+    ]
+  },
+  {
+    "number": 39,
+    "char": "子",
+    "strokes": 3,
+    "hanViet": "tí tý tử",
+    "meaningVi": "Tý (ngôi thứ nhất hàng Chi)",
+    "meaningEn": "Child",
+    "readingOn": [
+      "し",
+      "す",
+      "つ"
+    ],
+    "readingKun": [
+      "こ",
+      "-こ",
+      "ね"
+    ]
+  },
+  {
+    "number": 40,
+    "char": "宀",
+    "strokes": 3,
+    "hanViet": "miên",
+    "meaningVi": "lợp trùm nhà ngoài với nhà trong",
+    "meaningEn": "Shaped Crown",
+    "readingOn": [
+      "べん",
+      "めん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 41,
+    "char": "寸",
+    "strokes": 3,
+    "hanViet": "thốn",
+    "meaningVi": "tấc (đơn vị đo chiều dài)",
+    "meaningEn": "Measurement",
+    "readingOn": [
+      "すん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 42,
+    "char": "小",
+    "strokes": 3,
+    "hanViet": "tiểu",
+    "meaningVi": "nhỏ bé",
+    "meaningEn": "Little",
+    "readingOn": [
+      "しょう"
+    ],
+    "readingKun": [
+      "ちい.さい",
+      "こ-",
+      "お-",
+      "さ-"
+    ]
+  },
+  {
+    "number": 43,
+    "char": "尢",
+    "strokes": 3,
+    "hanViet": "ngột uông",
+    "meaningVi": "bộ ngột",
+    "meaningEn": "Crooked-big Radical (no. 43)",
+    "readingOn": [
+      "おう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 44,
+    "char": "尸",
+    "strokes": 3,
+    "hanViet": "thi",
+    "meaningVi": "thây người chết",
+    "meaningEn": "Corpse",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "かたしろ"
+    ]
+  },
+  {
+    "number": 45,
+    "char": "屮",
+    "strokes": 3,
+    "hanViet": "triệt",
+    "meaningVi": "bộ triệt",
+    "meaningEn": "Left Hand",
+    "readingOn": [
+      "てつ",
+      "さ"
+    ],
+    "readingKun": [
+      "ひだりて"
+    ]
+  },
+  {
+    "number": 46,
+    "char": "山",
+    "strokes": 3,
+    "hanViet": "san sơn",
+    "meaningVi": "núi",
+    "meaningEn": "Mountain",
+    "readingOn": [
+      "さん",
+      "せん"
+    ],
+    "readingKun": [
+      "やま"
+    ]
+  },
+  {
+    "number": 47,
+    "char": "巛",
+    "strokes": 3,
+    "hanViet": "khôn xuyên",
+    "meaningVi": "dòng nước, sông",
+    "meaningEn": "Curving River Radical (no.47)",
+    "readingOn": [
+      "せん"
+    ],
+    "readingKun": [
+      "かわ"
+    ]
+  },
+  {
+    "number": 48,
+    "char": "工",
+    "strokes": 3,
+    "hanViet": "công",
+    "meaningVi": "công việc",
+    "meaningEn": "Craft",
+    "readingOn": [
+      "こう",
+      "く",
+      "ぐ"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 49,
+    "char": "己",
+    "strokes": 3,
+    "hanViet": "kỉ kỷ",
+    "meaningVi": "mình",
+    "meaningEn": "Self",
+    "readingOn": [
+      "こ",
+      "き"
+    ],
+    "readingKun": [
+      "おのれ",
+      "つちのと",
+      "な"
+    ]
+  },
+  {
+    "number": 50,
+    "char": "巾",
+    "strokes": 3,
+    "hanViet": "cân",
+    "meaningVi": "cái khăn",
+    "meaningEn": "Towel",
+    "readingOn": [
+      "きん",
+      "ふく"
+    ],
+    "readingKun": [
+      "おお.い",
+      "ちきり",
+      "きれ"
+    ]
+  },
+  {
+    "number": 51,
+    "char": "干",
+    "strokes": 3,
+    "hanViet": "can cán",
+    "meaningVi": "khô, cạn kiệt",
+    "meaningEn": "Dry",
+    "readingOn": [
+      "かん"
+    ],
+    "readingKun": [
+      "ほ.す",
+      "ほ.し-",
+      "-ぼ.し",
+      "ひ.る"
+    ]
+  },
+  {
+    "number": 52,
+    "char": "幺",
+    "strokes": 3,
+    "hanViet": "yêu",
+    "meaningVi": "nhỏ bé",
+    "meaningEn": "Short Thread Radical (no. 52)",
+    "readingOn": [
+      "よう"
+    ],
+    "readingKun": [
+      "ちいさい"
+    ]
+  },
+  {
+    "number": 53,
+    "char": "广",
+    "strokes": 3,
+    "hanViet": "nghiễm quáng quảng yểm",
+    "meaningVi": "mái nhà",
+    "meaningEn": "Dotted Cliff Radical (no. 53)",
+    "readingOn": [
+      "げん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 54,
+    "char": "廴",
+    "strokes": 3,
+    "hanViet": "dẫn",
+    "meaningVi": "bước dài",
+    "meaningEn": "Long Stride Or Stretching Radical (no. 54)",
+    "readingOn": [
+      "いん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 55,
+    "char": "廾",
+    "strokes": 3,
+    "hanViet": "củng nhập trấp",
+    "meaningVi": "chắp tay",
+    "meaningEn": "Twenty",
+    "readingOn": [
+      "きょう",
+      "く"
+    ],
+    "readingKun": [
+      "にじゅう"
+    ]
+  },
+  {
+    "number": 56,
+    "char": "弋",
+    "strokes": 3,
+    "hanViet": "dặc",
+    "meaningVi": "chiếm lấy",
+    "meaningEn": "Piling",
+    "readingOn": [
+      "よく"
+    ],
+    "readingKun": [
+      "いぐるみ"
+    ]
+  },
+  {
+    "number": 57,
+    "char": "弓",
+    "strokes": 3,
+    "hanViet": "cung",
+    "meaningVi": "cong",
+    "meaningEn": "Bow",
+    "readingOn": [
+      "きゅう"
+    ],
+    "readingKun": [
+      "ゆみ"
+    ]
+  },
+  {
+    "number": 58,
+    "char": "彐",
+    "strokes": 3,
+    "hanViet": "ký kệ tuyết",
+    "meaningVi": "đầu con nhím (dím)",
+    "meaningEn": "Snout",
+    "readingOn": [
+      "けい"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 59,
+    "char": "彡",
+    "strokes": 3,
+    "hanViet": "sam tiệm",
+    "meaningVi": "lông dài",
+    "meaningEn": "Three",
+    "readingOn": [
+      "さん",
+      "せん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 60,
+    "char": "彳",
+    "strokes": 3,
+    "hanViet": "sách xích",
+    "meaningVi": "bước chân trái",
+    "meaningEn": "Stop",
+    "readingOn": [
+      "てき"
+    ],
+    "readingKun": [
+      "たたず.む"
+    ]
+  },
+  {
+    "number": 61,
+    "char": "心",
+    "strokes": 4,
+    "hanViet": "tâm",
+    "meaningVi": "lòng",
+    "meaningEn": "Heart",
+    "readingOn": [
+      "しん"
+    ],
+    "readingKun": [
+      "こころ",
+      "-ごころ"
+    ]
+  },
+  {
+    "number": 62,
+    "char": "戈",
+    "strokes": 4,
+    "hanViet": "qua",
+    "meaningVi": "cái qua, cái mác (binh khí)",
+    "meaningEn": "Halberd",
+    "readingOn": [
+      "か"
+    ],
+    "readingKun": [
+      "ほこ",
+      "ほこづくり"
+    ]
+  },
+  {
+    "number": 63,
+    "char": "戸",
+    "strokes": 4,
+    "hanViet": "hộ",
+    "meaningVi": "cửa một cánh",
+    "meaningEn": "Door",
+    "readingOn": [
+      "こ"
+    ],
+    "readingKun": [
+      "と"
+    ]
+  },
+  {
+    "number": 64,
+    "char": "手",
+    "strokes": 4,
+    "hanViet": "thủ",
+    "meaningVi": "cái tay",
+    "meaningEn": "Hand",
+    "readingOn": [
+      "しゅ",
+      "ず"
+    ],
+    "readingKun": [
+      "て",
+      "て-",
+      "-て",
+      "た-"
+    ]
+  },
+  {
+    "number": 65,
+    "char": "支",
+    "strokes": 4,
+    "hanViet": "chi",
+    "meaningVi": "cấp cho, chi cấp",
+    "meaningEn": "Branch",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "ささ.える",
+      "つか.える",
+      "か.う"
+    ]
+  },
+  {
+    "number": 66,
+    "char": "攴",
+    "strokes": 4,
+    "hanViet": "phác phốc phộc",
+    "meaningVi": "đánh khẽ",
+    "meaningEn": "Strike",
+    "readingOn": [
+      "ほく"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 67,
+    "char": "文",
+    "strokes": 4,
+    "hanViet": "văn vấn",
+    "meaningVi": "văn",
+    "meaningEn": "Sentence",
+    "readingOn": [
+      "ぶん",
+      "もん"
+    ],
+    "readingKun": [
+      "ふみ",
+      "あや"
+    ]
+  },
+  {
+    "number": 68,
+    "char": "斗",
+    "strokes": 4,
+    "hanViet": "đấu đẩu ẩu",
+    "meaningVi": "tranh đấu",
+    "meaningEn": "Big Dipper",
+    "readingOn": [
+      "と",
+      "とう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 69,
+    "char": "斤",
+    "strokes": 4,
+    "hanViet": "cân cấn",
+    "meaningVi": "cái rìu",
+    "meaningEn": "Axe",
+    "readingOn": [
+      "きん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 70,
+    "char": "方",
+    "strokes": 4,
+    "hanViet": "bàng phương",
+    "meaningVi": "phía",
+    "meaningEn": "Direction",
+    "readingOn": [
+      "ほう"
+    ],
+    "readingKun": [
+      "かた",
+      "-かた",
+      "-がた"
+    ]
+  },
+  {
+    "number": 71,
+    "char": "无",
+    "strokes": 4,
+    "hanViet": "mô vô",
+    "meaningVi": "không có",
+    "meaningEn": "Nothing",
+    "readingOn": [
+      "ぶ",
+      "む"
+    ],
+    "readingKun": [
+      "なし",
+      "ない"
+    ]
+  },
+  {
+    "number": 72,
+    "char": "日",
+    "strokes": 4,
+    "hanViet": "nhật nhựt",
+    "meaningVi": "Mặt Trời",
+    "meaningEn": "Day",
+    "readingOn": [
+      "にち",
+      "じつ"
+    ],
+    "readingKun": [
+      "ひ",
+      "-び",
+      "-か"
+    ]
+  },
+  {
+    "number": 73,
+    "char": "曰",
+    "strokes": 4,
+    "hanViet": "viết",
+    "meaningVi": "nói rằng",
+    "meaningEn": "Say",
+    "readingOn": [
+      "えつ"
+    ],
+    "readingKun": [
+      "いわ.く",
+      "のたま.う",
+      "のたま.わく",
+      "ここに"
+    ]
+  },
+  {
+    "number": 74,
+    "char": "月",
+    "strokes": 4,
+    "hanViet": "nguyệt",
+    "meaningVi": "Mặt Trăng",
+    "meaningEn": "Month",
+    "readingOn": [
+      "げつ",
+      "がつ"
+    ],
+    "readingKun": [
+      "つき"
+    ]
+  },
+  {
+    "number": 75,
+    "char": "木",
+    "strokes": 4,
+    "hanViet": "mộc",
+    "meaningVi": "cây, gỗ",
+    "meaningEn": "Tree",
+    "readingOn": [
+      "ぼく",
+      "もく"
+    ],
+    "readingKun": [
+      "き",
+      "こ-"
+    ]
+  },
+  {
+    "number": 76,
+    "char": "欠",
+    "strokes": 4,
+    "hanViet": "khiếm",
+    "meaningVi": "thiếu thốn, nợ",
+    "meaningEn": "Lack",
+    "readingOn": [
+      "けつ",
+      "けん"
+    ],
+    "readingKun": [
+      "か.ける",
+      "か.く"
+    ]
+  },
+  {
+    "number": 77,
+    "char": "止",
+    "strokes": 4,
+    "hanViet": "chi chỉ",
+    "meaningVi": "dừng lại, thôi",
+    "meaningEn": "Stop",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "と.まる",
+      "-ど.まり",
+      "と.める",
+      "-と.める",
+      "-ど.め",
+      "とど.める",
+      "とど.め",
+      "とど.まる",
+      "や.める",
+      "や.む",
+      "-や.む",
+      "よ.す",
+      "-さ.す",
+      "-さ.し"
+    ]
+  },
+  {
+    "number": 78,
+    "char": "歹",
+    "strokes": 4,
+    "hanViet": "ngạt đãi",
+    "meaningVi": "xương tàn",
+    "meaningEn": "Bare Bone",
+    "readingOn": [
+      "がつ",
+      "がち",
+      "たい"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 79,
+    "char": "殳",
+    "strokes": 4,
+    "hanViet": "thù",
+    "meaningVi": "thù (binh khí)",
+    "meaningEn": "Pike",
+    "readingOn": [
+      "しゅ"
+    ],
+    "readingKun": [
+      "また",
+      "ほこ"
+    ]
+  },
+  {
+    "number": 80,
+    "char": "毋",
+    "strokes": 4,
+    "hanViet": "mưu vô",
+    "meaningVi": "chớ, đừng",
+    "meaningEn": "Do Not",
+    "readingOn": [
+      "ぶ",
+      "む"
+    ],
+    "readingKun": [
+      "はは",
+      "ぼ",
+      "ない",
+      "なか.れ"
+    ]
+  },
+  {
+    "number": 81,
+    "char": "比",
+    "strokes": 4,
+    "hanViet": "bì bí bỉ tỉ tỵ tỷ",
+    "meaningVi": "so sánh, đọ, bì",
+    "meaningEn": "Compare",
+    "readingOn": [
+      "ひ"
+    ],
+    "readingKun": [
+      "くら.べる"
+    ]
+  },
+  {
+    "number": 82,
+    "char": "毛",
+    "strokes": 4,
+    "hanViet": "mao mô",
+    "meaningVi": "sợi lông",
+    "meaningEn": "Fur",
+    "readingOn": [
+      "もう"
+    ],
+    "readingKun": [
+      "け"
+    ]
+  },
+  {
+    "number": 83,
+    "char": "氏",
+    "strokes": 4,
+    "hanViet": "chi thị",
+    "meaningVi": "họ",
+    "meaningEn": "Family Name",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "うじ",
+      "-うじ"
+    ]
+  },
+  {
+    "number": 84,
+    "char": "气",
+    "strokes": 4,
+    "hanViet": "khí khất",
+    "meaningVi": "khí, hơi",
+    "meaningEn": "Spirit",
+    "readingOn": [
+      "き",
+      "け"
+    ],
+    "readingKun": [
+      "いき"
+    ]
+  },
+  {
+    "number": 85,
+    "char": "水",
+    "strokes": 4,
+    "hanViet": "thuỷ",
+    "meaningVi": "nước",
+    "meaningEn": "Water",
+    "readingOn": [
+      "すい"
+    ],
+    "readingKun": [
+      "みず",
+      "みず-"
+    ]
+  },
+  {
+    "number": 86,
+    "char": "火",
+    "strokes": 4,
+    "hanViet": "hoả",
+    "meaningVi": "lửa",
+    "meaningEn": "Fire",
+    "readingOn": [
+      "か"
+    ],
+    "readingKun": [
+      "ひ",
+      "-び",
+      "ほ-"
+    ]
+  },
+  {
+    "number": 87,
+    "char": "爪",
+    "strokes": 4,
+    "hanViet": "trảo",
+    "meaningVi": "móng chân thú",
+    "meaningEn": "Claw",
+    "readingOn": [
+      "そう"
+    ],
+    "readingKun": [
+      "つめ",
+      "つま-"
+    ]
+  },
+  {
+    "number": 88,
+    "char": "父",
+    "strokes": 4,
+    "hanViet": "phụ phủ",
+    "meaningVi": "cha, bố",
+    "meaningEn": "Father",
+    "readingOn": [
+      "ふ"
+    ],
+    "readingKun": [
+      "ちち"
+    ]
+  },
+  {
+    "number": 89,
+    "char": "爻",
+    "strokes": 4,
+    "hanViet": "hào",
+    "meaningVi": "hào (trong king Dịch, một quái có 6 hào)",
+    "meaningEn": "To Mix With",
+    "readingOn": [
+      "こう",
+      "ぎょう"
+    ],
+    "readingKun": [
+      "まじ.わる"
+    ]
+  },
+  {
+    "number": 90,
+    "char": "爿",
+    "strokes": 4,
+    "hanViet": "bản tường",
+    "meaningVi": "tấm ván gỗ",
+    "meaningEn": "Left-side Kata Radical (no. 90)",
+    "readingOn": [
+      "しょう",
+      "そう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 91,
+    "char": "片",
+    "strokes": 4,
+    "hanViet": "phiến",
+    "meaningVi": "tấm",
+    "meaningEn": "One-sided",
+    "readingOn": [
+      "へん"
+    ],
+    "readingKun": [
+      "かた-",
+      "かた"
+    ]
+  },
+  {
+    "number": 92,
+    "char": "牙",
+    "strokes": 5,
+    "hanViet": "nha",
+    "meaningVi": "cái răng",
+    "meaningEn": "Tusk",
+    "readingOn": [
+      "が",
+      "げ"
+    ],
+    "readingKun": [
+      "きば",
+      "は"
+    ]
+  },
+  {
+    "number": 93,
+    "char": "牛",
+    "strokes": 4,
+    "hanViet": "ngưu",
+    "meaningVi": "con trâu",
+    "meaningEn": "Cow",
+    "readingOn": [
+      "ぎゅう"
+    ],
+    "readingKun": [
+      "うし"
+    ]
+  },
+  {
+    "number": 94,
+    "char": "犬",
+    "strokes": 4,
+    "hanViet": "khuyển",
+    "meaningVi": "con chó",
+    "meaningEn": "Dog",
+    "readingOn": [
+      "けん"
+    ],
+    "readingKun": [
+      "いぬ",
+      "いぬ-"
+    ]
+  },
+  {
+    "number": 95,
+    "char": "玄",
+    "strokes": 5,
+    "hanViet": "huyền",
+    "meaningVi": "màu đen",
+    "meaningEn": "Mysterious",
+    "readingOn": [
+      "げん"
+    ],
+    "readingKun": [
+      "くろ",
+      "くろ.い"
+    ]
+  },
+  {
+    "number": 96,
+    "char": "玉",
+    "strokes": 5,
+    "hanViet": "ngọc túc",
+    "meaningVi": "viên ngọc, đá quý",
+    "meaningEn": "Jewel",
+    "readingOn": [
+      "ぎょく"
+    ],
+    "readingKun": [
+      "たま",
+      "たま-",
+      "-だま"
+    ]
+  },
+  {
+    "number": 97,
+    "char": "瓜",
+    "strokes": 6,
+    "hanViet": "qua",
+    "meaningVi": "cây dưa",
+    "meaningEn": "Melon",
+    "readingOn": [
+      "か",
+      "け"
+    ],
+    "readingKun": [
+      "うり"
+    ]
+  },
+  {
+    "number": 98,
+    "char": "瓦",
+    "strokes": 5,
+    "hanViet": "ngoá ngoã",
+    "meaningVi": "ngói",
+    "meaningEn": "Tile",
+    "readingOn": [
+      "が"
+    ],
+    "readingKun": [
+      "かわら",
+      "ぐらむ"
+    ]
+  },
+  {
+    "number": 99,
+    "char": "甘",
+    "strokes": 5,
+    "hanViet": "cam",
+    "meaningVi": "ngọt",
+    "meaningEn": "Sweet",
+    "readingOn": [
+      "かん"
+    ],
+    "readingKun": [
+      "あま.い",
+      "あま.える",
+      "あま.やかす",
+      "うま.い"
+    ]
+  },
+  {
+    "number": 100,
+    "char": "生",
+    "strokes": 5,
+    "hanViet": "sanh sinh",
+    "meaningVi": "sinh đẻ",
+    "meaningEn": "Life",
+    "readingOn": [
+      "せい",
+      "しょう"
+    ],
+    "readingKun": [
+      "い.きる",
+      "い.かす",
+      "い.ける",
+      "う.まれる",
+      "うま.れる",
+      "う.まれ",
+      "うまれ",
+      "う.む",
+      "お.う",
+      "は.える",
+      "は.やす",
+      "き",
+      "なま",
+      "なま-",
+      "な.る",
+      "な.す",
+      "む.す",
+      "-う"
+    ]
+  },
+  {
+    "number": 101,
+    "char": "用",
+    "strokes": 5,
+    "hanViet": "dụng",
+    "meaningVi": "dùng, sử dụng",
+    "meaningEn": "Utilize",
+    "readingOn": [
+      "よう"
+    ],
+    "readingKun": [
+      "もち.いる"
+    ]
+  },
+  {
+    "number": 102,
+    "char": "田",
+    "strokes": 5,
+    "hanViet": "điền",
+    "meaningVi": "ruộng, đồng",
+    "meaningEn": "Rice Field",
+    "readingOn": [
+      "でん"
+    ],
+    "readingKun": [
+      "た"
+    ]
+  },
+  {
+    "number": 103,
+    "char": "疋",
+    "strokes": 5,
+    "hanViet": "nhã sơ thất",
+    "meaningVi": "chân",
+    "meaningEn": "Head",
+    "readingOn": [
+      "ひき",
+      "しょ",
+      "そ",
+      "ひつ"
+    ],
+    "readingKun": [
+      "あし"
+    ]
+  },
+  {
+    "number": 104,
+    "char": "疒",
+    "strokes": 5,
+    "hanViet": "nạch",
+    "meaningVi": "bộ nạch",
+    "meaningEn": "Trailing Sickness",
+    "readingOn": [
+      "だく",
+      "にゃく",
+      "そう",
+      "じょう",
+      "しつ"
+    ],
+    "readingKun": [
+      "や.む"
+    ]
+  },
+  {
+    "number": 105,
+    "char": "癶",
+    "strokes": 5,
+    "hanViet": "bát",
+    "meaningVi": "gạt ra, đạp",
+    "meaningEn": "Dotted Tent Radical (no. 105)",
+    "readingOn": [
+      "はつ"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 106,
+    "char": "白",
+    "strokes": 5,
+    "hanViet": "bạch",
+    "meaningVi": "trắng, màu trắng",
+    "meaningEn": "White",
+    "readingOn": [
+      "はく",
+      "びゃく"
+    ],
+    "readingKun": [
+      "しろ",
+      "しら-",
+      "しろ.い"
+    ]
+  },
+  {
+    "number": 107,
+    "char": "皮",
+    "strokes": 5,
+    "hanViet": "bì",
+    "meaningVi": "da",
+    "meaningEn": "Pelt",
+    "readingOn": [
+      "ひ"
+    ],
+    "readingKun": [
+      "かわ"
+    ]
+  },
+  {
+    "number": 108,
+    "char": "皿",
+    "strokes": 5,
+    "hanViet": "mãnh mẫn",
+    "meaningVi": "cái mâm",
+    "meaningEn": "Dish",
+    "readingOn": [
+      "べい"
+    ],
+    "readingKun": [
+      "さら"
+    ]
+  },
+  {
+    "number": 109,
+    "char": "目",
+    "strokes": 5,
+    "hanViet": "mục",
+    "meaningVi": "mắt",
+    "meaningEn": "Eye",
+    "readingOn": [
+      "もく",
+      "ぼく"
+    ],
+    "readingKun": [
+      "め",
+      "-め",
+      "ま-"
+    ]
+  },
+  {
+    "number": 110,
+    "char": "矛",
+    "strokes": 5,
+    "hanViet": "mâu",
+    "meaningVi": "xà mâu (binh khí)",
+    "meaningEn": "Halberd",
+    "readingOn": [
+      "む",
+      "ぼう"
+    ],
+    "readingKun": [
+      "ほこ"
+    ]
+  },
+  {
+    "number": 111,
+    "char": "矢",
+    "strokes": 5,
+    "hanViet": "thi thỉ",
+    "meaningVi": "tên (bắn cung)",
+    "meaningEn": "Dart",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "や"
+    ]
+  },
+  {
+    "number": 112,
+    "char": "石",
+    "strokes": 5,
+    "hanViet": "thạch đạn",
+    "meaningVi": "đá",
+    "meaningEn": "Stone",
+    "readingOn": [
+      "せき",
+      "しゃく",
+      "こく"
+    ],
+    "readingKun": [
+      "いし"
+    ]
+  },
+  {
+    "number": 113,
+    "char": "示",
+    "strokes": 5,
+    "hanViet": "kì kỳ thị",
+    "meaningVi": "thần đất",
+    "meaningEn": "Show",
+    "readingOn": [
+      "じ",
+      "し"
+    ],
+    "readingKun": [
+      "しめ.す"
+    ]
+  },
+  {
+    "number": 114,
+    "char": "禸",
+    "strokes": 5,
+    "hanViet": "nhụ nhựu",
+    "meaningVi": "vết chân thú",
+    "meaningEn": "Rump",
+    "readingOn": [
+      "じゅう",
+      "にゅ"
+    ],
+    "readingKun": [
+      "あしあと"
+    ]
+  },
+  {
+    "number": 115,
+    "char": "禾",
+    "strokes": 5,
+    "hanViet": "hoà",
+    "meaningVi": "lúa, mạ",
+    "meaningEn": "Two-branch Tree Radical (no. 115)",
+    "readingOn": [
+      "か"
+    ],
+    "readingKun": [
+      "いね"
+    ]
+  },
+  {
+    "number": 116,
+    "char": "穴",
+    "strokes": 5,
+    "hanViet": "huyệt",
+    "meaningVi": "hang",
+    "meaningEn": "Hole",
+    "readingOn": [
+      "けつ"
+    ],
+    "readingKun": [
+      "あな"
+    ]
+  },
+  {
+    "number": 117,
+    "char": "立",
+    "strokes": 5,
+    "hanViet": "lập",
+    "meaningVi": "đứng thẳng",
+    "meaningEn": "Stand Up",
+    "readingOn": [
+      "りつ",
+      "りゅう",
+      "りっとる"
+    ],
+    "readingKun": [
+      "た.つ",
+      "-た.つ",
+      "た.ち-",
+      "た.てる",
+      "-た.てる",
+      "た.て-",
+      "たて-",
+      "-た.て",
+      "-だ.て",
+      "-だ.てる"
+    ]
+  },
+  {
+    "number": 118,
+    "char": "竹",
+    "strokes": 6,
+    "hanViet": "trúc",
+    "meaningVi": "cây trúc, cây tre",
+    "meaningEn": "Bamboo",
+    "readingOn": [
+      "ちく"
+    ],
+    "readingKun": [
+      "たけ"
+    ]
+  },
+  {
+    "number": 119,
+    "char": "米",
+    "strokes": 6,
+    "hanViet": "mễ",
+    "meaningVi": "gạo",
+    "meaningEn": "Rice",
+    "readingOn": [
+      "べい",
+      "まい",
+      "めえとる"
+    ],
+    "readingKun": [
+      "こめ",
+      "よね"
+    ]
+  },
+  {
+    "number": 120,
+    "char": "糸",
+    "strokes": 6,
+    "hanViet": "mịch",
+    "meaningVi": "bộ mịch",
+    "meaningEn": "Thread",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "いと"
+    ]
+  },
+  {
+    "number": 121,
+    "char": "缶",
+    "strokes": 6,
+    "hanViet": "phũ phẫu phữu",
+    "meaningVi": "bộ phũ",
+    "meaningEn": "Tin Can",
+    "readingOn": [
+      "かん"
+    ],
+    "readingKun": [
+      "かま"
+    ]
+  },
+  {
+    "number": 122,
+    "char": "网",
+    "strokes": 6,
+    "hanViet": "võng",
+    "meaningVi": "cái lưới",
+    "meaningEn": "Net",
+    "readingOn": [
+      "もう",
+      "ぼう"
+    ],
+    "readingKun": [
+      "あみ"
+    ]
+  },
+  {
+    "number": 123,
+    "char": "羊",
+    "strokes": 6,
+    "hanViet": "dương tường",
+    "meaningVi": "con dê",
+    "meaningEn": "Sheep",
+    "readingOn": [
+      "よう"
+    ],
+    "readingKun": [
+      "ひつじ"
+    ]
+  },
+  {
+    "number": 124,
+    "char": "羽",
+    "strokes": 6,
+    "hanViet": "vũ",
+    "meaningVi": "lông chim",
+    "meaningEn": "Feathers",
+    "readingOn": [
+      "う"
+    ],
+    "readingKun": [
+      "は",
+      "わ",
+      "はね"
+    ]
+  },
+  {
+    "number": 125,
+    "char": "老",
+    "strokes": 6,
+    "hanViet": "lão",
+    "meaningVi": "già, nhiều tuổi",
+    "meaningEn": "Old Man",
+    "readingOn": [
+      "ろう"
+    ],
+    "readingKun": [
+      "お.いる",
+      "ふ.ける"
+    ]
+  },
+  {
+    "number": 126,
+    "char": "而",
+    "strokes": 6,
+    "hanViet": "nhi năng",
+    "meaningVi": "xe tang, xe đưa đám",
+    "meaningEn": "And Yet",
+    "readingOn": [
+      "じ",
+      "に"
+    ],
+    "readingKun": [
+      "しこ.うして",
+      "しか.して",
+      "しか.も",
+      "しか.れども",
+      "すなわち",
+      "なんじ",
+      "しかるに"
+    ]
+  },
+  {
+    "number": 127,
+    "char": "耒",
+    "strokes": 6,
+    "hanViet": "lỗi",
+    "meaningVi": "cái cày",
+    "meaningEn": "Come",
+    "readingOn": [
+      "らい",
+      "るい"
+    ],
+    "readingKun": [
+      "き",
+      "く",
+      "すき"
+    ]
+  },
+  {
+    "number": 128,
+    "char": "耳",
+    "strokes": 6,
+    "hanViet": "nhĩ",
+    "meaningVi": "cái tai",
+    "meaningEn": "Ear",
+    "readingOn": [
+      "じ"
+    ],
+    "readingKun": [
+      "みみ"
+    ]
+  },
+  {
+    "number": 129,
+    "char": "聿",
+    "strokes": 6,
+    "hanViet": "duật",
+    "meaningVi": "bèn, bui",
+    "meaningEn": "Brush",
+    "readingOn": [
+      "いち",
+      "いつ"
+    ],
+    "readingKun": [
+      "ふで",
+      "ここに"
+    ]
+  },
+  {
+    "number": 130,
+    "char": "肉",
+    "strokes": 6,
+    "hanViet": "nhụ nhục nậu",
+    "meaningVi": "thịt",
+    "meaningEn": "Meat",
+    "readingOn": [
+      "にく"
+    ],
+    "readingKun": [
+      "しし"
+    ]
+  },
+  {
+    "number": 131,
+    "char": "臣",
+    "strokes": 7,
+    "hanViet": "thần",
+    "meaningVi": "bề tôi",
+    "meaningEn": "Retainer",
+    "readingOn": [
+      "しん",
+      "じん"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 132,
+    "char": "自",
+    "strokes": 6,
+    "hanViet": "tự",
+    "meaningVi": "tự mình, riêng tư",
+    "meaningEn": "Oneself",
+    "readingOn": [
+      "じ",
+      "し"
+    ],
+    "readingKun": [
+      "みずか.ら",
+      "おの.ずから",
+      "おの.ずと"
+    ]
+  },
+  {
+    "number": 133,
+    "char": "至",
+    "strokes": 6,
+    "hanViet": "chí",
+    "meaningVi": "đến, tới",
+    "meaningEn": "Climax",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "いた.る"
+    ]
+  },
+  {
+    "number": 134,
+    "char": "臼",
+    "strokes": 6,
+    "hanViet": "cữu",
+    "meaningVi": "cái cối để giã",
+    "meaningEn": "Mortar",
+    "readingOn": [
+      "きゅう",
+      "ぐ"
+    ],
+    "readingKun": [
+      "うす",
+      "うすづ.く"
+    ]
+  },
+  {
+    "number": 135,
+    "char": "舌",
+    "strokes": 6,
+    "hanViet": "thiệt",
+    "meaningVi": "cái lưỡi",
+    "meaningEn": "Tongue",
+    "readingOn": [
+      "ぜつ"
+    ],
+    "readingKun": [
+      "した"
+    ]
+  },
+  {
+    "number": 136,
+    "char": "舛",
+    "strokes": 7,
+    "hanViet": "suyễn xuyễn",
+    "meaningVi": "ngang trái",
+    "meaningEn": "Dancing Radical (no. 136)",
+    "readingOn": [
+      "ぶ",
+      "せん"
+    ],
+    "readingKun": [
+      "まい",
+      "そむ.く"
+    ]
+  },
+  {
+    "number": 137,
+    "char": "舟",
+    "strokes": 6,
+    "hanViet": "chu châu",
+    "meaningVi": "cái thuyền",
+    "meaningEn": "Boat",
+    "readingOn": [
+      "しゅう"
+    ],
+    "readingKun": [
+      "ふね",
+      "ふな-",
+      "-ぶね"
+    ]
+  },
+  {
+    "number": 138,
+    "char": "艮",
+    "strokes": 6,
+    "hanViet": "cấn",
+    "meaningVi": "quẻ Cấn (phúc uyển) trong Kinh Dịch (chỉ có vạch trên liền, tượng Sơn (núi), tượng trưng cho con trai út, hành Thổ, tuổi Sửu, hướng Đông và Bắc)",
+    "meaningEn": "Northeast (oriental Zodiac)",
+    "readingOn": [
+      "こん",
+      "ごん"
+    ],
+    "readingKun": [
+      "うしとら"
+    ]
+  },
+  {
+    "number": 139,
+    "char": "色",
+    "strokes": 6,
+    "hanViet": "sắc",
+    "meaningVi": "màu sắc",
+    "meaningEn": "Color",
+    "readingOn": [
+      "しょく",
+      "しき"
+    ],
+    "readingKun": [
+      "いろ"
+    ]
+  },
+  {
+    "number": 140,
+    "char": "艸",
+    "strokes": 6,
+    "hanViet": "thảo",
+    "meaningVi": "bộ thảo",
+    "meaningEn": "Grass",
+    "readingOn": [
+      "そう"
+    ],
+    "readingKun": [
+      "くさ"
+    ]
+  },
+  {
+    "number": 141,
+    "char": "虍",
+    "strokes": 6,
+    "hanViet": "hô",
+    "meaningVi": "vằn con hổ",
+    "meaningEn": "Tiger Spots",
+    "readingOn": [
+      "こ"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 142,
+    "char": "虫",
+    "strokes": 6,
+    "hanViet": "huỷ trùng",
+    "meaningVi": "loài sâu bọ",
+    "meaningEn": "Insect",
+    "readingOn": [
+      "ちゅう",
+      "き"
+    ],
+    "readingKun": [
+      "むし"
+    ]
+  },
+  {
+    "number": 143,
+    "char": "血",
+    "strokes": 6,
+    "hanViet": "huyết",
+    "meaningVi": "máu",
+    "meaningEn": "Blood",
+    "readingOn": [
+      "けつ"
+    ],
+    "readingKun": [
+      "ち"
+    ]
+  },
+  {
+    "number": 144,
+    "char": "行",
+    "strokes": 6,
+    "hanViet": "hàng hành hãng hạng hạnh",
+    "meaningVi": "hàng, dòng",
+    "meaningEn": "Going",
+    "readingOn": [
+      "こう",
+      "ぎょう",
+      "あん"
+    ],
+    "readingKun": [
+      "い.く",
+      "ゆ.く",
+      "-ゆ.き",
+      "-ゆき",
+      "-い.き",
+      "-いき",
+      "おこな.う",
+      "おこ.なう"
+    ]
+  },
+  {
+    "number": 145,
+    "char": "衣",
+    "strokes": 6,
+    "hanViet": "y ý",
+    "meaningVi": "cái áo",
+    "meaningEn": "Garment",
+    "readingOn": [
+      "い",
+      "え"
+    ],
+    "readingKun": [
+      "ころも",
+      "きぬ",
+      "-ぎ"
+    ]
+  },
+  {
+    "number": 146,
+    "char": "襾",
+    "strokes": 6,
+    "hanViet": "á",
+    "meaningVi": "che, chùm lên",
+    "meaningEn": "Cover",
+    "readingOn": [
+      "あ"
+    ],
+    "readingKun": [
+      "け"
+    ]
+  },
+  {
+    "number": 147,
+    "char": "見",
+    "strokes": 7,
+    "hanViet": "hiện kiến",
+    "meaningVi": "tỏ rõ, hiện ra",
+    "meaningEn": "See",
+    "readingOn": [
+      "けん"
+    ],
+    "readingKun": [
+      "み.る",
+      "み.える",
+      "み.せる"
+    ]
+  },
+  {
+    "number": 148,
+    "char": "角",
+    "strokes": 7,
+    "hanViet": "cốc giác giốc lộc",
+    "meaningVi": "cái sừng",
+    "meaningEn": "Angle",
+    "readingOn": [
+      "かく"
+    ],
+    "readingKun": [
+      "かど",
+      "つの"
+    ]
+  },
+  {
+    "number": 149,
+    "char": "言",
+    "strokes": 7,
+    "hanViet": "ngân ngôn",
+    "meaningVi": "nói",
+    "meaningEn": "Say",
+    "readingOn": [
+      "げん",
+      "ごん"
+    ],
+    "readingKun": [
+      "い.う",
+      "こと"
+    ]
+  },
+  {
+    "number": 150,
+    "char": "谷",
+    "strokes": 7,
+    "hanViet": "cốc dục lộc",
+    "meaningVi": "cây lương thực, thóc lúa, kê",
+    "meaningEn": "Valley",
+    "readingOn": [
+      "こく"
+    ],
+    "readingKun": [
+      "たに",
+      "きわ.まる"
+    ]
+  },
+  {
+    "number": 151,
+    "char": "豆",
+    "strokes": 7,
+    "hanViet": "đậu",
+    "meaningVi": "cây đậu",
+    "meaningEn": "Beans",
+    "readingOn": [
+      "とう",
+      "ず"
+    ],
+    "readingKun": [
+      "まめ",
+      "まめ-"
+    ]
+  },
+  {
+    "number": 152,
+    "char": "豕",
+    "strokes": 7,
+    "hanViet": "thỉ",
+    "meaningVi": "con lợn, con heo",
+    "meaningEn": "Pig",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 153,
+    "char": "豸",
+    "strokes": 7,
+    "hanViet": "trãi trĩ trại",
+    "meaningVi": "loài bò sát không có chân",
+    "meaningEn": "Snake",
+    "readingOn": [
+      "たい",
+      "ち"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 154,
+    "char": "貝",
+    "strokes": 7,
+    "hanViet": "bối",
+    "meaningVi": "con sò, hến",
+    "meaningEn": "Shellfish",
+    "readingOn": [
+      "ばい"
+    ],
+    "readingKun": [
+      "かい"
+    ]
+  },
+  {
+    "number": 155,
+    "char": "赤",
+    "strokes": 7,
+    "hanViet": "thích xích",
+    "meaningVi": "đỏ, màu đỏ",
+    "meaningEn": "Red",
+    "readingOn": [
+      "せき",
+      "しゃく"
+    ],
+    "readingKun": [
+      "あか",
+      "あか-",
+      "あか.い",
+      "あか.らむ",
+      "あか.らめる"
+    ]
+  },
+  {
+    "number": 156,
+    "char": "走",
+    "strokes": 7,
+    "hanViet": "tẩu",
+    "meaningVi": "chạy",
+    "meaningEn": "Run",
+    "readingOn": [
+      "そう"
+    ],
+    "readingKun": [
+      "はし.る"
+    ]
+  },
+  {
+    "number": 157,
+    "char": "足",
+    "strokes": 7,
+    "hanViet": "tú túc",
+    "meaningVi": "chân thú",
+    "meaningEn": "Leg",
+    "readingOn": [
+      "そく"
+    ],
+    "readingKun": [
+      "あし",
+      "た.りる",
+      "た.る",
+      "た.す"
+    ]
+  },
+  {
+    "number": 158,
+    "char": "身",
+    "strokes": 7,
+    "hanViet": "quyên thân",
+    "meaningVi": "thân thể",
+    "meaningEn": "Somebody",
+    "readingOn": [
+      "しん"
+    ],
+    "readingKun": [
+      "み"
+    ]
+  },
+  {
+    "number": 159,
+    "char": "車",
+    "strokes": 7,
+    "hanViet": "xa",
+    "meaningVi": "cái xe",
+    "meaningEn": "Car",
+    "readingOn": [
+      "しゃ"
+    ],
+    "readingKun": [
+      "くるま"
+    ]
+  },
+  {
+    "number": 160,
+    "char": "辛",
+    "strokes": 7,
+    "hanViet": "tân",
+    "meaningVi": "Tân (ngôi thứ 8 hàng Can)",
+    "meaningEn": "Spicy",
+    "readingOn": [
+      "しん"
+    ],
+    "readingKun": [
+      "から.い",
+      "つら.い",
+      "-づら.い",
+      "かのと"
+    ]
+  },
+  {
+    "number": 161,
+    "char": "辰",
+    "strokes": 7,
+    "hanViet": "thìn thần",
+    "meaningVi": "Thìn (ngôi thứ 5 của hàng Chi)",
+    "meaningEn": "Sign Of The Dragon",
+    "readingOn": [
+      "しん",
+      "じん"
+    ],
+    "readingKun": [
+      "たつ"
+    ]
+  },
+  {
+    "number": 162,
+    "char": "辵",
+    "strokes": 7,
+    "hanViet": "sước",
+    "meaningVi": "bộ sước",
+    "meaningEn": "Walk",
+    "readingOn": [
+      "ちゃく"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 163,
+    "char": "邑",
+    "strokes": 7,
+    "hanViet": "ấp",
+    "meaningVi": "vùng đất nhỏ",
+    "meaningEn": "Village",
+    "readingOn": [
+      "ゆう"
+    ],
+    "readingKun": [
+      "むら"
+    ]
+  },
+  {
+    "number": 164,
+    "char": "酉",
+    "strokes": 7,
+    "hanViet": "dậu",
+    "meaningVi": "Dậu (ngôi thứ 10 hàng Chi)",
+    "meaningEn": "West",
+    "readingOn": [
+      "ゆう"
+    ],
+    "readingKun": [
+      "とり"
+    ]
+  },
+  {
+    "number": 165,
+    "char": "釆",
+    "strokes": 7,
+    "hanViet": "biện",
+    "meaningVi": "phân biệt",
+    "meaningEn": "Separate",
+    "readingOn": [
+      "はん",
+      "べん",
+      "さい"
+    ],
+    "readingKun": [
+      "と.る",
+      "いろどり",
+      "のごめ"
+    ]
+  },
+  {
+    "number": 166,
+    "char": "里",
+    "strokes": 7,
+    "hanViet": "lí lý",
+    "meaningVi": "ở trong",
+    "meaningEn": "Ri",
+    "readingOn": [
+      "り"
+    ],
+    "readingKun": [
+      "さと"
+    ]
+  },
+  {
+    "number": 167,
+    "char": "金",
+    "strokes": 8,
+    "hanViet": "kim",
+    "meaningVi": "vàng, tiền",
+    "meaningEn": "Gold",
+    "readingOn": [
+      "きん",
+      "こん",
+      "ごん"
+    ],
+    "readingKun": [
+      "かね",
+      "かな-",
+      "-がね"
+    ]
+  },
+  {
+    "number": 168,
+    "char": "長",
+    "strokes": 8,
+    "hanViet": "tràng trướng trường trưởng trượng",
+    "meaningVi": "dài",
+    "meaningEn": "Long",
+    "readingOn": [
+      "ちょう"
+    ],
+    "readingKun": [
+      "なが.い",
+      "おさ"
+    ]
+  },
+  {
+    "number": 169,
+    "char": "門",
+    "strokes": 8,
+    "hanViet": "môn",
+    "meaningVi": "cái cửa",
+    "meaningEn": "Gate",
+    "readingOn": [
+      "もん"
+    ],
+    "readingKun": [
+      "かど",
+      "と"
+    ]
+  },
+  {
+    "number": 170,
+    "char": "阜",
+    "strokes": 8,
+    "hanViet": "phụ",
+    "meaningVi": "gò đất",
+    "meaningEn": "Hill",
+    "readingOn": [
+      "ふ",
+      "ふう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 171,
+    "char": "隶",
+    "strokes": 8,
+    "hanViet": "lệ đãi",
+    "meaningVi": "phụ thuộc",
+    "meaningEn": "Extend",
+    "readingOn": [
+      "たい"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 172,
+    "char": "隹",
+    "strokes": 8,
+    "hanViet": "chuy",
+    "meaningVi": "chim đuôi ngắn",
+    "meaningEn": "Bird",
+    "readingOn": [
+      "さい",
+      "すい"
+    ],
+    "readingKun": [
+      "とり"
+    ]
+  },
+  {
+    "number": 173,
+    "char": "雨",
+    "strokes": 8,
+    "hanViet": "vú vũ vụ",
+    "meaningVi": "mưa",
+    "meaningEn": "Rain",
+    "readingOn": [
+      "う"
+    ],
+    "readingKun": [
+      "あめ",
+      "あま-",
+      "-さめ"
+    ]
+  },
+  {
+    "number": 174,
+    "char": "青",
+    "strokes": 8,
+    "hanViet": "thanh",
+    "meaningVi": "xanh, màu xanh",
+    "meaningEn": "Blue",
+    "readingOn": [
+      "せい",
+      "しょう"
+    ],
+    "readingKun": [
+      "あお",
+      "あお-",
+      "あお.い"
+    ]
+  },
+  {
+    "number": 175,
+    "char": "非",
+    "strokes": 8,
+    "hanViet": "phi phỉ",
+    "meaningVi": "không phải",
+    "meaningEn": "Un-",
+    "readingOn": [
+      "ひ"
+    ],
+    "readingKun": [
+      "あら.ず"
+    ]
+  },
+  {
+    "number": 176,
+    "char": "面",
+    "strokes": 9,
+    "hanViet": "diện miến",
+    "meaningVi": "mặt",
+    "meaningEn": "Mask",
+    "readingOn": [
+      "めん",
+      "べん"
+    ],
+    "readingKun": [
+      "おも",
+      "おもて",
+      "つら"
+    ]
+  },
+  {
+    "number": 177,
+    "char": "革",
+    "strokes": 9,
+    "hanViet": "cách cức",
+    "meaningVi": "thay đổi",
+    "meaningEn": "Leather",
+    "readingOn": [
+      "かく"
+    ],
+    "readingKun": [
+      "かわ"
+    ]
+  },
+  {
+    "number": 178,
+    "char": "韋",
+    "strokes": 10,
+    "hanViet": "vi vy",
+    "meaningVi": "da đã thuộc",
+    "meaningEn": "Tanned Leather Radical (no. 178)",
+    "readingOn": [
+      "い"
+    ],
+    "readingKun": [
+      "そむ.く"
+    ]
+  },
+  {
+    "number": 179,
+    "char": "韭",
+    "strokes": 9,
+    "hanViet": "cửu",
+    "meaningVi": "rau hẹ",
+    "meaningEn": "Leek Radical (no. 179)",
+    "readingOn": [
+      "きゅう",
+      "く"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 180,
+    "char": "音",
+    "strokes": 9,
+    "hanViet": "âm ấm",
+    "meaningVi": "âm, tiếng",
+    "meaningEn": "Sound",
+    "readingOn": [
+      "おん",
+      "いん",
+      "-のん"
+    ],
+    "readingKun": [
+      "おと",
+      "ね"
+    ]
+  },
+  {
+    "number": 181,
+    "char": "頁",
+    "strokes": 9,
+    "hanViet": "hiệt",
+    "meaningVi": "tờ giấy, trang giấy",
+    "meaningEn": "Page",
+    "readingOn": [
+      "けつ"
+    ],
+    "readingKun": [
+      "ぺえじ",
+      "おおがい",
+      "かしら"
+    ]
+  },
+  {
+    "number": 182,
+    "char": "風",
+    "strokes": 9,
+    "hanViet": "phong phóng phúng",
+    "meaningVi": "gió",
+    "meaningEn": "Wind",
+    "readingOn": [
+      "ふう",
+      "ふ"
+    ],
+    "readingKun": [
+      "かぜ",
+      "かざ-",
+      "-かぜ"
+    ]
+  },
+  {
+    "number": 183,
+    "char": "飛",
+    "strokes": 9,
+    "hanViet": "phi",
+    "meaningVi": "bay",
+    "meaningEn": "Fly",
+    "readingOn": [
+      "ひ"
+    ],
+    "readingKun": [
+      "と.ぶ",
+      "と.ばす",
+      "-と.ばす"
+    ]
+  },
+  {
+    "number": 184,
+    "char": "食",
+    "strokes": 9,
+    "hanViet": "thực tự",
+    "meaningVi": "ăn",
+    "meaningEn": "Eat",
+    "readingOn": [
+      "しょく",
+      "じき"
+    ],
+    "readingKun": [
+      "く.う",
+      "く.らう",
+      "た.べる",
+      "は.む"
+    ]
+  },
+  {
+    "number": 185,
+    "char": "首",
+    "strokes": 9,
+    "hanViet": "thú thủ",
+    "meaningVi": "thú tội, đầu thú",
+    "meaningEn": "Neck",
+    "readingOn": [
+      "しゅ"
+    ],
+    "readingKun": [
+      "くび"
+    ]
+  },
+  {
+    "number": 186,
+    "char": "香",
+    "strokes": 9,
+    "hanViet": "hương",
+    "meaningVi": "hương, mùi",
+    "meaningEn": "Incense",
+    "readingOn": [
+      "こう",
+      "きょう"
+    ],
+    "readingKun": [
+      "か",
+      "かお.り",
+      "かお.る"
+    ]
+  },
+  {
+    "number": 187,
+    "char": "馬",
+    "strokes": 10,
+    "hanViet": "mã",
+    "meaningVi": "con ngựa",
+    "meaningEn": "Horse",
+    "readingOn": [
+      "ば"
+    ],
+    "readingKun": [
+      "うま",
+      "うま-",
+      "ま"
+    ]
+  },
+  {
+    "number": 188,
+    "char": "骨",
+    "strokes": 10,
+    "hanViet": "cốt",
+    "meaningVi": "xương cốt",
+    "meaningEn": "Skeleton",
+    "readingOn": [
+      "こつ"
+    ],
+    "readingKun": [
+      "ほね"
+    ]
+  },
+  {
+    "number": 189,
+    "char": "高",
+    "strokes": 10,
+    "hanViet": "cao",
+    "meaningVi": "cao",
+    "meaningEn": "Tall",
+    "readingOn": [
+      "こう"
+    ],
+    "readingKun": [
+      "たか.い",
+      "たか",
+      "-だか",
+      "たか.まる",
+      "たか.める"
+    ]
+  },
+  {
+    "number": 190,
+    "char": "髟",
+    "strokes": 10,
+    "hanViet": "bưu sam tiêu",
+    "meaningVi": "tóc dài lượt thượt",
+    "meaningEn": "Hair Hanging Long",
+    "readingOn": [
+      "ひゅう",
+      "ひょう"
+    ],
+    "readingKun": []
+  },
+  {
+    "number": 191,
+    "char": "鬥",
+    "strokes": 10,
+    "hanViet": "đấu",
+    "meaningVi": "tranh đấu",
+    "meaningEn": "Broken Gate Radical (no. 191)",
+    "readingOn": [],
+    "readingKun": []
+  },
+  {
+    "number": 192,
+    "char": "鬯",
+    "strokes": 10,
+    "hanViet": "sưởng",
+    "meaningVi": "rượu nếp",
+    "meaningEn": "Fragrant Herbs",
+    "readingOn": [
+      "ちょう"
+    ],
+    "readingKun": [
+      "かおりぐさ"
+    ]
+  },
+  {
+    "number": 193,
+    "char": "鬲",
+    "strokes": 10,
+    "hanViet": "cách lịch",
+    "meaningVi": "nước Cách",
+    "meaningEn": "Tripod",
+    "readingOn": [
+      "かく",
+      "れき"
+    ],
+    "readingKun": [
+      "かなえ",
+      "へだ.てる"
+    ]
+  },
+  {
+    "number": 194,
+    "char": "鬼",
+    "strokes": 10,
+    "hanViet": "quỷ",
+    "meaningVi": "ma quỷ",
+    "meaningEn": "Ghost",
+    "readingOn": [
+      "き"
+    ],
+    "readingKun": [
+      "おに",
+      "おに-"
+    ]
+  },
+  {
+    "number": 195,
+    "char": "魚",
+    "strokes": 11,
+    "hanViet": "ngư",
+    "meaningVi": "con cá",
+    "meaningEn": "Fish",
+    "readingOn": [
+      "ぎょ"
+    ],
+    "readingKun": [
+      "うお",
+      "さかな",
+      "-ざかな"
+    ]
+  },
+  {
+    "number": 196,
+    "char": "鳥",
+    "strokes": 11,
+    "hanViet": "điểu",
+    "meaningVi": "con chim",
+    "meaningEn": "Bird",
+    "readingOn": [
+      "ちょう"
+    ],
+    "readingKun": [
+      "とり"
+    ]
+  },
+  {
+    "number": 197,
+    "char": "鹵",
+    "strokes": 11,
+    "hanViet": "lỗ",
+    "meaningVi": "đất mặn",
+    "meaningEn": "Salt",
+    "readingOn": [
+      "ろ"
+    ],
+    "readingKun": [
+      "しお",
+      "しおち",
+      "たて"
+    ]
+  },
+  {
+    "number": 198,
+    "char": "鹿",
+    "strokes": 11,
+    "hanViet": "lộc",
+    "meaningVi": "con hươu",
+    "meaningEn": "Deer",
+    "readingOn": [
+      "ろく"
+    ],
+    "readingKun": [
+      "しか",
+      "か"
+    ]
+  },
+  {
+    "number": 199,
+    "char": "麥",
+    "strokes": 11,
+    "hanViet": "mạch",
+    "meaningVi": "lúa tẻ",
+    "meaningEn": "Wheat",
+    "readingOn": [
+      "ばく"
+    ],
+    "readingKun": [
+      "むぎ"
+    ]
+  },
+  {
+    "number": 200,
+    "char": "麻",
+    "strokes": 11,
+    "hanViet": "ma",
+    "meaningVi": "cây gai",
+    "meaningEn": "Hemp",
+    "readingOn": [
+      "ま",
+      "まあ"
+    ],
+    "readingKun": [
+      "あさ"
+    ]
+  },
+  {
+    "number": 201,
+    "char": "黃",
+    "strokes": 12,
+    "hanViet": null,
+    "meaningVi": null,
+    "meaningEn": "Yellow",
+    "readingOn": [
+      "こう",
+      "おう"
+    ],
+    "readingKun": [
+      "き"
+    ]
+  },
+  {
+    "number": 202,
+    "char": "黍",
+    "strokes": 12,
+    "hanViet": "thử",
+    "meaningVi": "lúa nếp",
+    "meaningEn": "Millet",
+    "readingOn": [
+      "しょ"
+    ],
+    "readingKun": [
+      "きび"
+    ]
+  },
+  {
+    "number": 203,
+    "char": "黑",
+    "strokes": 12,
+    "hanViet": null,
+    "meaningVi": null,
+    "meaningEn": "Black",
+    "readingOn": [
+      "こく"
+    ],
+    "readingKun": [
+      "くろい",
+      "くろ"
+    ]
+  },
+  {
+    "number": 204,
+    "char": "黹",
+    "strokes": 12,
+    "hanViet": "chỉ",
+    "meaningVi": "may áo",
+    "meaningEn": "Sewing Radical (no. 204)",
+    "readingOn": [
+      "ち"
+    ],
+    "readingKun": [
+      "ぬう",
+      "ぬいとり"
+    ]
+  },
+  {
+    "number": 205,
+    "char": "黽",
+    "strokes": 13,
+    "hanViet": "miễn mãnh mẫn",
+    "meaningVi": "cố gắng",
+    "meaningEn": "Green Frog",
+    "readingOn": [
+      "ぼう",
+      "びん",
+      "べん",
+      "みん",
+      "めん"
+    ],
+    "readingKun": [
+      "あおがえる",
+      "つと.める"
+    ]
+  },
+  {
+    "number": 206,
+    "char": "鼎",
+    "strokes": 13,
+    "hanViet": "đỉnh",
+    "meaningVi": "cái vạc, cái đỉnh",
+    "meaningEn": "Three Legged Kettle",
+    "readingOn": [
+      "てい"
+    ],
+    "readingKun": [
+      "かなえ"
+    ]
+  },
+  {
+    "number": 207,
+    "char": "鼓",
+    "strokes": 13,
+    "hanViet": "cổ",
+    "meaningVi": "cái trống",
+    "meaningEn": "Drum",
+    "readingOn": [
+      "こ"
+    ],
+    "readingKun": [
+      "つづみ"
+    ]
+  },
+  {
+    "number": 208,
+    "char": "鼠",
+    "strokes": 13,
+    "hanViet": "thử",
+    "meaningVi": "con chuột",
+    "meaningEn": "Rat",
+    "readingOn": [
+      "そ",
+      "しょ"
+    ],
+    "readingKun": [
+      "ねずみ",
+      "ねず"
+    ]
+  },
+  {
+    "number": 209,
+    "char": "鼻",
+    "strokes": 14,
+    "hanViet": "tì tị tỵ",
+    "meaningVi": "cái mũi",
+    "meaningEn": "Nose",
+    "readingOn": [
+      "び"
+    ],
+    "readingKun": [
+      "はな"
+    ]
+  },
+  {
+    "number": 210,
+    "char": "齊",
+    "strokes": 14,
+    "hanViet": "trai tê tư tế tề tễ",
+    "meaningVi": "đều, không so le",
+    "meaningEn": "Alike",
+    "readingOn": [
+      "せい",
+      "さい"
+    ],
+    "readingKun": [
+      "そろ.う",
+      "ひと.しい",
+      "ひと.しく",
+      "あたる",
+      "はやい"
+    ]
+  },
+  {
+    "number": 211,
+    "char": "齒",
+    "strokes": 15,
+    "hanViet": "xỉ",
+    "meaningVi": "răng",
+    "meaningEn": "Tooth",
+    "readingOn": [
+      "し"
+    ],
+    "readingKun": [
+      "よわい",
+      "は",
+      "よわ.い",
+      "よわい.する"
+    ]
+  },
+  {
+    "number": 212,
+    "char": "龍",
+    "strokes": 16,
+    "hanViet": "long lũng sủng",
+    "meaningVi": "con rồng",
+    "meaningEn": "Dragon",
+    "readingOn": [
+      "りゅう",
+      "りょう",
+      "ろう"
+    ],
+    "readingKun": [
+      "たつ"
+    ]
+  },
+  {
+    "number": 213,
+    "char": "龜",
+    "strokes": 18,
+    "hanViet": "cưu khưu quy quân",
+    "meaningVi": "(xem: khưu từ 龜茲,龟兹)",
+    "meaningEn": "Turtle",
+    "readingOn": [
+      "き",
+      "きゅう",
+      "きん"
+    ],
+    "readingKun": [
+      "かめ"
+    ]
+  },
+  {
+    "number": 214,
+    "char": "龠",
+    "strokes": 17,
+    "hanViet": "dược thược",
+    "meaningVi": "một thứ nhạc khí như sáo, có 3 lỗ",
+    "meaningEn": "Flute",
+    "readingOn": [
+      "やく"
+    ],
+    "readingKun": [
+      "ふえ"
+    ]
+  }
+]
