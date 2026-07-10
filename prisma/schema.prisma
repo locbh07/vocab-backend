@@ -359,6 +359,109 @@ model StripeWebhookEvent {
   @@map("stripe_webhook_event")
 }
 
+model AiReviewJob {
+  id            BigInt   @id @default(autoincrement())
+  targetType    String   @map("target_type") @db.VarChar(40)
+  status        String   @db.VarChar(30)
+  provider      String   @default("gemini") @db.VarChar(40)
+  model         String?  @db.VarChar(100)
+  filterJson    Json?    @map("filter_json")
+  promptVersion Int      @default(1) @map("prompt_version")
+  total         Int      @default(0)
+  processed     Int      @default(0)
+  failed        Int      @default(0)
+  createdBy     BigInt?  @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @map("updated_at")
+
+  items AiReviewItem[]
+
+  @@index([targetType, status, createdAt], map: "idx_ai_review_job_target_status")
+  @@map("ai_review_job")
+}
+
+model AiReviewItem {
+  id             BigInt    @id @default(autoincrement())
+  jobId          BigInt    @map("job_id")
+  targetType     String    @map("target_type") @db.VarChar(40)
+  targetKey      String    @map("target_key") @db.VarChar(200)
+  status         String    @db.VarChar(30)
+  originalJson   Json      @map("original_json")
+  suggestedPatch Json?     @map("suggested_patch")
+  suggestions    Json?
+  confidence     Float?
+  errorMessage   String?   @map("error_message") @db.Text
+  appliedBy      BigInt?   @map("applied_by")
+  appliedAt      DateTime? @map("applied_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @map("updated_at")
+
+  job AiReviewJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, targetKey], map: "uq_ai_review_item_job_target")
+  @@index([jobId, status], map: "idx_ai_review_item_job_status")
+  @@index([targetType, targetKey], map: "idx_ai_review_item_target")
+  @@map("ai_review_item")
+}
+
+model AiReviewApplyLog {
+  id         BigInt   @id @default(autoincrement())
+  itemId     BigInt   @map("item_id")
+  targetType String   @map("target_type") @db.VarChar(40)
+  targetKey  String   @map("target_key") @db.VarChar(200)
+  beforeJson Json     @map("before_json")
+  patchJson  Json     @map("patch_json")
+  afterJson  Json     @map("after_json")
+  appliedBy  BigInt?  @map("applied_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([targetType, targetKey, createdAt], map: "idx_ai_review_apply_log_target")
+  @@map("ai_review_apply_log")
+}
+
+model ExamExplainJob {
+  id                   BigInt   @id @default(autoincrement())
+  level                String   @db.VarChar(5)
+  examId               String?  @map("exam_id") @db.VarChar(10)
+  examIds              Json     @map("exam_ids")
+  parts                Json
+  provider             String   @default("gemini") @db.VarChar(20)
+  forceRefresh         Boolean  @default(false) @map("force_refresh")
+  status               String   @db.VarChar(30)
+  currentExamIndex     Int      @default(0) @map("current_exam_index")
+  currentPartIndex     Int      @default(0) @map("current_part_index")
+  currentStartIndex    Int      @default(0) @map("current_start_index")
+  totalGenerated       Int      @default(0) @map("total_generated")
+  totalSkippedCached   Int      @default(0) @map("total_skipped_cached")
+  totalSkippedNoScript Int      @default(0) @map("total_skipped_no_script")
+  totalFailed          Int      @default(0) @map("total_failed")
+  createdBy            BigInt?  @map("created_by")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @map("updated_at")
+
+  logs ExamExplainJobLog[]
+
+  @@index([status, createdAt], map: "idx_exam_explain_job_status")
+  @@map("exam_explain_job")
+}
+
+model ExamExplainJobLog {
+  id           BigInt   @id @default(autoincrement())
+  jobId        BigInt   @map("job_id")
+  level        String   @db.VarChar(5)
+  examId       String   @map("exam_id") @db.VarChar(10)
+  part         Int
+  sectionIndex Int?     @map("section_index")
+  kind         String   @db.VarChar(20)
+  message      String   @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  job ExamExplainJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt], map: "idx_exam_explain_job_log_job")
+  @@map("exam_explain_job_log")
+}
+
 model ListeningTranscriptLine {
   id          BigInt   @id @default(autoincrement())
   video_id    String   @db.VarChar(20)

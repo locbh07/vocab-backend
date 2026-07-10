@@ -1,5 +1,19 @@
 ﻿import type { JlptQuestionType } from './jlptQuestionType';
 import { toReadingHiragana, toRubyHtml } from './japaneseReading';
+import { generateGeminiJson } from './gemini';
+
+export type ExplanationProvider = 'openai' | 'gemini';
+
+const OPENAI_TIMEOUT_MS = 60_000;
+
+// A stuck/slow OpenAI request would otherwise hang a batch run forever (no timeout = no
+// way for a caller looping over many questions to ever recover), so every OpenAI call in
+// this file goes through this helper.
+function createOpenAITimeoutSignal(): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
 
 type OptionAnalysis = {
   option: string;
@@ -189,17 +203,75 @@ export type ReadingSeedQuestionData = {
 
 export type PassagePrecomputedSeed = Partial<PassagePrecomputedReadings>;
 
-export async function generateExamQuestionExplanation(
-  payload: ExamQuestionPayload,
-): Promise<{ explanation: ExamQuestionExplanation; model: string }> {
+const EXPLANATION_SYSTEM_INSTRUCTION = [
+  'Ban la giao vien JLPT cap cao.',
+  'Tra loi bang tieng Viet ro rang, lap luan chat che.',
+  'Không biet thi noi không biet, không du doan qua muc tu dữ liệu.',
+].join(' ');
+
+async function callLlmForExplanationJson(args: {
+  provider: ExplanationProvider;
+  systemInstruction: string;
+  prompt: string;
+}): Promise<{ rawContent: string; model: string }> {
+  if (args.provider === 'gemini') {
+    const model = process.env.GEMINI_EXAM_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const result = await generateGeminiJson({
+      systemInstruction: args.systemInstruction,
+      prompt: args.prompt,
+      model,
+      temperature: 0.2,
+      timeoutMs: OPENAI_TIMEOUT_MS,
+    });
+    return { rawContent: result.rawText, model: result.model };
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     const err = new Error('OPENAI_API_KEY is not configured') as Error & { status?: number };
     err.status = 500;
     throw err;
   }
-
   const model = process.env.OPENAI_EXAM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const { signal, clear } = createOpenAITimeoutSignal();
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    signal,
+    body: encodeOpenAIRequestBody({
+      model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: args.systemInstruction },
+        { role: 'user', content: args.prompt },
+      ],
+    }),
+  }).finally(clear);
+
+  if (!response.ok) {
+    const detail = await safeReadBody(response);
+    const err = new Error(`OpenAI request failed (${response.status}): ${detail}`) as Error & { status?: number };
+    err.status = 502;
+    throw err;
+  }
+  const data = (await response.json()) as OpenAIChatCompletionResponse;
+  const rawContent = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!rawContent) {
+    const err = new Error('OpenAI returned empty explanation') as Error & { status?: number };
+    err.status = 502;
+    throw err;
+  }
+  return { rawContent, model };
+}
+
+export async function generateExamQuestionExplanation(
+  payload: ExamQuestionPayload,
+  provider: ExplanationProvider = 'gemini',
+): Promise<{ explanation: ExamQuestionExplanation; model: string }> {
   const precomputedReadings =
     payload.precomputedReadings && payload.precomputedReadings.questionReadingHira
       ? {
@@ -210,53 +282,16 @@ export async function generateExamQuestionExplanation(
         }
       : await buildPrecomputedReadings(payload);
   const prompt = buildPrompt(payload, precomputedReadings);
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: encodeOpenAIRequestBody({
-      model,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'Ban la giao vien JLPT cap cao.',
-            'Tra loi bang tieng Viet ro rang, lap luan chat che.',
-            'Không biet thi noi không biet, không du doan qua muc tu dữ liệu.',
-          ].join(' '),
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    }),
+  const { rawContent, model } = await callLlmForExplanationJson({
+    provider,
+    systemInstruction: EXPLANATION_SYSTEM_INSTRUCTION,
+    prompt,
   });
-
-  if (!response.ok) {
-    const detail = await safeReadBody(response);
-    const err = new Error(`OpenAI request failed (${response.status}): ${detail}`) as Error & { status?: number };
-    err.status = 502;
-    throw err;
-  }
-
-  const data = (await response.json()) as OpenAIChatCompletionResponse;
-  const rawContent = String(data?.choices?.[0]?.message?.content || '').trim();
-  if (!rawContent) {
-    const err = new Error('OpenAI returned empty explanation') as Error & { status?: number };
-    err.status = 502;
-    throw err;
-  }
 
   const parsed = parseLooseJson(rawContent);
   const normalized = normalizeExplanation(parsed, payload, precomputedReadings);
   const completed = await completeSentenceOrderSolution({
-    apiKey,
-    model,
+    provider,
     payload,
     explanation: normalized,
     precomputedReadings,
@@ -267,66 +302,28 @@ export async function generateExamQuestionExplanation(
   };
 }
 
+const PASSAGE_EXPLANATION_SYSTEM_INSTRUCTION = [
+  'Ban la giao vien JLPT doc hieu cap cao.',
+  'Phan tich theo dòng mạch toàn đoạn, không tach roi tung cau.',
+  'Tra loi bang tieng Viet, lap luan chat che va ngan gon.',
+].join(' ');
+
 export async function generatePassageExplanation(
   payload: PassageExplanationPayload,
+  provider: ExplanationProvider = 'gemini',
 ): Promise<{ explanation: PassageExplanation; model: string }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    const err = new Error('OPENAI_API_KEY is not configured') as Error & { status?: number };
-    err.status = 500;
-    throw err;
-  }
-
-  const model = process.env.OPENAI_EXAM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
   const precomputed = await buildPassagePrecomputedReadings(payload, payload.precomputedReadings);
   const prompt = buildPassagePrompt(payload, precomputed);
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: encodeOpenAIRequestBody({
-      model,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'Ban la giao vien JLPT doc hieu cap cao.',
-            'Phan tich theo dòng mạch toàn đoạn, không tach roi tung cau.',
-            'Tra loi bang tieng Viet, lap luan chat che va ngan gon.',
-          ].join(' '),
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    }),
+  const { rawContent, model } = await callLlmForExplanationJson({
+    provider,
+    systemInstruction: PASSAGE_EXPLANATION_SYSTEM_INSTRUCTION,
+    prompt,
   });
-
-  if (!response.ok) {
-    const detail = await safeReadBody(response);
-    const err = new Error(`OpenAI request failed (${response.status}): ${detail}`) as Error & { status?: number };
-    err.status = 502;
-    throw err;
-  }
-
-  const data = (await response.json()) as OpenAIChatCompletionResponse;
-  const rawContent = String(data?.choices?.[0]?.message?.content || '').trim();
-  if (!rawContent) {
-    const err = new Error('OpenAI returned empty passage explanation') as Error & { status?: number };
-    err.status = 502;
-    throw err;
-  }
 
   const parsed = parseLooseJson(rawContent);
   const normalized = normalizePassageExplanation(parsed, payload, precomputed);
   const completed = await fillMissingPassageOptionContent({
-    apiKey,
-    model,
+    provider,
     payload,
     explanation: normalized,
   });
@@ -377,7 +374,9 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
     '1) Cho cau tieng Nhat goc va cach doc hiragana cua cau.',
     '2) Doi voi moi đáp án, cho text tieng Nhat + cach doc + nghia Viet.',
     '3) Liet ke tu kho (kanji) trong cau va giai thich vi sao quan trong.',
-    '4) Phan tich dung/sai tung đáp án, neu nguoi hoc de bi nham thi noi ro bay.',
+    isSentenceOrder
+      ? '4) Day la dang ghep cau: KHONG co lựa chọn nao "sai" ve noi dung - ca 4 manh deu duoc dùng trong cau hoan chỉnh, chỉ khac vi tri. Trong option_analysis, verdict="correct" CHỈ danh cho đúng 1 manh nam o vi tri ★, cac manh con lai verdict="wrong" nhung dieu do CHỈ co nghia "khong nam o vi tri ★", KHONG PHAI manh do sai/khong hop ly/khong phu hop ngu canh. reason_vi cho MOI lựa chọn (ke ca verdict wrong) BAT BUOC mo ta dung vai tro hoac y nghia cua manh do trong cau hoan chỉnh; TUYET DOI KHONG duoc viet reason_vi kieu "khong phu hop voi ngu canh" hay "sai" cho cac manh khong o vi tri ★.'
+      : '4) Phan tich dung/sai tung đáp án, neu nguoi hoc de bi nham thi noi ro bay.',
     `5) Viet chiến lược lam bai theo loai câu hỏi nay: ${payload.typeStrategyVi || partSpecificInstruction(payload.part)}`,
     '6) Kiem tra tinh nhat quan: đáp án danh dau correct phai trung đáp án dung de bai.',
     '7) Uu tien dung cach doc tokenizer da cho; neu không phu hop moi tu dieu chinh rat ngan gon.',
@@ -493,6 +492,7 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
       : '4) Neu co bay doc hieu (tu de gay nham, suy luan vuot qua van ban), phai chi ro.',
     '5) Muc sentence_readings bat buoc theo danh sach cau da cho: dung index de map dung cau, không được dao thu tu.',
     '6) Trong moi question.option_analysis, bat buoc dien du 4 lựa chọn va không de trong meaning_vi/reason_vi.',
+    '7) Moi câu hỏi BAT BUOC co "reasoning_vi" khong duoc de trong: tom tat ngan gon vi sao đáp án dung la đúng, dua tren bang chung cu the trong đoạn văn (khac voi reason_vi cua tung lựa chọn, day la phan tong hop chung cho ca câu hỏi).',
     '',
     'Trả về JSON dung schema sau, không them key khac:',
     '{',
@@ -593,6 +593,19 @@ function normalizeExplanation(
       item.verdict = item.option === payload.correctAnswer ? 'correct' : 'wrong';
     }
   }
+  // Sentence-order (★) fragments have no "wrong content" — every fragment is used in the
+  // final sentence, only the ★ slot differs. The model's free-text reason_vi for this type
+  // has repeatedly contradicted the forced verdict (e.g. calling the ★ fragment "unfit"), so
+  // replace it with a deterministic, always-consistent explanation instead of trusting it.
+  if (payload.questionType === 'sentence_order') {
+    for (const item of optionAnalysis) {
+      const label = item.meaning_vi || payload.options[item.option] || item.option;
+      item.reason_vi =
+        item.option === payload.correctAnswer
+          ? `Mảnh "${label}" đứng ở vị trí ★ theo đáp án của đề.`
+          : `Mảnh "${label}" vẫn được dùng trong câu hoàn chỉnh, nhưng ở một vị trí khác, không phải vị trí ★.`;
+    }
+  }
   const alignedOptionAnalysis = alignExamOptionReasonsWithOptionContext(optionAnalysis, payload);
 
   const questionJaFallback = payload.questionWithBlank || payload.questionText || '';
@@ -626,6 +639,19 @@ function normalizeExplanation(
     quick_tip_vi: text(value.quick_tip_vi) || '',
     final_conclusion_vi: alignedFinalConclusion,
   };
+}
+
+function buildPassageReasoningFallback(question: {
+  correct_option: string;
+  option_analysis: OptionAnalysis[];
+}): string {
+  const correct =
+    question.option_analysis.find((item) => item.option === question.correct_option) ||
+    question.option_analysis.find((item) => item.verdict === 'correct');
+  const label = question.correct_option || correct?.option || '';
+  const reason = String(correct?.reason_vi || '').trim() || String(correct?.meaning_vi || '').trim();
+  if (!label) return '';
+  return reason ? `Đáp án đúng: ${label}. ${reason}` : `Đáp án đúng: ${label}.`;
 }
 
 function buildAlignedFinalConclusion(
@@ -669,8 +695,7 @@ function asSentenceOrderSolution(value: unknown, payload: ExamQuestionPayload): 
 }
 
 async function completeSentenceOrderSolution(args: {
-  apiKey: string;
-  model: string;
+  provider: ExplanationProvider;
   payload: ExamQuestionPayload;
   explanation: ExamQuestionExplanation;
   precomputedReadings: PrecomputedReadings;
@@ -693,8 +718,7 @@ async function completeSentenceOrderSolution(args: {
 
   if (!hasCompleteOrder(solution.ordered_options, optionKeys)) {
     const repaired = await repairSentenceOrderSolutionWithModel({
-      apiKey: args.apiKey,
-      model: args.model,
+      provider: args.provider,
       payload: args.payload,
       current: solution,
     });
@@ -735,8 +759,7 @@ async function completeSentenceOrderSolution(args: {
 }
 
 async function repairSentenceOrderSolutionWithModel(args: {
-  apiKey: string;
-  model: string;
+  provider: ExplanationProvider;
   payload: ExamQuestionPayload;
   current: SentenceOrderSolution;
 }): Promise<SentenceOrderSolution | null> {
@@ -769,31 +792,11 @@ async function repairSentenceOrderSolutionWithModel(args: {
   ].join('\n');
 
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${args.apiKey}`,
-      },
-      body: encodeOpenAIRequestBody({
-        model: args.model,
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: 'Ban la giao vien JLPT. Tra JSON hop le, dung schema, không noi them.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-      }),
+    const { rawContent: raw } = await callLlmForExplanationJson({
+      provider: args.provider,
+      systemInstruction: 'Ban la giao vien JLPT. Tra JSON hop le, dung schema, không noi them.',
+      prompt,
     });
-    if (!response.ok) return null;
-    const data = (await response.json()) as OpenAIChatCompletionResponse;
-    const raw = String(data?.choices?.[0]?.message?.content || '').trim();
     if (!raw) return null;
     const parsed = parseLooseJson(raw);
     const row = isObject(parsed) ? parsed : {};
@@ -973,6 +976,10 @@ function normalizePassageExplanation(
       option_analysis: forced,
     };
   });
+  const questionsWithReasoning = questions.map((q) => ({
+    ...q,
+    reasoning_vi: q.reasoning_vi || buildPassageReasoningFallback(q),
+  }));
 
   const llmSentences = Array.isArray(value.sentence_readings) ? value.sentence_readings : [];
   const sentenceTranslations = new Map<string, string>();
@@ -1009,7 +1016,7 @@ function normalizePassageExplanation(
     passage_theme_vi: text(value.passage_theme_vi) || '',
     passage_summary_vi: text(value.passage_summary_vi) || '',
     key_logic_vi: asStringArray(value.key_logic_vi),
-    questions,
+    questions: questionsWithReasoning,
     global_traps_vi: asStringArray(value.global_traps_vi),
     reading_strategy_vi: text(value.reading_strategy_vi) || '',
     final_takeaway_vi: text(value.final_takeaway_vi) || '',
@@ -1312,8 +1319,7 @@ function asStringArray(value: unknown): string[] {
 }
 
 async function fillMissingPassageOptionContent(args: {
-  apiKey: string;
-  model: string;
+  provider: ExplanationProvider;
   payload: PassageExplanationPayload;
   explanation: PassageExplanation;
 }): Promise<PassageExplanation> {
@@ -1341,40 +1347,16 @@ async function fillMissingPassageOptionContent(args: {
       'Dien dữ liệu con thieu cho phan giai thich doc hieu JLPT.',
       'Trả về JSON voi schema:',
       '{ "questions": [ { "question_label": "string", "options": [ { "option": "1|2|3|4", "meaning_vi": "string", "reason_vi": "string" } ] } ] }',
-      'Bat buoc: meaning_vi va reason_vi không được rong.',
+      'Bat buoc: meaning_vi va reason_vi không được rong. Moi reason_vi phai rieng cho tung lựa chọn, KHONG dung 1 cau mau cho nhieu lựa chọn.',
       `Doan van:\n${args.payload.passageText || '(không co)'}`,
       `Cac câu hỏi can dien:\n${JSON.stringify(questionInfo)}`,
     ].join('\n');
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${args.apiKey}`,
-      },
-      body: encodeOpenAIRequestBody({
-        model: args.model,
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: 'Ban la giao vien JLPT. Tra loi ngan gon, ro rang, dung JSON.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-      }),
+    const { rawContent } = await callLlmForExplanationJson({
+      provider: args.provider,
+      systemInstruction: 'Ban la giao vien JLPT. Tra loi ngan gon, ro rang, dung JSON.',
+      prompt,
     });
-
-    if (!response.ok) {
-      return forceFallbackPassageOptionContent(args.explanation);
-    }
-
-    const data = (await response.json()) as OpenAIChatCompletionResponse;
-    const rawContent = String(data?.choices?.[0]?.message?.content || '').trim();
     if (!rawContent) return forceFallbackPassageOptionContent(args.explanation);
     const parsed = parseLooseJson(rawContent);
     return mergePassageOptionContent(args.explanation, parsed);

@@ -1,4 +1,5 @@
 ﻿import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { createHash } from 'crypto';
 import {
@@ -7,13 +8,19 @@ import {
   ExamQuestionExplanation,
   PassageExplanation,
   ReadingSeedQuestionData,
+  ExplanationProvider,
 } from '../lib/examExplanation';
 import { describeJlptQuestionType, inferJlptQuestionMeta, JlptQuestionType } from '../lib/jlptQuestionType';
 import { getOrCreateQuestionReadingCache, QuestionReadingCache } from '../lib/examReadingCache';
 import { getExamQuestionMeta, upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
 import { hasActivePremium } from '../lib/contentAccess';
+import { requireAdmin } from '../middleware/adminGuard';
 
-const EXPLANATION_PROMPT_VERSION = 16;
+// Bumped: switched default explanation provider from OpenAI to Gemini (better accuracy in
+// testing, e.g. correct sentence-order fragment reassembly + meanings) and fixed a bug where
+// the option-gap-filler always called OpenAI regardless of provider. Bumping invalidates old
+// cached explanations so they regenerate under the new provider/prompt on next access.
+const EXPLANATION_PROMPT_VERSION = 17;
 const CODE_EXAM_LIMIT_PER_LEVEL = Math.max(1, Number(process.env.CODE_EXAM_LIMIT_PER_LEVEL || 5));
 let ensureExplainTablePromise: Promise<void> | null = null;
 
@@ -280,6 +287,32 @@ export function createExamRouter() {
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
     }
+  });
+
+  router.get('/admin/exam-ids', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const level = String(req.query.level || '').trim();
+    if (!level) return res.status(400).json({ message: 'Missing level' });
+    const rows = await prisma.jlptExam.findMany({
+      where: { level },
+      select: { exam_id: true },
+      distinct: ['exam_id'],
+      orderBy: { exam_id: 'asc' },
+    });
+    return res.json({ items: rows.map((row) => row.exam_id) });
+  });
+
+  router.get('/admin/exam-explain-jobs', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const status = String(req.query.status || '').trim();
+    const level = String(req.query.level || '').trim();
+    const size = Math.min(Math.max(Number(req.query.size || 30), 1), 100);
+    const jobs = await prisma.examExplainJob.findMany({
+      where: { ...(status ? { status } : {}), ...(level ? { level } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: size,
+    });
+    return res.json({ items: jobs.map((job) => ({ ...job, running: runningExplainJobs.has(job.id.toString()) })) });
   });
 
   router.get('/:level/:examId', async (req: Request, res: Response) => {
@@ -813,7 +846,559 @@ export function createExamRouter() {
     }
   });
 
+  router.post('/admin/explain-batch', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const level = String(req.body?.level || '').trim();
+    const examId = String(req.body?.examId || '').trim();
+    const part = Number(req.body?.part);
+    const startIndex = Math.max(0, Math.floor(Number(req.body?.startIndex || 0)));
+    const limit = Math.min(20, Math.max(1, Math.floor(Number(req.body?.limit || 5))));
+    const forceRefresh = Boolean(req.body?.forceRefresh);
+    const provider: ExplanationProvider = req.body?.provider === 'openai' ? 'openai' : 'gemini';
+
+    if (!level || !examId || ![1, 2, 3].includes(part)) {
+      return res.status(400).json({ message: 'Missing/invalid level, examId or part' });
+    }
+
+    try {
+      const result = await processExplainBatchChunk({ level, examId, part, startIndex, limit, forceRefresh, provider });
+      if (!result) return res.status(404).json({ message: 'Exam part not found' });
+      return res.json(result);
+    } catch (error) {
+      return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
+    }
+  });
+
+  router.post('/admin/exam-explain-jobs', async (req: Request, res: Response) => {
+    const admin = await requireAdmin(req);
+    const level = String(req.body?.level || '').trim();
+    const examIdInput = String(req.body?.examId || '').trim();
+    const partsInput = Array.isArray(req.body?.parts)
+      ? req.body.parts.map((p: unknown) => Number(p)).filter((p: number) => [1, 2, 3].includes(p))
+      : [];
+    const parts = (partsInput.length ? Array.from(new Set<number>(partsInput)) : [1, 2, 3]).sort();
+    const forceRefresh = Boolean(req.body?.forceRefresh);
+    const provider: ExplanationProvider = req.body?.provider === 'openai' ? 'openai' : 'gemini';
+
+    if (!level) return res.status(400).json({ message: 'Missing level' });
+
+    let examIds: string[];
+    if (examIdInput) {
+      examIds = [examIdInput];
+    } else {
+      const rows = await prisma.jlptExam.findMany({
+        where: { level },
+        select: { exam_id: true },
+        distinct: ['exam_id'],
+        orderBy: { exam_id: 'asc' },
+      });
+      examIds = rows.map((row) => row.exam_id);
+    }
+    if (!examIds.length) return res.status(404).json({ message: `Khong tim thay de thi nao cho level ${level}` });
+
+    const job = await prisma.examExplainJob.create({
+      data: {
+        level,
+        examId: examIdInput || null,
+        examIds: examIds as unknown as Prisma.InputJsonValue,
+        parts: parts as unknown as Prisma.InputJsonValue,
+        provider,
+        forceRefresh,
+        status: 'queued',
+        createdBy: BigInt(admin.id),
+      },
+    });
+
+    const jobKey = job.id.toString();
+    if (!runningExplainJobs.has(jobKey)) {
+      runningExplainJobs.add(jobKey);
+      void runExamExplainJobLoop(job.id, jobKey);
+    }
+
+    return res.json({ job, examIdsCount: examIds.length });
+  });
+
+  router.get('/admin/exam-explain-jobs/:jobId', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const jobIdRaw = String(req.params.jobId || '').trim();
+    if (!/^\d+$/.test(jobIdRaw)) return res.status(400).json({ message: 'Invalid job id' });
+    const jobId = BigInt(jobIdRaw);
+    const job = await prisma.examExplainJob.findUnique({ where: { id: jobId } });
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    const logs = await prisma.examExplainJobLog.findMany({
+      where: { jobId },
+      orderBy: { id: 'desc' },
+      take: 300,
+    });
+    return res.json({ job: { ...job, running: runningExplainJobs.has(jobId.toString()) }, logs });
+  });
+
+  router.post('/admin/exam-explain-jobs/:jobId/resume', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const jobIdRaw = String(req.params.jobId || '').trim();
+    if (!/^\d+$/.test(jobIdRaw)) return res.status(400).json({ message: 'Invalid job id' });
+    const jobId = BigInt(jobIdRaw);
+    const job = await prisma.examExplainJob.findUnique({ where: { id: jobId } });
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    const jobKey = jobId.toString();
+    if (runningExplainJobs.has(jobKey)) return res.json({ started: false, alreadyRunning: true });
+    cancelledExplainJobs.delete(jobKey);
+    runningExplainJobs.add(jobKey);
+    void runExamExplainJobLoop(jobId, jobKey);
+    return res.json({ started: true });
+  });
+
+  router.post('/admin/exam-explain-jobs/:jobId/stop', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const jobIdRaw = String(req.params.jobId || '').trim();
+    if (!/^\d+$/.test(jobIdRaw)) return res.status(400).json({ message: 'Invalid job id' });
+    cancelledExplainJobs.add(jobIdRaw);
+    return res.json({ stopping: true });
+  });
+
   return router;
+}
+
+type ExplainUnit = { sectionIndex: number; questionIndexes: number[]; isPassageGroup: boolean };
+
+function buildExplainUnits(sections: Array<Record<string, unknown>>, part: number): ExplainUnit[] {
+  const units: ExplainUnit[] = [];
+  sections.forEach((section, sectionIndex) => {
+    const questions = Array.isArray(section.questions) ? (section.questions as Array<Record<string, unknown>>) : [];
+    if (part === 3) {
+      questions.forEach((_question, questionIndex) => {
+        units.push({ sectionIndex, questionIndexes: [questionIndex], isPassageGroup: false });
+      });
+      return;
+    }
+
+    let i = 0;
+    while (i < questions.length) {
+      const ids = normalizePassageIdsForGrouping(questions[i]);
+      if (!ids.length) {
+        units.push({ sectionIndex, questionIndexes: [i], isPassageGroup: false });
+        i += 1;
+        continue;
+      }
+
+      let j = i;
+      while (j + 1 < questions.length) {
+        const nextIds = normalizePassageIdsForGrouping(questions[j + 1]);
+        if (!nextIds.length || !sameIdsForGrouping(ids, nextIds)) break;
+        j += 1;
+      }
+
+      // A question with a passage_id always needs passage-explanation (it needs the
+      // passage_ja/translation/summary fields) even when it's the only question sharing
+      // that id — group size alone must not decide the branch, or single-question passage
+      // groups (e.g. N2 mondai10's 5 independent short passages) get cached under the
+      // wrong table/route and are never found by the on-demand /passage-explanation lookup.
+      const questionIndexes: number[] = [];
+      for (let k = i; k <= j; k += 1) questionIndexes.push(k);
+      units.push({ sectionIndex, questionIndexes, isPassageGroup: true });
+      i = j + 1;
+    }
+  });
+  return units;
+}
+
+function normalizePassageIdsForGrouping(question: Record<string, unknown>): string[] {
+  const raw = (question as Record<string, unknown>).passage_id ?? (question as Record<string, unknown>).pid;
+  if (Array.isArray(raw)) return raw.map((id) => String(id)).filter(Boolean).sort();
+  if (raw === null || raw === undefined || raw === '') return [];
+  return [String(raw)];
+}
+
+function sameIdsForGrouping(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((id, idx) => id === b[idx]);
+}
+
+type ExplainBatchChunkResult = {
+  total: number;
+  startIndex: number;
+  nextIndex: number;
+  generated: number;
+  skippedCached: number;
+  skippedNoScript: number;
+  failed: Array<{ sectionIndex: number; questionIndexes: number[]; message: string }>;
+  completed: boolean;
+};
+
+async function processExplainBatchChunk(args: {
+  level: string;
+  examId: string;
+  part: number;
+  startIndex: number;
+  limit: number;
+  forceRefresh: boolean;
+  provider: ExplanationProvider;
+}): Promise<ExplainBatchChunkResult | null> {
+  const { level, examId, part, startIndex, limit, forceRefresh, provider } = args;
+
+  await ensureQuestionExplanationTable();
+  const row = await prisma.jlptExam.findFirst({
+    where: { level, exam_id: examId, part },
+    select: { json_data: true },
+  });
+  if (!row) return null;
+
+  const json = (row.json_data || {}) as Record<string, unknown>;
+  const sections = Array.isArray(json.sections) ? (json.sections as Array<Record<string, unknown>>) : [];
+  const units = buildExplainUnits(sections, part);
+  const slice = units.slice(startIndex, startIndex + limit);
+
+  let generatedCount = 0;
+  let skippedCached = 0;
+  let skippedNoScript = 0;
+  const failed: Array<{ sectionIndex: number; questionIndexes: number[]; message: string }> = [];
+
+  for (const unit of slice) {
+    try {
+      if (!unit.isPassageGroup) {
+        const questionIndex = unit.questionIndexes[0];
+        let questionCtx = await loadQuestionContext(level, examId, part, unit.sectionIndex, questionIndex);
+        if (part === 3 || questionCtx.questionType === 'listening') {
+          const listeningScript = extractListeningScriptForExplanation(
+            questionCtx.listeningScriptText,
+            questionCtx.passageText,
+            questionCtx.questionText,
+          );
+          if (!listeningScript) {
+            // Not an error — this exam question simply has no listening transcript in the
+            // data yet, so there's nothing to ground an explanation in. Skip rather than
+            // let the AI guess at what was said (see docs/ai-content-review-design.md).
+            skippedNoScript += 1;
+            continue;
+          }
+          questionCtx = { ...questionCtx, passageText: listeningScript };
+        }
+        const readingCache = await getOrCreateQuestionReadingCache({
+          level,
+          examId,
+          part,
+          sectionIndex: unit.sectionIndex,
+          questionIndex,
+          questionText: questionCtx.questionText,
+          options: questionCtx.options,
+          passageText: questionCtx.passageText,
+          questionWordReadings: questionCtx.questionWordReadings,
+        });
+        const questionHash = buildQuestionHash(questionCtx);
+        if (!forceRefresh) {
+          const cached = await findCachedExplanation({
+            level,
+            examId,
+            part,
+            sectionIndex: unit.sectionIndex,
+            questionIndex,
+            questionHash,
+          });
+          if (cached) {
+            skippedCached += 1;
+            continue;
+          }
+        }
+        const generated = await generateExamQuestionExplanation(
+          {
+            level,
+            examId,
+            part,
+            sectionTitle: questionCtx.sectionTitle,
+            questionLabel: questionCtx.questionLabel,
+            mondaiLabel: questionCtx.mondaiLabel,
+            questionType: questionCtx.questionType,
+            questionTypeLabelVi: questionCtx.questionTypeLabelVi,
+            typeStrategyVi: questionCtx.typeStrategyVi,
+            questionText: questionCtx.questionText,
+            questionWithBlank: questionCtx.questionWithBlank,
+            questionWithAnswer: questionCtx.questionWithAnswer,
+            blankLabels: questionCtx.blankLabels,
+            isClozeQuestion: questionCtx.isClozeQuestion,
+            options: questionCtx.options,
+            correctAnswer: questionCtx.correctAnswer,
+            passageText: questionCtx.passageText,
+            sentenceOrderExpectedOrder: questionCtx.sentenceOrderExpectedOrder,
+            precomputedReadings: {
+              questionReadingHira: readingCache.question_reading_hira,
+              questionRubyHtml: readingCache.question_ruby_html,
+              optionReadings: readingCache.option_readings,
+              optionRubyHtmls: readingCache.option_ruby_htmls,
+            },
+          },
+          provider,
+        );
+        const hydrated = hydrateQuestionExplanationWithReadingCache(generated.explanation, readingCache);
+        await saveCachedExplanation({
+          level,
+          examId,
+          part,
+          sectionIndex: unit.sectionIndex,
+          questionIndex,
+          questionHash,
+          explanation: hydrated,
+          sourceModel: generated.model,
+        });
+        generatedCount += 1;
+      } else {
+        const contextEntries: Array<{ context: QuestionContext; readingCache: QuestionReadingCache }> = [];
+        for (const questionIndex of unit.questionIndexes) {
+          const context = await loadQuestionContext(level, examId, part, unit.sectionIndex, questionIndex);
+          const readingCache = await getOrCreateQuestionReadingCache({
+            level,
+            examId,
+            part,
+            sectionIndex: unit.sectionIndex,
+            questionIndex,
+            questionText: context.questionText,
+            options: context.options,
+            passageText: context.passageText,
+            questionWordReadings: context.questionWordReadings,
+          });
+          contextEntries.push({ context, readingCache });
+        }
+        const contexts = contextEntries.map((item) => item.context);
+        const passageText = pickPrimaryPassageText(contexts);
+        const blankLabels = contexts.map((item) => item.questionLabel).filter((value) => value.length > 0);
+        const groupHash = createHash('sha256')
+          .update(
+            stableSerialize({
+              level,
+              examId,
+              part,
+              sectionIndex: unit.sectionIndex,
+              questionIndexes: unit.questionIndexes,
+              passageText,
+              contexts,
+            }),
+          )
+          .digest('hex');
+
+        if (!forceRefresh) {
+          const cached = await findCachedPassageExplanation({
+            level,
+            examId,
+            part,
+            sectionIndex: unit.sectionIndex,
+            groupHash,
+          });
+          if (cached) {
+            skippedCached += 1;
+            continue;
+          }
+        }
+
+        const readingSeed = buildPassageReadingSeed(contextEntries, passageText);
+        const generated = await generatePassageExplanation(
+          {
+            level,
+            examId,
+            part,
+            sectionTitle: contexts[0]?.sectionTitle || '',
+            mondaiLabel: contexts[0]?.mondaiLabel || '',
+            questionType: contexts[0]?.questionType || 'reading_cloze',
+            questionTypeLabelVi: contexts[0]?.questionTypeLabelVi || '',
+            typeStrategyVi: contexts[0]?.typeStrategyVi || '',
+            passageText,
+            blankLabels,
+            questions: contexts.map((ctx) => ({
+              questionLabel: ctx.questionLabel,
+              questionWithBlank: ctx.questionWithBlank || ctx.questionText,
+              questionWithAnswer: ctx.questionWithAnswer || '',
+              options: ctx.options,
+              correctAnswer: ctx.correctAnswer,
+            })),
+            precomputedReadings: readingSeed,
+          },
+          provider,
+        );
+        await saveCachedPassageExplanation({
+          level,
+          examId,
+          part,
+          sectionIndex: unit.sectionIndex,
+          groupHash,
+          explanation: generated.explanation,
+          sourceModel: generated.model,
+        });
+        generatedCount += 1;
+      }
+    } catch (error) {
+      failed.push({
+        sectionIndex: unit.sectionIndex,
+        questionIndexes: unit.questionIndexes,
+        message: (error as Error).message,
+      });
+    }
+  }
+
+  const nextIndex = startIndex + slice.length;
+  return {
+    total: units.length,
+    startIndex,
+    nextIndex,
+    generated: generatedCount,
+    skippedCached,
+    skippedNoScript,
+    failed,
+    completed: nextIndex >= units.length,
+  };
+}
+
+const EXPLAIN_JOB_CHUNK_SIZE = 3;
+const EXPLAIN_JOB_DELAY_MS = 300;
+const MAX_CONSECUTIVE_EXPLAIN_JOB_FAILURES = 3;
+const runningExplainJobs = new Set<string>();
+const cancelledExplainJobs = new Set<string>();
+
+async function runExamExplainJobLoop(jobId: bigint, jobKey: string): Promise<void> {
+  let consecutiveFullFailureChunks = 0;
+  try {
+    const job = await prisma.examExplainJob.findUnique({ where: { id: jobId } });
+    if (!job) return;
+
+    const examIds = (job.examIds as unknown as string[]) || [];
+    const parts = (job.parts as unknown as number[]) || [1, 2, 3];
+    let examIndex = job.currentExamIndex;
+    let partIndex = job.currentPartIndex;
+    let startIndex = job.currentStartIndex;
+    const provider = (job.provider as ExplanationProvider) || 'gemini';
+
+    await prisma.examExplainJob.update({ where: { id: jobId }, data: { status: 'running', updatedAt: new Date() } });
+
+    while (examIndex < examIds.length) {
+      if (cancelledExplainJobs.has(jobKey)) {
+        cancelledExplainJobs.delete(jobKey);
+        await prisma.examExplainJob.update({ where: { id: jobId }, data: { status: 'cancelled', updatedAt: new Date() } });
+        return;
+      }
+
+      const examId = examIds[examIndex];
+
+      while (partIndex < parts.length) {
+        if (cancelledExplainJobs.has(jobKey)) {
+          cancelledExplainJobs.delete(jobKey);
+          await prisma.examExplainJob.update({ where: { id: jobId }, data: { status: 'cancelled', updatedAt: new Date() } });
+          return;
+        }
+
+        const part = parts[partIndex];
+        const result = await processExplainBatchChunk({
+          level: job.level,
+          examId,
+          part,
+          startIndex,
+          limit: EXPLAIN_JOB_CHUNK_SIZE,
+          forceRefresh: job.forceRefresh,
+          provider,
+        });
+
+        if (!result) {
+          await prisma.examExplainJobLog.create({
+            data: {
+              jobId,
+              level: job.level,
+              examId,
+              part,
+              kind: 'info',
+              message: 'Khong tim thay du lieu cho phan nay, bo qua.',
+            },
+          });
+          partIndex += 1;
+          startIndex = 0;
+          await prisma.examExplainJob.update({
+            where: { id: jobId },
+            data: { currentPartIndex: partIndex, currentStartIndex: 0, updatedAt: new Date() },
+          });
+          continue;
+        }
+
+        if (result.failed.length) {
+          await prisma.examExplainJobLog.createMany({
+            data: result.failed.map((f) => ({
+              jobId,
+              level: job.level,
+              examId,
+              part,
+              sectionIndex: f.sectionIndex,
+              kind: 'error' as const,
+              message: f.message,
+            })),
+          });
+        }
+
+        await prisma.examExplainJob.update({
+          where: { id: jobId },
+          data: {
+            totalGenerated: { increment: result.generated },
+            totalSkippedCached: { increment: result.skippedCached },
+            totalSkippedNoScript: { increment: result.skippedNoScript },
+            totalFailed: { increment: result.failed.length },
+            currentStartIndex: result.completed ? 0 : result.nextIndex,
+            currentPartIndex: result.completed ? partIndex + 1 : partIndex,
+            updatedAt: new Date(),
+          },
+        });
+
+        const madeNoProgress = result.generated === 0 && result.skippedCached === 0 && result.skippedNoScript === 0;
+        if (madeNoProgress && result.failed.length > 0) {
+          consecutiveFullFailureChunks += 1;
+          if (consecutiveFullFailureChunks >= MAX_CONSECUTIVE_EXPLAIN_JOB_FAILURES) {
+            await prisma.examExplainJobLog.create({
+              data: {
+                jobId,
+                level: job.level,
+                examId,
+                part,
+                kind: 'error',
+                message: 'Dung vi lien tuc that bai nhieu lan (kiem tra API key/billing) roi chay lai.',
+              },
+            });
+            await prisma.examExplainJob.update({ where: { id: jobId }, data: { status: 'failed', updatedAt: new Date() } });
+            return;
+          }
+        } else {
+          consecutiveFullFailureChunks = 0;
+        }
+
+        if (result.completed) {
+          partIndex += 1;
+          startIndex = 0;
+        } else {
+          startIndex = result.nextIndex;
+        }
+        await new Promise((resolve) => setTimeout(resolve, EXPLAIN_JOB_DELAY_MS));
+      }
+
+      examIndex += 1;
+      partIndex = 0;
+      startIndex = 0;
+      await prisma.examExplainJob.update({
+        where: { id: jobId },
+        data: { currentExamIndex: examIndex, currentPartIndex: 0, currentStartIndex: 0, updatedAt: new Date() },
+      });
+    }
+
+    await prisma.examExplainJob.update({ where: { id: jobId }, data: { status: 'completed', updatedAt: new Date() } });
+  } catch (error) {
+    await prisma.examExplainJobLog
+      .create({
+        data: {
+          jobId,
+          level: '',
+          examId: '',
+          part: 0,
+          kind: 'error',
+          message: `Loi khong mong muon: ${(error as Error).message}`,
+        },
+      })
+      .catch(() => undefined);
+    await prisma.examExplainJob
+      .update({ where: { id: jobId }, data: { status: 'failed', updatedAt: new Date() } })
+      .catch(() => undefined);
+  } finally {
+    runningExplainJobs.delete(jobKey);
+  }
 }
 
 type ExamAccessResult = {
