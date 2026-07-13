@@ -27,6 +27,7 @@ const MAX_RUN_LIMIT = 50;
 const AUTO_RUN_CHUNK_SIZE = 10;
 const AUTO_RUN_DELAY_MS = 300;
 const runningJobs = new Set<string>();
+const cancelledJobs = new Set<string>();
 
 const VOCAB_FIELDS = new Set([
   'word_ja',
@@ -210,15 +211,46 @@ export function createAdminAiReviewRouter() {
     if (runningJobs.has(jobKey)) {
       return res.json({ started: false, alreadyRunning: true });
     }
+    cancelledJobs.delete(jobKey);
     runningJobs.add(jobKey);
     void autoRunJobLoop(jobId, jobKey);
     return res.json({ started: true, alreadyRunning: false });
   });
 
+  router.post('/jobs/:jobId/stop', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const jobId = parseBigIntParam(req.params.jobId);
+    const result = await requestJobCancellation(jobId);
+    if (!result) return res.status(404).json({ message: 'Job not found' });
+    return res.json({ stopped: true, running: result.running });
+  });
+
+  router.post('/jobs/:jobId/cancel', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const jobId = parseBigIntParam(req.params.jobId);
+    const result = await requestJobCancellation(jobId);
+    if (!result) return res.status(404).json({ message: 'Job not found' });
+    return res.json({ cancelled: true, running: result.running });
+  });
+
+  router.delete('/jobs/:jobId', async (req: Request, res: Response) => {
+    await requireAdmin(req);
+    const jobId = parseBigIntParam(req.params.jobId);
+    const job = await prisma.aiReviewJob.findUnique({ where: { id: jobId }, select: { id: true } });
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    const jobKey = jobId.toString();
+    cancelledJobs.add(jobKey);
+    await prisma.aiReviewJob.delete({ where: { id: jobId } });
+    runningJobs.delete(jobKey);
+    cancelledJobs.delete(jobKey);
+    return res.json({ deleted: true });
+  });
+
   router.get('/jobs/:jobId/run-status', async (req: Request, res: Response) => {
     await requireAdmin(req);
     const jobId = parseBigIntParam(req.params.jobId);
-    return res.json({ running: runningJobs.has(jobId.toString()) });
+    const jobKey = jobId.toString();
+    return res.json({ running: runningJobs.has(jobKey), cancelling: cancelledJobs.has(jobKey) });
   });
 
   router.put('/items/:itemId/patch', async (req: Request, res: Response) => {
@@ -366,6 +398,28 @@ type ApplyLogRecord = {
 
 type RunChunkResult = { processed: number; failed: number; remaining: number; completed: number; total: number };
 
+async function requestJobCancellation(jobId: bigint): Promise<{ running: boolean } | null> {
+  const job = await prisma.aiReviewJob.findUnique({ where: { id: jobId }, select: { id: true } });
+  if (!job) return null;
+  const jobKey = jobId.toString();
+  const running = runningJobs.has(jobKey);
+  cancelledJobs.add(jobKey);
+  if (!running) {
+    await prisma.aiReviewJob.update({
+      where: { id: jobId },
+      data: { status: 'cancelled', updatedAt: new Date() },
+    });
+  }
+  return { running };
+}
+
+async function cancelRunningJobIfRequested(jobId: bigint, jobKey: string): Promise<boolean> {
+  if (!cancelledJobs.has(jobKey)) return false;
+  cancelledJobs.delete(jobKey);
+  await prisma.aiReviewJob.update({ where: { id: jobId }, data: { status: 'cancelled', updatedAt: new Date() } });
+  return true;
+}
+
 async function runJobChunk(jobId: bigint, limit: number): Promise<RunChunkResult | null> {
   const job = await prisma.aiReviewJob.findUnique({ where: { id: jobId } });
   if (!job) return null;
@@ -438,8 +492,12 @@ async function autoRunJobLoop(jobId: bigint, jobKey: string): Promise<void> {
   let consecutiveFullFailures = 0;
   try {
     for (;;) {
+      if (await cancelRunningJobIfRequested(jobId, jobKey)) break;
+
       const result = await runJobChunk(jobId, AUTO_RUN_CHUNK_SIZE);
       if (!result || result.remaining === 0) break;
+
+      if (await cancelRunningJobIfRequested(jobId, jobKey)) break;
 
       if (result.processed === 0 && result.failed > 0) {
         consecutiveFullFailures += 1;

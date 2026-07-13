@@ -139,6 +139,8 @@ Endpoint:
 - `GET /jobs/:jobId`: chi tiet job va thong ke.
 - `POST /jobs/:jobId/run`: chay job dong bo ngan hoac kick worker.
 - `POST /jobs/:jobId/cancel`: huy job.
+- `POST /jobs/:jobId/stop`: dung job dang chay; job chuyen sang `cancelled` sau chunk hien tai.
+- `DELETE /jobs/:jobId`: xoa job va cac item review lien quan.
 - `GET /jobs/:jobId/items`: danh sach item de review.
 - `PUT /items/:itemId/patch`: admin sua patch bang tay.
 - `POST /items/:itemId/accept`: chap nhan item.
@@ -530,4 +532,3 @@ Phase 4:
 Phase 5:
 
 - Kanji dictionary audit/rebuild, khong cho AI sua truc tiep file loi encoding.
-
