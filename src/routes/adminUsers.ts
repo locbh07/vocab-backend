@@ -4,6 +4,7 @@ import { requireAdmin } from '../middleware/adminGuard';
 import { dateOnly } from '../lib/http';
 
 const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
+const USER_PLANS = new Set(['FREE', 'PREMIUM']);
 
 export function createAdminUsersRouter() {
   const router = Router();
@@ -99,6 +100,17 @@ export function createAdminUsersRouter() {
     if (body.role !== undefined) data.role = body.role;
     if (body.examEnabled !== undefined) data.exam_enabled = Boolean(body.examEnabled);
     if (body.examCode !== undefined) data.exam_code = body.examCode;
+    if (body.plan !== undefined) {
+      const plan = normalizeUserPlan(body.plan);
+      if (!plan) return res.status(400).json({ message: 'Invalid plan. Choose FREE or PREMIUM' });
+      data.plan = plan;
+      if (plan === 'FREE' && body.premiumValidUntil === undefined) data.premiumValidUntil = null;
+    }
+    if (body.premiumValidUntil !== undefined) {
+      const validUntil = normalizePremiumValidUntil(body.premiumValidUntil);
+      if (validUntil === false) return res.status(400).json({ message: 'Invalid premiumValidUntil' });
+      data.premiumValidUntil = validUntil;
+    }
     if (body.level !== undefined) {
       const level = normalizeJlptLevel(body.level);
       if (!level) return res.status(400).json({ message: 'Invalid level. Choose N5, N4, N3, N2 or N1' });
@@ -273,6 +285,8 @@ function sanitizeUser(
   exam_code: string | null;
   level: string | null;
   googleId: string | null;
+  plan: string;
+  premiumValidUntil: Date | null;
   },
   extras?: {
     activePlan?: { topic_prefix?: string | null } | null;
@@ -299,7 +313,22 @@ function sanitizeUser(
     currentLevel,
     topicPrefix,
     googleId: user.googleId,
+    plan: user.plan,
+    premiumValidUntil: user.premiumValidUntil,
   };
+}
+
+function normalizeUserPlan(value: unknown): string | null {
+  const plan = String(value || '').trim().toUpperCase();
+  return USER_PLANS.has(plan) ? plan : null;
+}
+
+function normalizePremiumValidUntil(value: unknown): Date | null | false {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return false;
+  return date;
 }
 
 function normalizeJlptLevel(value: unknown): string | null {

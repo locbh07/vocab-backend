@@ -348,6 +348,26 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
 export function createManualPaymentRouter() {
   const router = Router();
 
+  router.get('/settings', async (_req: Request, res: Response) => {
+    const settings = await getAllManualPaymentSettings();
+    return res.json({
+      MSB: {
+        enabled: settings.MSB.enabled,
+        monthlyAmount: settings.MSB.monthlyAmount,
+        sixMonthsAmount: settings.MSB.sixMonthsAmount,
+        yearlyAmount: settings.MSB.yearlyAmount,
+        currency: settings.MSB.currency,
+      },
+      PAYPAY: {
+        enabled: settings.PAYPAY.enabled,
+        monthlyAmount: settings.PAYPAY.monthlyAmount,
+        sixMonthsAmount: settings.PAYPAY.sixMonthsAmount,
+        yearlyAmount: settings.PAYPAY.yearlyAmount,
+        currency: settings.PAYPAY.currency,
+      },
+    });
+  });
+
   router.post('/requests', async (req: Request, res: Response) => {
     await ensureManualPaymentTable();
     const user = await requireUser(req);
