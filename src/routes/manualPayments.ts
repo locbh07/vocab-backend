@@ -10,11 +10,6 @@ type ManualPaymentStatus = 'PENDING' | 'PAID_REPORTED' | 'APPROVED' | 'REJECTED'
 
 const PROVIDERS = new Set<ManualPaymentProvider>(['MSB', 'PAYPAY']);
 const PLANS = new Set<ManualPaymentPlan>(['monthly', 'six_months', 'yearly']);
-const MSB_OLD_DEFAULT_AMOUNTS = {
-  monthly: 99000,
-  sixMonths: 499000,
-  yearly: 999000,
-};
 const MSB_DEFAULT_AMOUNTS = {
   monthly: 149000,
   sixMonths: 699000,
@@ -84,29 +79,6 @@ async function ensureManualPaymentTable() {
         ADD COLUMN IF NOT EXISTS monthly_original_amount INTEGER,
         ADD COLUMN IF NOT EXISTS six_months_original_amount INTEGER,
         ADD COLUMN IF NOT EXISTS yearly_original_amount INTEGER;
-      `);
-      await prisma.$executeRaw(Prisma.sql`
-        UPDATE manual_payment_setting
-        SET
-          monthly_amount = CASE
-            WHEN monthly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.monthly} THEN ${MSB_DEFAULT_AMOUNTS.monthly}
-            ELSE monthly_amount
-          END,
-          six_months_amount = CASE
-            WHEN six_months_amount = ${MSB_OLD_DEFAULT_AMOUNTS.sixMonths} THEN ${MSB_DEFAULT_AMOUNTS.sixMonths}
-            ELSE six_months_amount
-          END,
-          yearly_amount = CASE
-            WHEN yearly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.yearly} THEN ${MSB_DEFAULT_AMOUNTS.yearly}
-            ELSE yearly_amount
-          END,
-          updated_at = NOW()
-        WHERE provider = 'MSB'
-          AND (
-            monthly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.monthly}
-            OR six_months_amount = ${MSB_OLD_DEFAULT_AMOUNTS.sixMonths}
-            OR yearly_amount = ${MSB_OLD_DEFAULT_AMOUNTS.yearly}
-          )
       `);
     })();
   }
