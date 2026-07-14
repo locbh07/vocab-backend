@@ -69,12 +69,21 @@ async function ensureManualPaymentTable() {
           monthly_amount INTEGER,
           six_months_amount INTEGER,
           yearly_amount INTEGER,
+          monthly_original_amount INTEGER,
+          six_months_original_amount INTEGER,
+          yearly_original_amount INTEGER,
           currency VARCHAR(8),
           note TEXT,
           updated_by BIGINT REFERENCES useraccount(id) ON DELETE SET NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE manual_payment_setting
+        ADD COLUMN IF NOT EXISTS monthly_original_amount INTEGER,
+        ADD COLUMN IF NOT EXISTS six_months_original_amount INTEGER,
+        ADD COLUMN IF NOT EXISTS yearly_original_amount INTEGER;
       `);
       await prisma.$executeRaw(Prisma.sql`
         UPDATE manual_payment_setting
@@ -260,7 +269,18 @@ function cleanSettingNumber(value: unknown): number | null {
   return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
 }
 
+function discountPercent(originalAmount: number | null, currentAmount: number): number | null {
+  if (!originalAmount || !currentAmount || originalAmount <= currentAmount) return null;
+  return Math.round(((originalAmount - currentAmount) / originalAmount) * 100);
+}
+
 function mapSettingRow(row: any, provider: ManualPaymentProvider) {
+  const monthlyAmount = Number(row?.monthly_amount || envNumber(`MANUAL_PAYMENT_${provider}_MONTHLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.monthly : 599));
+  const sixMonthsAmount = Number(row?.six_months_amount || envNumber(`MANUAL_PAYMENT_${provider}_SIX_MONTHS_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.sixMonths : 2999));
+  const yearlyAmount = Number(row?.yearly_amount || envNumber(`MANUAL_PAYMENT_${provider}_YEARLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.yearly : 5999));
+  const monthlyOriginalAmount = cleanSettingNumber(row?.monthly_original_amount);
+  const sixMonthsOriginalAmount = cleanSettingNumber(row?.six_months_original_amount);
+  const yearlyOriginalAmount = cleanSettingNumber(row?.yearly_original_amount);
   return {
     provider,
     enabled: row ? Boolean(row.enabled) : true,
@@ -271,9 +291,15 @@ function mapSettingRow(row: any, provider: ManualPaymentProvider) {
     paymentUrlTemplate: '',
     qrImageUrlTemplate: '',
     qrTemplate: row?.qr_template || (provider === 'MSB' ? envText('MANUAL_PAYMENT_MSB_QR_TEMPLATE', 'compact2') : ''),
-    monthlyAmount: Number(row?.monthly_amount || envNumber(`MANUAL_PAYMENT_${provider}_MONTHLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.monthly : 599)),
-    sixMonthsAmount: Number(row?.six_months_amount || envNumber(`MANUAL_PAYMENT_${provider}_SIX_MONTHS_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.sixMonths : 2999)),
-    yearlyAmount: Number(row?.yearly_amount || envNumber(`MANUAL_PAYMENT_${provider}_YEARLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.yearly : 5999)),
+    monthlyAmount,
+    sixMonthsAmount,
+    yearlyAmount,
+    monthlyOriginalAmount,
+    sixMonthsOriginalAmount,
+    yearlyOriginalAmount,
+    monthlyDiscountPercent: discountPercent(monthlyOriginalAmount, monthlyAmount),
+    sixMonthsDiscountPercent: discountPercent(sixMonthsOriginalAmount, sixMonthsAmount),
+    yearlyDiscountPercent: discountPercent(yearlyOriginalAmount, yearlyAmount),
     currency: row?.currency || (provider === 'MSB' ? 'VND' : 'JPY'),
     note: row?.note || '',
     updatedAt: row?.updated_at || null,
@@ -308,6 +334,9 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
   const monthlyAmount = cleanSettingNumber(body?.monthlyAmount);
   const sixMonthsAmount = cleanSettingNumber(body?.sixMonthsAmount);
   const yearlyAmount = cleanSettingNumber(body?.yearlyAmount);
+  const monthlyOriginalAmount = cleanSettingNumber(body?.monthlyOriginalAmount);
+  const sixMonthsOriginalAmount = cleanSettingNumber(body?.sixMonthsOriginalAmount);
+  const yearlyOriginalAmount = cleanSettingNumber(body?.yearlyOriginalAmount);
   const currency = cleanSettingText(body?.currency, 8) || (isMsb ? 'VND' : 'JPY');
   const note = cleanSettingText(body?.note, 2000);
 
@@ -315,13 +344,17 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
     INSERT INTO manual_payment_setting (
       provider, enabled, bank_id, account_no, account_name, qr_image_url,
       payment_url_template, qr_image_url_template, qr_template,
-      monthly_amount, six_months_amount, yearly_amount, currency, note, updated_by,
+      monthly_amount, six_months_amount, yearly_amount,
+      monthly_original_amount, six_months_original_amount, yearly_original_amount,
+      currency, note, updated_by,
       created_at, updated_at
     )
     VALUES (
       ${provider}, ${enabled}, ${bankId}, ${accountNo}, ${accountName}, ${qrImageUrl},
       ${paymentUrlTemplate}, ${qrImageUrlTemplate}, ${qrTemplate},
-      ${monthlyAmount}, ${sixMonthsAmount}, ${yearlyAmount}, ${currency}, ${note}, ${BigInt(adminId)},
+      ${monthlyAmount}, ${sixMonthsAmount}, ${yearlyAmount},
+      ${monthlyOriginalAmount}, ${sixMonthsOriginalAmount}, ${yearlyOriginalAmount},
+      ${currency}, ${note}, ${BigInt(adminId)},
       NOW(), NOW()
     )
     ON CONFLICT (provider) DO UPDATE SET
@@ -336,6 +369,9 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
       monthly_amount = EXCLUDED.monthly_amount,
       six_months_amount = EXCLUDED.six_months_amount,
       yearly_amount = EXCLUDED.yearly_amount,
+      monthly_original_amount = EXCLUDED.monthly_original_amount,
+      six_months_original_amount = EXCLUDED.six_months_original_amount,
+      yearly_original_amount = EXCLUDED.yearly_original_amount,
       currency = EXCLUDED.currency,
       note = EXCLUDED.note,
       updated_by = EXCLUDED.updated_by,
@@ -357,6 +393,12 @@ export function createManualPaymentRouter() {
         monthlyAmount: settings.MSB.monthlyAmount,
         sixMonthsAmount: settings.MSB.sixMonthsAmount,
         yearlyAmount: settings.MSB.yearlyAmount,
+        monthlyOriginalAmount: settings.MSB.monthlyOriginalAmount,
+        sixMonthsOriginalAmount: settings.MSB.sixMonthsOriginalAmount,
+        yearlyOriginalAmount: settings.MSB.yearlyOriginalAmount,
+        monthlyDiscountPercent: settings.MSB.monthlyDiscountPercent,
+        sixMonthsDiscountPercent: settings.MSB.sixMonthsDiscountPercent,
+        yearlyDiscountPercent: settings.MSB.yearlyDiscountPercent,
         currency: settings.MSB.currency,
       },
       PAYPAY: {
@@ -364,6 +406,12 @@ export function createManualPaymentRouter() {
         monthlyAmount: settings.PAYPAY.monthlyAmount,
         sixMonthsAmount: settings.PAYPAY.sixMonthsAmount,
         yearlyAmount: settings.PAYPAY.yearlyAmount,
+        monthlyOriginalAmount: settings.PAYPAY.monthlyOriginalAmount,
+        sixMonthsOriginalAmount: settings.PAYPAY.sixMonthsOriginalAmount,
+        yearlyOriginalAmount: settings.PAYPAY.yearlyOriginalAmount,
+        monthlyDiscountPercent: settings.PAYPAY.monthlyDiscountPercent,
+        sixMonthsDiscountPercent: settings.PAYPAY.sixMonthsDiscountPercent,
+        yearlyDiscountPercent: settings.PAYPAY.yearlyDiscountPercent,
         currency: settings.PAYPAY.currency,
       },
     });
