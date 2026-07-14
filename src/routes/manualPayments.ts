@@ -350,6 +350,7 @@ export function createManualPaymentRouter() {
 
   router.get('/settings', async (_req: Request, res: Response) => {
     const settings = await getAllManualPaymentSettings();
+    res.set('Cache-Control', 'no-store');
     return res.json({
       MSB: {
         enabled: settings.MSB.enabled,
