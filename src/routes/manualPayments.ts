@@ -465,6 +465,7 @@ export function createAdminManualPaymentRouter() {
   router.get('/settings', async (_req: Request, res: Response) => {
     await requireAdmin(_req);
     const settings = await getAllManualPaymentSettings();
+    res.set('Cache-Control', 'no-store');
     return res.json(settings);
   });
 
@@ -475,6 +476,7 @@ export function createAdminManualPaymentRouter() {
       saveManualPaymentSetting('MSB', body.MSB || body.msb || {}, admin.id),
       saveManualPaymentSetting('PAYPAY', body.PAYPAY || body.paypay || {}, admin.id),
     ]);
+    res.set('Cache-Control', 'no-store');
     return res.json({ MSB: msb, PAYPAY: paypay });
   });
 
