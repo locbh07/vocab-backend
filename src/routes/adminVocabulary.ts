@@ -39,36 +39,61 @@ export function createAdminVocabularyRouter() {
     await requireAdmin(req);
     const keyword = String(req.query.keyword || '').trim();
     const topic = String(req.query.topic || '').trim();
+    const prefix = String(req.query.prefix || '').trim();
     const level = String(req.query.level || '').trim();
     const track = String(req.query.track || '').trim();
     const sourceBook = String(req.query.sourceBook || '').trim();
     const sourceUnit = String(req.query.sourceUnit || '').trim();
+    const isFreePreviewRaw = String(req.query.isFreePreview || '').trim();
     const page = Math.max(Number(req.query.page || 0), 0);
     const size = Math.min(Math.max(Number(req.query.size || 20), 1), 200);
 
-    const rows = await prisma.vocabulary.findMany({
-      where: {
-        ...(keyword
-          ? {
-              OR: [
-                { word_ja: { contains: keyword, mode: 'insensitive' } },
-                { word_hira_kana: { contains: keyword, mode: 'insensitive' } },
-                { word_romaji: { contains: keyword, mode: 'insensitive' } },
-                { word_vi: { contains: keyword, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-        ...(topic ? { topic } : {}),
-        ...(level ? { level } : {}),
-        ...(track ? { track } : {}),
-        ...(sourceBook ? { source_book: sourceBook } : {}),
-        ...(sourceUnit ? { source_unit: sourceUnit } : {}),
-      },
-      orderBy: { id: 'desc' },
-      skip: page * size,
-      take: size,
+    const keywordId = /^\d+$/.test(keyword) ? BigInt(keyword) : null;
+
+    const topicFilter: { equals?: string; startsWith?: string } = {};
+    if (topic) topicFilter.equals = topic;
+    if (prefix) topicFilter.startsWith = prefix;
+
+    const where = {
+      ...(keyword
+        ? {
+            OR: [
+              { word_ja: { contains: keyword, mode: 'insensitive' as const } },
+              { word_hira_kana: { contains: keyword, mode: 'insensitive' as const } },
+              { word_romaji: { contains: keyword, mode: 'insensitive' as const } },
+              { word_vi: { contains: keyword, mode: 'insensitive' as const } },
+              { example_ja: { contains: keyword, mode: 'insensitive' as const } },
+              { example_vi: { contains: keyword, mode: 'insensitive' as const } },
+              ...(keywordId !== null ? [{ id: keywordId }] : []),
+            ],
+          }
+        : {}),
+      ...(Object.keys(topicFilter).length ? { topic: topicFilter } : {}),
+      ...(level ? { level } : {}),
+      ...(track ? { track } : {}),
+      ...(sourceBook ? { source_book: sourceBook } : {}),
+      ...(sourceUnit ? { source_unit: sourceUnit } : {}),
+      ...(isFreePreviewRaw === 'true' ? { isFreePreview: true } : {}),
+      ...(isFreePreviewRaw === 'false' ? { isFreePreview: false } : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      prisma.vocabulary.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        skip: page * size,
+        take: size,
+      }),
+      prisma.vocabulary.count({ where }),
+    ]);
+
+    return res.json({
+      items: rows,
+      total,
+      page,
+      size,
+      totalPages: Math.max(1, Math.ceil(total / size)),
     });
-    return res.json(rows);
   });
 
   router.get('/:id', async (req: Request, res: Response) => {
