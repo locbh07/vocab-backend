@@ -41,6 +41,7 @@
     "kanji:compounds:build:vocab-only": "node scripts/build-kanji-compounds.cjs --skip-jmdict",
     "kanji:compounds:prewarm": "node scripts/build-kanji-compounds.cjs --prewarm-only",
     "listening:import:json": "node scripts/import-listening-from-json.cjs",
+    "listening:import:corodomo-vocab": "node scripts/import-corodomo-vocabulary.cjs",
     "vocab:import:books": "node scripts/import-book-vocabulary-from-export.cjs",
     "telegram:test": "node scripts/test-telegram-notification.cjs",
     "content:mark-free-preview": "node scripts/mark-free-preview.cjs",

@@ -10,6 +10,8 @@ const dataDir =
   path.resolve(process.cwd(), "..", "vocab-frontend", "src", "data", "listening");
 const videosPath = path.join(dataDir, "corodomoVideos.json");
 const transcriptsPath = path.join(dataDir, "corodomoTranscripts.json");
+const translationsPath = path.join(dataDir, "corodomoTranslations.json");
+const corodomoVocabularyPath = path.join(dataDir, "corodomoVocabulary.json");
 
 function asDateOrNull(value) {
   if (!value) return null;
@@ -88,6 +90,63 @@ function normalizeLines(videoId, transcriptData) {
   }));
 }
 
+function normalizeTranslationLines(videoId, translationData) {
+  const byLanguage = translationData?.data?.[videoId];
+  if (!byLanguage || typeof byLanguage !== "object") {
+    return [];
+  }
+
+  const lines = [];
+  for (const [language, entry] of Object.entries(byLanguage)) {
+    const rows = entry?.lines;
+    if (!/^[a-z]{2,10}$/i.test(language) || !Array.isArray(rows)) {
+      continue;
+    }
+    rows.forEach((line, index) => {
+      const translation = String(line?.text || line?.translation || "").trim();
+      if (!translation) return;
+      lines.push({
+        video_id: videoId,
+        line_index: index,
+        language: language.toLowerCase(),
+        source_text: "",
+        translation,
+        provider: "corodomo",
+      });
+    });
+  }
+  return lines;
+}
+
+function normalizeCorodomoVocabulary(vocabularyData) {
+  const rawItems = vocabularyData?.data;
+  const items = Array.isArray(rawItems)
+    ? rawItems
+    : rawItems && typeof rawItems === "object"
+      ? Object.values(rawItems)
+      : [];
+
+  const out = [];
+  const seen = new Set();
+  for (const item of items) {
+    const text = String(item?.text || "").replace(/\s+/g, " ").trim();
+    const lang = String(item?.lang || "ja").trim().toLowerCase() || "ja";
+    const targetLang = String(item?.targetLang || item?.target_lang || "vi").trim().toLowerCase() || "vi";
+    const translation = String(item?.translation || "").replace(/\s+/g, " ").trim();
+    const pos = String(item?.pos || "").replace(/\s+/g, " ").trim();
+    const level = String(item?.level || "").replace(/\s+/g, " ").trim();
+    const sourceQuery = String(item?.sourceQuery || item?.source_query || "").replace(/\s+/g, " ").trim();
+    if (!text || !translation || !/^[a-z]{2,10}$/i.test(lang) || !/^[a-z]{2,10}$/i.test(targetLang)) {
+      continue;
+    }
+    const key = `${text}::${lang}::${targetLang}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ text, lang, targetLang, translation, pos, level, sourceQuery });
+  }
+  return out;
+}
+
 function sqlQuote(value) {
   if (value === null || value === undefined) return "NULL";
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -146,16 +205,104 @@ async function ensureTables() {
       CONSTRAINT listening_transcript_line_video_line_uniq UNIQUE(video_id, line_index)
     );
   `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS listening_transcript_translation (
+      id BIGSERIAL PRIMARY KEY,
+      video_id VARCHAR(20) NOT NULL,
+      line_index INTEGER NOT NULL,
+      language VARCHAR(10) NOT NULL,
+      source_text TEXT NOT NULL,
+      translation TEXT NOT NULL,
+      provider VARCHAR(50) NOT NULL DEFAULT 'corodomo',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT listening_transcript_translation_video_fk
+        FOREIGN KEY (video_id) REFERENCES listening_video(video_id) ON DELETE CASCADE,
+      CONSTRAINT listening_transcript_translation_line_lang_uniq UNIQUE(video_id, line_index, language)
+    );
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS idx_listening_transcript_translation_lookup
+    ON listening_transcript_translation (video_id, line_index, language);
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS listening_corodomo_vocabulary (
+      id BIGSERIAL PRIMARY KEY,
+      text TEXT NOT NULL,
+      lang VARCHAR(10) NOT NULL DEFAULT 'ja',
+      target_lang VARCHAR(10) NOT NULL DEFAULT 'vi',
+      translation TEXT NOT NULL,
+      pos TEXT,
+      level VARCHAR(50),
+      source_query TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT listening_corodomo_vocabulary_text_lang_uniq UNIQUE(text, lang, target_lang)
+    );
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE INDEX IF NOT EXISTS idx_listening_corodomo_vocabulary_lookup
+    ON listening_corodomo_vocabulary (text, lang, target_lang);
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE listening_corodomo_vocabulary
+    ADD COLUMN IF NOT EXISTS pos TEXT;
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE listening_corodomo_vocabulary
+    ADD COLUMN IF NOT EXISTS level VARCHAR(50);
+  `);
 }
 
 async function main() {
   await ensureTables();
   const videosRaw = JSON.parse(await fs.readFile(videosPath, "utf8"));
   const transcriptRaw = JSON.parse(await fs.readFile(transcriptsPath, "utf8"));
+  let translationRaw = { data: {} };
+  try {
+    translationRaw = JSON.parse(await fs.readFile(translationsPath, "utf8"));
+  } catch {
+    translationRaw = { data: {} };
+  }
+  let corodomoVocabularyRaw = { data: {} };
+  try {
+    corodomoVocabularyRaw = JSON.parse(await fs.readFile(corodomoVocabularyPath, "utf8"));
+  } catch {
+    corodomoVocabularyRaw = { data: {} };
+  }
   const videos = Array.isArray(videosRaw) ? videosRaw.map(normalizeVideo).filter(Boolean) : [];
 
   let importedVideos = 0;
   let importedLines = 0;
+  let importedTranslations = 0;
+  let importedCorodomoVocabulary = 0;
+
+  const corodomoVocabulary = normalizeCorodomoVocabulary(corodomoVocabularyRaw);
+  for (let index = 0; index < corodomoVocabulary.length; index += 500) {
+    const chunk = corodomoVocabulary.slice(index, index + 500);
+    const values = chunk
+      .map(
+        (item) =>
+          `(${sqlQuote(item.text)}, ${sqlQuote(item.lang)}, ${sqlQuote(item.targetLang)}, ${sqlQuote(
+            item.translation,
+          )}, ${sqlQuote(item.pos)}, ${sqlQuote(item.level)}, ${sqlQuote(item.sourceQuery)}, NOW(), NOW())`,
+      )
+      .join(",\n");
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO listening_corodomo_vocabulary (
+        text, lang, target_lang, translation, pos, level, source_query, created_at, updated_at
+      ) VALUES
+      ${values}
+      ON CONFLICT (text, lang, target_lang)
+      DO UPDATE SET
+        translation = EXCLUDED.translation,
+        pos = EXCLUDED.pos,
+        level = EXCLUDED.level,
+        source_query = EXCLUDED.source_query,
+        updated_at = NOW()
+    `);
+    importedCorodomoVocabulary += chunk.length;
+  }
 
   for (let index = 0; index < videos.length; index += 1) {
     const video = videos[index];
@@ -214,13 +361,39 @@ async function main() {
     }
     importedLines += lines.length;
 
+    const translationLines = normalizeTranslationLines(video.video_id, translationRaw);
+    if (translationLines.length > 0) {
+      const sourceByIndex = new Map(lines.map((line) => [line.line_index, line.text]));
+      const values = translationLines
+        .map((line) => {
+          const sourceText = sourceByIndex.get(line.line_index) || line.source_text || "";
+          return `(${sqlQuote(line.video_id)}, ${line.line_index}, ${sqlQuote(line.language)}, ${sqlQuote(
+            sourceText,
+          )}, ${sqlQuote(line.translation)}, ${sqlQuote(line.provider)}, NOW(), NOW())`;
+        })
+        .join(",\n");
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO listening_transcript_translation (
+          video_id, line_index, language, source_text, translation, provider, created_at, updated_at
+        ) VALUES
+        ${values}
+        ON CONFLICT (video_id, line_index, language)
+        DO UPDATE SET
+          source_text = EXCLUDED.source_text,
+          translation = EXCLUDED.translation,
+          provider = EXCLUDED.provider,
+          updated_at = NOW()
+      `);
+    }
+    importedTranslations += translationLines.length;
+
     if (importedVideos % 50 === 0 || importedVideos === videos.length) {
       console.log(`Imported ${importedVideos}/${videos.length} videos`);
     }
   }
 
   console.log(
-    `Done. videos=${importedVideos}, transcriptLines=${importedLines}. JSON files were kept unchanged.`,
+    `Done. videos=${importedVideos}, transcriptLines=${importedLines}, translationLines=${importedTranslations}, corodomoVocabulary=${importedCorodomoVocabulary}. JSON files were kept unchanged.`,
   );
 }
 

@@ -1,12 +1,14 @@
 import { Request, Response, Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { mkdtemp, readdir, readFile, rm, stat } from 'fs/promises';
+import { existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import youtubeDl from 'youtube-dl-exec';
 import { prisma } from '../lib/prisma';
 import { resolveContentAccess } from '../lib/contentAccess';
 import { listeningVideoMaskRule } from '../lib/contentMasking';
+import { tokenizeJapaneseText } from '../lib/japaneseReading';
 
 type ListeningVideoRow = {
   source_id: string | null;
@@ -28,11 +30,18 @@ type ListeningVideoRow = {
 };
 
 type TranscriptRow = {
+  line_index: number;
   text: string;
   start_sec: number | null;
   end_sec: number | null;
   dur_sec: number | null;
   ruby_html: string | null;
+};
+
+type TranscriptTranslationLineRow = {
+  line_index: number;
+  language: string;
+  translation: string;
 };
 
 type StoredTranslationRow = {
@@ -60,6 +69,36 @@ type YoutubeImportOptions = {
   allowAiTranscript?: boolean;
 };
 
+type ListeningVocabLookupRow = {
+  id: bigint | number;
+  word_ja: string | null;
+  word_hira_kana: string | null;
+  word_romaji: string | null;
+  word_vi: string | null;
+  audio_url: string | null;
+  level: string | null;
+  topic: string | null;
+};
+
+type ListeningCorodomoVocabLookupRow = {
+  id: bigint | number;
+  text: string | null;
+  lang: string | null;
+  translation: string | null;
+  pos: string | null;
+  level: string | null;
+};
+
+type ListeningVocabLookupWord = ReturnType<typeof mapLookupWord>;
+
+type ListeningVocabLookupToken = {
+  surface: string;
+  basic: string;
+  reading: string;
+  pos: string;
+  posDetail: string;
+};
+
 const LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL = Math.max(1, Number(process.env.LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL || 15));
 const REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT = String(process.env.LISTENING_YOUTUBE_IMPORT_REQUIRE_PREMIUM || 'true').toLowerCase() !== 'false';
 const LISTENING_AI_TRANSCRIPT_ENABLED = String(process.env.LISTENING_AI_TRANSCRIPT_ENABLED || 'true').toLowerCase() !== 'false';
@@ -70,6 +109,9 @@ const LISTENING_AI_TRANSCRIPT_MAX_AUDIO_BYTES = Math.max(1024 * 1024, Number(pro
 const SUPPORTED_TRANSLATION_LANGUAGES = new Set(['vi', 'en']);
 const translationCache = new Map<string, string>();
 const MAX_TRANSLATION_CACHE_SIZE = 1000;
+const LISTENING_VOCAB_LOOKUP_MAX_LINES = 400;
+const LISTENING_VOCAB_LOOKUP_MAX_TEXT_LENGTH = 120;
+const LISTENING_VOCAB_LOOKUP_MAX_NGRAM = 8;
 const TRANSCRIPT_LINE_CORRECTIONS = new Map([
   ['串で紙を溶かします', '櫛で髪をとかします'],
   ['櫛で髪を溶かします', '櫛で髪をとかします'],
@@ -807,6 +849,347 @@ function normalizeLineIndexForTranslation(input: unknown): number | null {
   return value;
 }
 
+function normalizeLookupText(input: unknown): string {
+  return String(input || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, LISTENING_VOCAB_LOOKUP_MAX_TEXT_LENGTH);
+}
+
+function normalizeLookupQuery(input: string) {
+  return String(input || '')
+    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function katakanaToHiragana(input: string) {
+  let out = '';
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    if (code >= 0x30a1 && code <= 0x30f6) {
+      out += String.fromCharCode(code - 0x60);
+    } else {
+      out += input[i];
+    }
+  }
+  return out;
+}
+
+function isJapaneseContentToken(surface: string) {
+  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(surface);
+}
+
+function mapLookupWord(row: ListeningVocabLookupRow) {
+  return {
+    id: `vocab:${Number(row.id)}`,
+    wordJa: String(row.word_ja || '').trim(),
+    reading: String(row.word_hira_kana || '').trim(),
+    romaji: String(row.word_romaji || '').trim(),
+    meaningVi: String(row.word_vi || '').trim(),
+    audioUrl: String(row.audio_url || '').trim(),
+    level: String(row.level || '').trim(),
+    topic: String(row.topic || '').trim(),
+    source: 'vocabulary',
+  };
+}
+
+function mapCorodomoLookupWord(row: ListeningCorodomoVocabLookupRow) {
+  const text = String(row.text || '').trim();
+  return {
+    id: `corodomo:${Number(row.id)}`,
+    wordJa: text,
+    reading: '',
+    romaji: '',
+    meaningVi: String(row.translation || '').trim(),
+    audioUrl: '',
+    level: String(row.level || '').trim(),
+    topic: String(row.pos || 'corodomo').trim(),
+    source: 'corodomo',
+  };
+}
+
+function parseCookieHeaderFromStorageState(input: unknown) {
+  const cookies = Array.isArray((input as any)?.cookies) ? (input as any).cookies : [];
+  return cookies
+    .filter((cookie: any) => String(cookie?.domain || '').includes('corodomo.com'))
+    .map((cookie: any) => `${String(cookie?.name || '')}=${String(cookie?.value || '')}`)
+    .filter((item: string) => item && !item.startsWith('='))
+    .join('; ');
+}
+
+async function readCorodomoCookieHeader() {
+  const candidates = [
+    process.env.CORODOMO_SESSION_PATH,
+    path.resolve(process.cwd(), '..', 'vocab-frontend', '.corodomo', 'storageState.json'),
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    try {
+      if (!existsSync(candidate)) continue;
+      const payload = JSON.parse(await readFile(candidate, 'utf8'));
+      const cookieHeader = parseCookieHeaderFromStorageState(payload);
+      if (cookieHeader) return cookieHeader;
+    } catch {
+      // Ignore invalid or unavailable local browser session state.
+    }
+  }
+  return '';
+}
+
+async function fetchCorodomoAiVocabulary(term: string) {
+  const query = normalizeLookupQuery(term);
+  if (!query || !isJapaneseContentToken(query)) return [];
+  const params = new URLSearchParams({
+    q: query,
+    limit: '10',
+    targetLang: 'vi',
+    sourceLang: 'ja',
+  });
+  const cookie = await readCorodomoCookieHeader();
+  const response = await fetch(`https://corodomo.com/api/ai/vocabulary-lookup?${params.toString()}`, {
+    headers: {
+      accept: 'application/json',
+      referer: 'https://corodomo.com/videos',
+      'user-agent': 'Mozilla/5.0',
+      ...(cookie ? { cookie } : {}),
+    },
+  });
+  if (!response.ok) return [];
+  const payload = (await response.json()) as any;
+  return (Array.isArray(payload?.data) ? payload.data : [])
+    .map((item: any) => ({
+      text: normalizeLookupQuery(String(item?.text || '')),
+      lang: String(item?.lang || 'ja').trim().toLowerCase(),
+      translation: String(item?.translation || '').trim(),
+    }))
+    .filter((item: any) => item.text && item.translation && item.lang === 'ja');
+}
+
+async function cacheCorodomoAiVocabulary(term: string) {
+  const items = await fetchCorodomoAiVocabulary(term);
+  for (const item of items) {
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO listening_corodomo_vocabulary (
+          text, lang, target_lang, translation, pos, level, source_query, created_at, updated_at
+        )
+        VALUES (
+          ${item.text}, ${item.lang}, 'vi', ${item.translation}, 'corodomo-ai', '', ${normalizeLookupQuery(term)}, NOW(), NOW()
+        )
+        ON CONFLICT (text, lang, target_lang)
+        DO UPDATE SET
+          translation = EXCLUDED.translation,
+          pos = COALESCE(NULLIF(listening_corodomo_vocabulary.pos, ''), EXCLUDED.pos),
+          source_query = EXCLUDED.source_query,
+          updated_at = NOW()
+      `,
+    );
+  }
+  return items;
+}
+
+function buildTokenNgrams(tokens: ListeningVocabLookupToken[]) {
+  const ngrams = new Set<string>();
+  for (let start = 0; start < tokens.length; start += 1) {
+    let surface = '';
+    let reading = '';
+    for (let end = start; end < Math.min(tokens.length, start + LISTENING_VOCAB_LOOKUP_MAX_NGRAM); end += 1) {
+      const token = tokens[end];
+      if (!isJapaneseContentToken(token.surface)) break;
+      surface += token.surface;
+      reading += token.reading || '';
+      if (surface.length > 1) ngrams.add(surface);
+      if (reading.length > 1) ngrams.add(reading);
+    }
+  }
+  return Array.from(ngrams);
+}
+
+function pickBestLookupSpan(
+  tokens: ListeningVocabLookupToken[],
+  start: number,
+  wordsByKey: Map<string, ListeningVocabLookupWord[]>,
+) {
+  let best: {
+    end: number;
+    surface: string;
+    reading: string;
+    words: ListeningVocabLookupWord[];
+  } | null = null;
+
+  let surface = '';
+  let reading = '';
+  for (let end = start; end < Math.min(tokens.length, start + LISTENING_VOCAB_LOOKUP_MAX_NGRAM); end += 1) {
+    const token = tokens[end];
+    if (!isJapaneseContentToken(token.surface)) break;
+    surface += token.surface;
+    reading += token.reading || '';
+    const keys = [surface, reading].filter(Boolean);
+    const words = keys.flatMap((key) => wordsByKey.get(key) || []);
+    const uniqueWords = Array.from(new Map(words.map((word) => [word.id, word])).values());
+    if (uniqueWords.length > 0) {
+      best = {
+        end,
+        surface,
+        reading,
+        words: uniqueWords.slice(0, 5),
+      };
+    }
+  }
+
+  return best;
+}
+
+const NUMBER_COUNTER_SUFFIXES = new Set([
+  '\u6642',
+  '\u5206',
+  '\u79d2',
+  '\u5186',
+  '\u4eba',
+  '\u540d',
+  '\u6b73',
+  '\u624d',
+  '\u5e74',
+  '\u6708',
+  '\u65e5',
+  '\u500b',
+  '\u672c',
+  '\u679a',
+  '\u56de',
+  '\u968e',
+  '\u676f',
+  '\u5339',
+  '\u982d',
+]);
+
+function tokenReading(token: ListeningVocabLookupToken) {
+  return token.reading || token.surface;
+}
+
+function isNumberToken(token: ListeningVocabLookupToken) {
+  return token.posDetail === '数' || /^[0-9０-９一二三四五六七八九十百千万億兆]+$/u.test(token.surface);
+}
+
+function isCounterSuffixToken(token: ListeningVocabLookupToken) {
+  return NUMBER_COUNTER_SUFFIXES.has(token.surface);
+}
+
+function isInflectableToken(token: ListeningVocabLookupToken) {
+  return token.pos === '動詞' || token.pos === '形容詞';
+}
+
+function isAuxiliaryToken(token: ListeningVocabLookupToken) {
+  return token.pos === '助動詞';
+}
+
+function collectLookupWords(keys: string[], wordsByKey: Map<string, ListeningVocabLookupWord[]>) {
+  const words = keys.flatMap((key) => wordsByKey.get(key) || []);
+  return Array.from(new Map(words.map((word) => [word.id, word])).values()).slice(0, 5);
+}
+
+function buildLookupKeysForSpan(tokens: ListeningVocabLookupToken[], surface: string, reading: string) {
+  const keys = new Set<string>([surface, reading].filter(Boolean));
+  const normalizedSurface = normalizeLookupQuery(surface);
+  if (normalizedSurface) keys.add(normalizedSurface);
+  for (const token of tokens) {
+    [token.surface, token.basic, token.reading].filter(Boolean).forEach((key) => keys.add(key));
+    const normalizedTokenSurface = normalizeLookupQuery(token.surface);
+    if (normalizedTokenSurface) keys.add(normalizedTokenSurface);
+  }
+  return Array.from(keys);
+}
+
+function pickDisplaySpan(tokens: ListeningVocabLookupToken[], start: number) {
+  const first = tokens[start];
+  if (!first) return null;
+
+  if (isNumberToken(first) && isCounterSuffixToken(tokens[start + 1])) {
+    const spanTokens = tokens.slice(start, start + 2);
+    return {
+      end: start + 1,
+      surface: spanTokens.map((token) => token.surface).join(''),
+      reading: spanTokens.map(tokenReading).join(''),
+      pos: 'counter',
+      posDetail: '',
+      tokens: spanTokens,
+    };
+  }
+
+  if (!isJapaneseContentToken(first.surface)) return null;
+
+  if (isInflectableToken(first) && isAuxiliaryToken(tokens[start + 1])) {
+    let end = start + 1;
+    while (end + 1 < tokens.length && isAuxiliaryToken(tokens[end + 1])) {
+      end += 1;
+    }
+    const spanTokens = tokens.slice(start, end + 1);
+    return {
+      end,
+      surface: spanTokens.map((token) => token.surface).join(''),
+      reading: spanTokens.map(tokenReading).join(''),
+      pos: first.pos,
+      posDetail: first.posDetail,
+      tokens: spanTokens,
+    };
+  }
+
+  return null;
+}
+
+function compactLookupTokens(
+  tokens: ListeningVocabLookupToken[],
+  wordsByKey: Map<string, ListeningVocabLookupWord[]>,
+) {
+  const out = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const displaySpan = pickDisplaySpan(tokens, index);
+    if (displaySpan) {
+      const words = collectLookupWords(
+        buildLookupKeysForSpan(displaySpan.tokens, displaySpan.surface, displaySpan.reading),
+        wordsByKey,
+      );
+      out.push({
+        surface: displaySpan.surface,
+        basic: '',
+        reading: displaySpan.reading,
+        pos: displaySpan.pos,
+        posDetail: displaySpan.posDetail,
+        words,
+      });
+      index = displaySpan.end;
+      continue;
+    }
+
+    const token = tokens[index];
+    const lookupKeys = [token.surface, token.basic, token.reading].filter(Boolean);
+    const span = pickBestLookupSpan(tokens, index, wordsByKey);
+    const shouldUsePhraseSpan =
+      span &&
+      span.end > index &&
+      !tokens.slice(index, span.end + 1).some((item, itemIndex) => itemIndex > 0 && item.pos === '助詞');
+    if (shouldUsePhraseSpan) {
+      out.push({
+        surface: span.surface,
+        basic: '',
+        reading: span.reading,
+        pos: 'phrase',
+        posDetail: '',
+        words: span.words,
+      });
+      index = span.end;
+      continue;
+    }
+
+    const uniqueWords = collectLookupWords(lookupKeys, wordsByKey);
+    out.push({
+      ...token,
+      words: uniqueWords,
+    });
+  }
+  return out;
+}
+
 async function ensureListeningTranslationTable() {
   if (!ensureListeningTranslationTablePromise) {
     ensureListeningTranslationTablePromise = (async () => {
@@ -961,6 +1344,180 @@ export function createListeningRouter() {
       }
     }
 
+  });
+
+  router.post('/vocab-lookup', async (req: Request, res: Response) => {
+    const rawTexts = Array.isArray(req.body?.texts)
+      ? req.body.texts
+      : [req.body?.text];
+    const texts: string[] = rawTexts
+      .map(normalizeLookupText)
+      .filter(Boolean)
+      .slice(0, LISTENING_VOCAB_LOOKUP_MAX_LINES);
+
+    if (!texts.length) {
+      return res.json({ lines: {} });
+    }
+
+    const tokenizedLines: Array<{ text: string; tokens: ListeningVocabLookupToken[] }> = await Promise.all(
+      texts.map(async (text) => {
+        const tokens = await tokenizeJapaneseText(text);
+        return {
+          text,
+          tokens: tokens
+            .map((token) => {
+              const surface = String(token.surface_form || '').trim();
+              const basic = String(token.basic_form || '').trim();
+              const reading = katakanaToHiragana(String(token.reading || '').trim());
+              return {
+                surface,
+                basic: basic && basic !== '*' ? basic : '',
+                reading,
+                pos: String(token.pos || '').trim(),
+                posDetail: String(token.pos_detail_1 || '').trim(),
+              };
+            })
+            .filter((token) => token.surface),
+        };
+      }),
+    );
+
+    const candidates = new Set<string>();
+    for (const line of tokenizedLines) {
+      for (const token of line.tokens) {
+        if (!isJapaneseContentToken(token.surface)) continue;
+        candidates.add(token.surface);
+        candidates.add(normalizeLookupQuery(token.surface));
+        if (token.basic) candidates.add(token.basic);
+        if (token.reading) candidates.add(token.reading);
+      }
+      for (const ngram of buildTokenNgrams(line.tokens)) {
+        candidates.add(ngram);
+        candidates.add(normalizeLookupQuery(ngram));
+      }
+    }
+
+    let terms = Array.from(candidates).filter((term) => term.length > 0).slice(0, 1200);
+    const wordsByKey = new Map<string, ListeningVocabLookupWord[]>();
+    if (terms.length > 0) {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS listening_corodomo_vocabulary (
+          id BIGSERIAL PRIMARY KEY,
+          text TEXT NOT NULL,
+          lang VARCHAR(10) NOT NULL DEFAULT 'ja',
+          target_lang VARCHAR(10) NOT NULL DEFAULT 'vi',
+          translation TEXT NOT NULL,
+          pos TEXT,
+          level VARCHAR(50),
+          source_query TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT listening_corodomo_vocabulary_text_lang_uniq UNIQUE(text, lang, target_lang)
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_listening_corodomo_vocabulary_lookup
+        ON listening_corodomo_vocabulary (text, lang, target_lang);
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_corodomo_vocabulary
+        ADD COLUMN IF NOT EXISTS pos TEXT;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_corodomo_vocabulary
+        ADD COLUMN IF NOT EXISTS level VARCHAR(50);
+      `);
+
+      const exactSpanTerms = new Set<string>();
+      for (const line of tokenizedLines) {
+        for (let index = 0; index < line.tokens.length; index += 1) {
+          const displaySpan = pickDisplaySpan(line.tokens, index);
+          if (!displaySpan) continue;
+          exactSpanTerms.add(normalizeLookupQuery(displaySpan.surface));
+          index = displaySpan.end;
+        }
+      }
+      for (const term of exactSpanTerms) {
+        if (term && !terms.includes(term)) terms.push(term);
+      }
+      terms = terms.slice(0, 1200);
+
+      if (exactSpanTerms.size > 0) {
+        const existingExactRows = await prisma.$queryRaw<Array<{ text: string | null }>>(
+          Prisma.sql`
+            SELECT text
+            FROM listening_corodomo_vocabulary
+            WHERE text IN (${Prisma.join(Array.from(exactSpanTerms))})
+              AND lang = 'ja'
+              AND target_lang = 'vi'
+          `,
+        );
+        const existingExact = new Set(existingExactRows.map((row) => String(row.text || '').trim()).filter(Boolean));
+        for (const term of exactSpanTerms) {
+          if (!existingExact.has(term)) {
+            await cacheCorodomoAiVocabulary(term).catch(() => []);
+          }
+        }
+      }
+
+      const corodomoRows = await prisma.$queryRaw<ListeningCorodomoVocabLookupRow[]>(
+        Prisma.sql`
+          SELECT id, text, lang, translation, pos, level
+          FROM listening_corodomo_vocabulary
+          WHERE text IN (${Prisma.join(terms)})
+            AND lang = 'ja'
+            AND target_lang = 'vi'
+          ORDER BY LENGTH(text) DESC, id ASC
+          LIMIT 2000
+        `,
+      );
+
+      for (const row of corodomoRows) {
+        const word = mapCorodomoLookupWord(row);
+        const list = wordsByKey.get(word.wordJa) || [];
+        if (!list.some((item) => item.id === word.id)) {
+          list.push(word);
+          wordsByKey.set(word.wordJa, list);
+        }
+      }
+
+      const rows = await prisma.$queryRaw<ListeningVocabLookupRow[]>(
+        Prisma.sql`
+          SELECT id, word_ja, word_hira_kana, word_romaji, word_vi, audio_url, level, topic
+          FROM vocabulary
+          WHERE COALESCE(word_ja, '') IN (${Prisma.join(terms)})
+             OR COALESCE(word_hira_kana, '') IN (${Prisma.join(terms)})
+          ORDER BY
+            CASE WHEN track = 'core' THEN 0 ELSE 1 END ASC,
+            COALESCE(core_order, 2147483647) ASC,
+            id ASC
+          LIMIT 2000
+        `,
+      );
+
+      for (const row of rows) {
+        const word = mapLookupWord(row);
+        const keys = [
+          word.wordJa,
+          word.reading,
+          katakanaToHiragana(word.reading),
+        ].filter(Boolean);
+        for (const key of keys) {
+          const list = wordsByKey.get(key) || [];
+          if (!list.some((item) => item.id === word.id)) {
+            list.push(word);
+            wordsByKey.set(key, list);
+          }
+        }
+      }
+    }
+
+    const lines: Record<string, unknown> = {};
+    for (const line of tokenizedLines) {
+      lines[line.text] = compactLookupTokens(line.tokens, wordsByKey);
+    }
+
+    return res.json({ lines });
   });
 
   router.post('/import-youtube', async (req: Request, res: Response) => {
@@ -1168,12 +1725,31 @@ export function createListeningRouter() {
 
     const rows = await prisma.$queryRaw<TranscriptRow[]>(
       Prisma.sql`
-        SELECT text, start_sec, end_sec, dur_sec, ruby_html
+        SELECT line_index, text, start_sec, end_sec, dur_sec, ruby_html
         FROM listening_transcript_line
         WHERE video_id = ${videoId}
         ORDER BY line_index ASC
       `,
     );
+
+    await ensureListeningTranslationTable();
+    const translationRows = await prisma.$queryRaw<TranscriptTranslationLineRow[]>(
+      Prisma.sql`
+        SELECT line_index, language, translation
+        FROM listening_transcript_translation
+        WHERE video_id = ${videoId}
+        ORDER BY line_index ASC, language ASC
+      `,
+    );
+    const translationsByLine = new Map<number, Record<string, string>>();
+    for (const row of translationRows) {
+      const language = String(row.language || '').trim().toLowerCase();
+      const translation = String(row.translation || '').trim();
+      if (!language || !translation) continue;
+      const current = translationsByLine.get(Number(row.line_index)) || {};
+      current[language] = translation;
+      translationsByLine.set(Number(row.line_index), current);
+    }
 
     const lines = rows.map((line) => {
       const correctedText = TRANSCRIPT_LINE_CORRECTIONS.get(line.text) || line.text;
@@ -1184,6 +1760,7 @@ export function createListeningRouter() {
         end: line.end_sec,
         dur: line.dur_sec,
         rubyHtml: wasCorrected ? COMB_HAIR_RUBY_HTML : line.ruby_html || '',
+        translations: translationsByLine.get(Number(line.line_index)) || {},
       };
     });
 
