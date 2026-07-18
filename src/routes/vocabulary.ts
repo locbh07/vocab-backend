@@ -88,6 +88,8 @@ export function createVocabularyRouter() {
     const sourceUnit = cleanText(req.query.sourceUnit);
     const level = cleanText(req.query.level);
     const includeExamples = normalizeBoolean(req.query.includeExamples);
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 500) : undefined;
 
     const where: Prisma.VocabularyWhereInput =
       track === 'core'
@@ -104,7 +106,7 @@ export function createVocabularyRouter() {
         ? [{ id: 'asc' }]
         : [{ source_book: 'asc' }, { source_unit: 'asc' }, { id: 'asc' }];
 
-    const rows = await prisma.vocabulary.findMany({ where, orderBy });
+    const rows = await prisma.vocabulary.findMany({ where, orderBy, ...(limit ? { take: limit } : {}) });
     if (!includeExamples || !rows.length) {
       return res.json(maskVocabularyListForAccess(rows as any[], access.isPremium));
     }

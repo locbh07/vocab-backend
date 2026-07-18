@@ -932,15 +932,25 @@ export function createLearningRouter() {
         AND DATE(review_time) = ${today}
     `;
 
+    const [dueKanjiReviewsRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COUNT(*)::bigint AS total
+      FROM user_kanji_progress
+      WHERE user_id = ${userBigId}
+        AND is_mastered = 0
+        AND next_review_date <= CURRENT_DATE
+    `;
+
     const activePlan = await getActiveKanjiPlan(userId);
 
     return res.json({
       totalPlanKanji: activePlan?.totalKanji || 0,
+      dailyNewKanji: activePlan?.dailyNewKanji || 0,
       learnedKanji: Number(learnedKanji?.[0]?.total || 0n),
       masteredKanji: Number(masteredKanji?.[0]?.total || 0n),
       inProgressKanji: Math.max(Number(learnedKanji?.[0]?.total || 0n) - Number(masteredKanji?.[0]?.total || 0n), 0),
       todayNewKanji: Number(todayNewRow?.total || 0n),
       todayReviews,
+      dueKanjiReviews: Number(dueKanjiReviewsRow?.total || 0n),
       currentStreak: streak,
       longestStreak,
       recentStudyDays,
@@ -1011,6 +1021,14 @@ export function createLearningRouter() {
         AND DATE(review_time) = ${today}
     `;
 
+    const [dueReviewsRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COUNT(*)::bigint AS total
+      FROM user_vocab_progress
+      WHERE user_id = ${userBigId}
+        AND is_mastered = 0
+        AND next_review_date <= CURRENT_DATE
+    `;
+
     return res.json({
       totalCoreWords: total,
       learnedWords: learned,
@@ -1019,6 +1037,7 @@ export function createLearningRouter() {
       progressPercent: total === 0 ? 0 : (learned * 100) / total,
       todayNewWords: Number(todayNewRow?.total || 0n),
       todayReviews,
+      dueReviews: Number(dueReviewsRow?.total || 0n),
       currentStreak: streak,
       longestStreak,
       recentStudyDays,
