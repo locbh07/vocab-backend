@@ -21,7 +21,11 @@ import { requireAdmin } from '../middleware/adminGuard';
 // the option-gap-filler always called OpenAI regardless of provider. Bumping invalidates old
 // cached explanations so they regenerate under the new provider/prompt on next access.
 const EXPLANATION_PROMPT_VERSION = 17;
-const CODE_EXAM_LIMIT_PER_LEVEL = Math.max(1, Number(process.env.CODE_EXAM_LIMIT_PER_LEVEL || 5));
+const FREE_EXAM_LIMIT_PER_LEVEL = Math.max(
+  1,
+  Number(process.env.FREE_EXAM_LIMIT_PER_LEVEL || process.env.CODE_EXAM_LIMIT_PER_LEVEL || 5),
+);
+const FREE_EXAM_LEVELS = ['N5', 'N4', 'N3', 'N2', 'N1'];
 let ensureExplainTablePromise: Promise<void> | null = null;
 
 type VerifyRequest = {
@@ -131,7 +135,7 @@ export function createExamRouter() {
         message: 'OK',
         levels: access.levels,
         fullAccess: access.fullAccess,
-        examLimitPerLevel: access.fullAccess ? null : CODE_EXAM_LIMIT_PER_LEVEL,
+        examLimitPerLevel: access.fullAccess ? null : FREE_EXAM_LIMIT_PER_LEVEL,
       });
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({
@@ -158,7 +162,7 @@ export function createExamRouter() {
       const accessibleExamIds = access.fullAccess
         ? allExamIds
         : hasCodeAccessForLevel
-          ? allExamIds.slice(0, CODE_EXAM_LIMIT_PER_LEVEL)
+          ? allExamIds.slice(0, FREE_EXAM_LIMIT_PER_LEVEL)
           : [];
       const accessibleSet = new Set(accessibleExamIds);
       const lockedExamIds = access.fullAccess ? [] : allExamIds.filter((examId) => !accessibleSet.has(examId));
@@ -169,7 +173,7 @@ export function createExamRouter() {
         accessibleExamIds,
         lockedExamIds,
         fullAccess: access.fullAccess,
-        examLimitPerLevel: access.fullAccess ? null : CODE_EXAM_LIMIT_PER_LEVEL,
+        examLimitPerLevel: access.fullAccess ? null : FREE_EXAM_LIMIT_PER_LEVEL,
       });
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
@@ -1419,10 +1423,10 @@ async function resolveExamListAccess(userId: number, code: string, level: string
     throw err;
   }
   if (hasActivePremium(user)) {
-    return { levels: ['N5', 'N4', 'N3', 'N2', 'N1'], fullAccess: true };
+    return { levels: FREE_EXAM_LEVELS, fullAccess: true };
   }
   if (!user.exam_enabled || !code?.trim()) {
-    return { levels: [], fullAccess: false };
+    return { levels: FREE_EXAM_LEVELS, fullAccess: false };
   }
   const rows = await prisma.userExamCode.findMany({
     where: { user_id: BigInt(userId), enabled: true, code },
@@ -1430,9 +1434,9 @@ async function resolveExamListAccess(userId: number, code: string, level: string
   });
   const levels = rows.map((r: { level: string }) => r.level);
   if (!levels.includes(level)) {
-    return { levels, fullAccess: false };
+    return { levels: FREE_EXAM_LEVELS, fullAccess: false };
   }
-  return { levels, fullAccess: false };
+  return { levels: Array.from(new Set([...FREE_EXAM_LEVELS, ...levels])), fullAccess: false };
 }
 
 async function getLimitedExamIds(level: string): Promise<string[]> {
@@ -1441,7 +1445,7 @@ async function getLimitedExamIds(level: string): Promise<string[]> {
     FROM jlpt_exam
     WHERE level = ${level}
     ORDER BY exam_id DESC
-    LIMIT ${CODE_EXAM_LIMIT_PER_LEVEL}
+    LIMIT ${FREE_EXAM_LIMIT_PER_LEVEL}
   `;
   return rows.map((row) => row.exam_id);
 }
@@ -1464,7 +1468,16 @@ async function requireExamAccess(
     throw err;
   }
   if (hasActivePremium(user)) {
-    return { levels: ['N5', 'N4', 'N3', 'N2', 'N1'], fullAccess: true };
+    return { levels: FREE_EXAM_LEVELS, fullAccess: true };
+  }
+  if (level && examId) {
+    const allowedExamIds = await getLimitedExamIds(level);
+    if (allowedExamIds.includes(examId)) {
+      return { levels: FREE_EXAM_LEVELS, fullAccess: false };
+    }
+  }
+  if (!level && !examId) {
+    return { levels: FREE_EXAM_LEVELS, fullAccess: false };
   }
   if (!user.exam_enabled) {
     const err = new Error('Exam access not enabled') as Error & { status?: number };

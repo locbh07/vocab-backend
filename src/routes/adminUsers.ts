@@ -287,6 +287,7 @@ function sanitizeUser(
   googleId: string | null;
   plan: string;
   premiumValidUntil: Date | null;
+  premiumTrialStartedAt?: Date | null;
   },
   extras?: {
     activePlan?: { topic_prefix?: string | null } | null;
@@ -315,6 +316,7 @@ function sanitizeUser(
     googleId: user.googleId,
     plan: user.plan,
     premiumValidUntil: user.premiumValidUntil,
+    premiumTrialStartedAt: user.premiumTrialStartedAt || null,
   };
 }
 
