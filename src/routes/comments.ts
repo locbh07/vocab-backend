@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { ensurePageCommentTable } from '../lib/commentStore';
 import { requireUser } from '../middleware/userGuard';
+import { formatUserLine, notificationText, notifyTelegram } from '../lib/telegram';
 
 type CommentRow = {
   id: bigint;
@@ -59,6 +60,20 @@ export function createCommentsRouter() {
       FROM inserted c
       JOIN useraccount u ON u.id = c.user_id
     `;
+
+    await notifyTelegram({
+      title: 'New comment',
+      lines: [
+        `User: ${formatUserLine({
+          id: created.user_id,
+          username: created.username,
+          fullname: created.fullname,
+        })}`,
+        `Page: ${created.page_key}`,
+        created.page_url ? `URL: ${created.page_url}` : null,
+        `Comment: ${notificationText(created.content)}`,
+      ],
+    });
 
     return res.status(201).json(toResponse(created));
   });

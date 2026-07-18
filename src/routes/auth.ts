@@ -3,6 +3,7 @@ import { getSupabaseAdmin, getSupabaseAnon } from '../lib/supabase';
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../lib/prisma';
+import { formatUserLine, notifyTelegram } from '../lib/telegram';
 
 const googleOAuthClient = new OAuth2Client();
 const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
@@ -54,6 +55,20 @@ export function createAuthRouter() {
           },
         });
 
+        await notifyTelegram({
+          title: 'New user registered',
+          lines: [
+            `User: ${formatUserLine({
+              id: created.id,
+              username: created.username,
+              fullname: created.fullname,
+              email: created.email,
+            })}`,
+            `Level: ${created.level || '-'}`,
+            'Method: password',
+          ],
+        });
+
         return res.json({
           success: true,
           message: 'Register success',
@@ -95,12 +110,28 @@ export function createAuthRouter() {
           auth_user_id: authUserId,
           level,
         })
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at')
         .maybeSingle();
 
       if (insertError) {
         await admin.auth.admin.deleteUser(authUserId).catch(() => {});
         return res.status(500).json({ success: false, message: 'Create profile failed' });
+      }
+
+      if (inserted) {
+        await notifyTelegram({
+          title: 'New user registered',
+          lines: [
+            `User: ${formatUserLine({
+              id: inserted.id,
+              username: inserted.username,
+              fullname: inserted.fullname,
+              email: inserted.email,
+            })}`,
+            `Level: ${inserted.level || '-'}`,
+            'Method: password',
+          ],
+        });
       }
 
       return res.json({
@@ -119,6 +150,7 @@ export function createAuthRouter() {
               googleId: inserted.google_id,
               plan: inserted.plan,
               premiumValidUntil: inserted.premium_valid_until,
+              premiumTrialStartedAt: inserted.premium_trial_started_at,
             }
           : null,
       });
@@ -176,7 +208,7 @@ export function createAuthRouter() {
       const authUserId = signInData.user.id;
       const { data: byAuth } = await admin
         .from('useraccount')
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at')
         .eq('auth_user_id', authUserId)
         .maybeSingle();
 
@@ -185,7 +217,7 @@ export function createAuthRouter() {
         : (
             await admin
               .from('useraccount')
-              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until')
+              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at')
               .eq('email', email)
               .maybeSingle()
           ).data;
@@ -206,6 +238,7 @@ export function createAuthRouter() {
               googleId: profile.google_id,
               plan: profile.plan,
               premiumValidUntil: profile.premium_valid_until,
+              premiumTrialStartedAt: profile.premium_trial_started_at,
             }
           : null,
         session: signInData.session,
@@ -255,6 +288,7 @@ export function createAuthRouter() {
           });
 
       if (!user) {
+        let createdGoogleUser = false;
         user =
           (await prisma.userAccount.findUnique({
             where: { googleId },
@@ -287,6 +321,23 @@ export function createAuthRouter() {
               googleId,
               ...(authUserId ? { authUserId } : {}),
             },
+          });
+          createdGoogleUser = true;
+        }
+
+        if (createdGoogleUser) {
+          await notifyTelegram({
+            title: 'New user registered',
+            lines: [
+              `User: ${formatUserLine({
+                id: user.id,
+                username: user.username,
+                fullname: user.fullname,
+                email: user.email,
+              })}`,
+              `Level: ${user.level || '-'}`,
+              'Method: google',
+            ],
           });
         }
       } else {
@@ -377,6 +428,7 @@ function sanitizeUser(user: {
   googleId: string | null;
   plan?: string | null;
   premiumValidUntil?: Date | string | null;
+  premiumTrialStartedAt?: Date | string | null;
 }) {
   return {
     id: Number(user.id),
@@ -390,5 +442,6 @@ function sanitizeUser(user: {
     googleId: user.googleId,
     plan: user.plan || 'FREE',
     premiumValidUntil: user.premiumValidUntil || null,
+    premiumTrialStartedAt: user.premiumTrialStartedAt || null,
   };
 }

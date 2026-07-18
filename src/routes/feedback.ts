@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { ensureFeedbackTable, normalizeFeedbackStatus } from '../lib/feedbackStore';
+import { formatUserLine, notificationText, notifyTelegram } from '../lib/telegram';
 
 type FeedbackInsertRow = {
   id: bigint;
@@ -51,6 +52,20 @@ export function createFeedbackRouter() {
       VALUES (${BigInt(userId)}, ${message}, ${context}, ${pageUrl}, 'NEW')
       RETURNING id, user_id, message, context, page_url, status, admin_note, created_at, updated_at
     `;
+
+    await notifyTelegram({
+      title: 'New feedback',
+      lines: [
+        `User: ${formatUserLine({
+          id: user.id,
+          username: user.username,
+          fullname: user.fullname,
+        })}`,
+        context ? `Context: ${context}` : null,
+        pageUrl ? `Page: ${pageUrl}` : null,
+        `Message: ${notificationText(message)}`,
+      ],
+    });
 
     return res.status(201).json(toFeedbackResponse(created, user.username, user.fullname));
   });
@@ -103,4 +118,3 @@ function toFeedbackResponse(
     updatedAt: row.updated_at,
   };
 }
-

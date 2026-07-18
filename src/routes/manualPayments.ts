@@ -3,18 +3,20 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
 import { requireUser } from '../middleware/userGuard';
+import { formatUserLine, notifyTelegram } from '../lib/telegram';
 
 type ManualPaymentProvider = 'MSB' | 'PAYPAY';
-type ManualPaymentPlan = 'monthly' | 'six_months' | 'yearly';
+type ManualPaymentPlan = 'monthly' | 'yearly' | 'lifetime';
 type ManualPaymentStatus = 'PENDING' | 'PAID_REPORTED' | 'APPROVED' | 'REJECTED';
 
 const PROVIDERS = new Set<ManualPaymentProvider>(['MSB', 'PAYPAY']);
-const PLANS = new Set<ManualPaymentPlan>(['monthly', 'six_months', 'yearly']);
+const PLANS = new Set<ManualPaymentPlan>(['monthly', 'yearly', 'lifetime']);
 const MSB_DEFAULT_AMOUNTS = {
-  monthly: 149000,
-  sixMonths: 699000,
-  yearly: 1099000,
+  monthly: 99000,
+  yearly: 365000,
+  lifetime: 1699000,
 };
+const LIFETIME_PREMIUM_UNTIL = new Date('9999-12-31T23:59:59.000Z');
 
 let ensureManualPaymentTablePromise: Promise<void> | null = null;
 
@@ -64,9 +66,11 @@ async function ensureManualPaymentTable() {
           monthly_amount INTEGER,
           six_months_amount INTEGER,
           yearly_amount INTEGER,
+          lifetime_amount INTEGER,
           monthly_original_amount INTEGER,
           six_months_original_amount INTEGER,
           yearly_original_amount INTEGER,
+          lifetime_original_amount INTEGER,
           currency VARCHAR(8),
           note TEXT,
           updated_by BIGINT REFERENCES useraccount(id) ON DELETE SET NULL,
@@ -78,7 +82,15 @@ async function ensureManualPaymentTable() {
         ALTER TABLE manual_payment_setting
         ADD COLUMN IF NOT EXISTS monthly_original_amount INTEGER,
         ADD COLUMN IF NOT EXISTS six_months_original_amount INTEGER,
-        ADD COLUMN IF NOT EXISTS yearly_original_amount INTEGER;
+        ADD COLUMN IF NOT EXISTS yearly_original_amount INTEGER,
+        ADD COLUMN IF NOT EXISTS lifetime_amount INTEGER,
+        ADD COLUMN IF NOT EXISTS lifetime_original_amount INTEGER;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE useraccount
+        ADD COLUMN IF NOT EXISTS premium_trial_started_at TIMESTAMPTZ NULL,
+        ADD COLUMN IF NOT EXISTS premium_source VARCHAR(20) NULL,
+        ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255) NULL;
       `);
     })();
   }
@@ -92,6 +104,9 @@ function normalizeProvider(input: unknown): ManualPaymentProvider {
 
 function normalizePlan(input: unknown): ManualPaymentPlan {
   const value = String(input || '').trim().toLowerCase();
+  // Legacy plan retired in favor of yearly (same duration was never priced consistently with
+  // it — see six_months pricing bug). Map old clients straight to yearly instead of rejecting them.
+  if (value === 'six_months') return 'yearly';
   return PLANS.has(value as ManualPaymentPlan) ? (value as ManualPaymentPlan) : 'monthly';
 }
 
@@ -111,9 +126,9 @@ function envText(name: string, fallback = ''): string {
   return String(process.env[name] || fallback).trim();
 }
 
-function planAmountKey(plan: ManualPaymentPlan): 'monthly_amount' | 'six_months_amount' | 'yearly_amount' {
+function planAmountKey(plan: ManualPaymentPlan): 'monthly_amount' | 'yearly_amount' | 'lifetime_amount' {
   if (plan === 'yearly') return 'yearly_amount';
-  if (plan === 'six_months') return 'six_months_amount';
+  if (plan === 'lifetime') return 'lifetime_amount';
   return 'monthly_amount';
 }
 
@@ -130,18 +145,13 @@ async function getManualPaymentSetting(provider: ManualPaymentProvider) {
 
 async function getManualPaymentConfig(provider: ManualPaymentProvider, plan: ManualPaymentPlan) {
   const setting = await getManualPaymentSetting(provider);
-  const amountEnv =
-    plan === 'yearly'
-      ? 'YEARLY'
-      : plan === 'six_months'
-        ? 'SIX_MONTHS'
-        : 'MONTHLY';
+  const amountEnv = plan === 'lifetime' ? 'LIFETIME' : plan === 'yearly' ? 'YEARLY' : 'MONTHLY';
   const settingAmount = Number(setting?.[planAmountKey(plan)] || 0);
   if (provider === 'PAYPAY') {
     return {
       amount: Number.isFinite(settingAmount) && settingAmount > 0
         ? Math.round(settingAmount)
-        : envNumber(`MANUAL_PAYMENT_PAYPAY_${amountEnv}_AMOUNT`, plan === 'yearly' ? 5999 : plan === 'six_months' ? 2999 : 599),
+        : envNumber(`MANUAL_PAYMENT_PAYPAY_${amountEnv}_AMOUNT`, plan === 'lifetime' ? 16999 : plan === 'yearly' ? 3650 : 990),
       currency: String(setting?.currency || 'JPY'),
       accountName: String(setting?.account_name || envText('MANUAL_PAYMENT_PAYPAY_ACCOUNT_NAME')),
       accountNo: String(setting?.account_no || envText('MANUAL_PAYMENT_PAYPAY_ACCOUNT_ID')),
@@ -157,7 +167,7 @@ async function getManualPaymentConfig(provider: ManualPaymentProvider, plan: Man
   return {
     amount: Number.isFinite(settingAmount) && settingAmount > 0
       ? Math.round(settingAmount)
-      : envNumber(`MANUAL_PAYMENT_MSB_${amountEnv}_AMOUNT`, plan === 'yearly' ? MSB_DEFAULT_AMOUNTS.yearly : plan === 'six_months' ? MSB_DEFAULT_AMOUNTS.sixMonths : MSB_DEFAULT_AMOUNTS.monthly),
+      : envNumber(`MANUAL_PAYMENT_MSB_${amountEnv}_AMOUNT`, plan === 'lifetime' ? MSB_DEFAULT_AMOUNTS.lifetime : plan === 'yearly' ? MSB_DEFAULT_AMOUNTS.yearly : MSB_DEFAULT_AMOUNTS.monthly),
     currency: String(setting?.currency || 'VND'),
     accountName: String(setting?.account_name || envText('MANUAL_PAYMENT_MSB_ACCOUNT_NAME')),
     accountNo: String(setting?.account_no || envText('MANUAL_PAYMENT_MSB_ACCOUNT_NO')),
@@ -172,7 +182,6 @@ async function getManualPaymentConfig(provider: ManualPaymentProvider, plan: Man
 
 function premiumDays(plan: ManualPaymentPlan): number {
   if (plan === 'yearly') return envNumber('PREMIUM_YEARLY_DAYS', 365);
-  if (plan === 'six_months') return envNumber('PREMIUM_SIX_MONTHS_DAYS', 180);
   return envNumber('PREMIUM_MONTHLY_DAYS', 30);
 }
 
@@ -202,6 +211,7 @@ function buildVietQrImageUrl(args: {
 }
 
 function buildPremiumUntil(existing: Date | null, plan: ManualPaymentPlan) {
+  if (plan === 'lifetime') return LIFETIME_PREMIUM_UNTIL;
   const base = existing && existing.getTime() > Date.now() ? existing.getTime() : Date.now();
   return new Date(base + premiumDays(plan) * 24 * 60 * 60 * 1000);
 }
@@ -248,11 +258,11 @@ function discountPercent(originalAmount: number | null, currentAmount: number): 
 
 function mapSettingRow(row: any, provider: ManualPaymentProvider) {
   const monthlyAmount = Number(row?.monthly_amount || envNumber(`MANUAL_PAYMENT_${provider}_MONTHLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.monthly : 599));
-  const sixMonthsAmount = Number(row?.six_months_amount || envNumber(`MANUAL_PAYMENT_${provider}_SIX_MONTHS_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.sixMonths : 2999));
   const yearlyAmount = Number(row?.yearly_amount || envNumber(`MANUAL_PAYMENT_${provider}_YEARLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.yearly : 5999));
+  const lifetimeAmount = Number(row?.lifetime_amount || envNumber(`MANUAL_PAYMENT_${provider}_LIFETIME_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.lifetime : 16999));
   const monthlyOriginalAmount = cleanSettingNumber(row?.monthly_original_amount);
-  const sixMonthsOriginalAmount = cleanSettingNumber(row?.six_months_original_amount);
   const yearlyOriginalAmount = cleanSettingNumber(row?.yearly_original_amount);
+  const lifetimeOriginalAmount = cleanSettingNumber(row?.lifetime_original_amount);
   return {
     provider,
     enabled: row ? Boolean(row.enabled) : true,
@@ -264,14 +274,14 @@ function mapSettingRow(row: any, provider: ManualPaymentProvider) {
     qrImageUrlTemplate: '',
     qrTemplate: row?.qr_template || (provider === 'MSB' ? envText('MANUAL_PAYMENT_MSB_QR_TEMPLATE', 'compact2') : ''),
     monthlyAmount,
-    sixMonthsAmount,
     yearlyAmount,
+    lifetimeAmount,
     monthlyOriginalAmount,
-    sixMonthsOriginalAmount,
     yearlyOriginalAmount,
+    lifetimeOriginalAmount,
     monthlyDiscountPercent: discountPercent(monthlyOriginalAmount, monthlyAmount),
-    sixMonthsDiscountPercent: discountPercent(sixMonthsOriginalAmount, sixMonthsAmount),
     yearlyDiscountPercent: discountPercent(yearlyOriginalAmount, yearlyAmount),
+    lifetimeDiscountPercent: discountPercent(lifetimeOriginalAmount, lifetimeAmount),
     currency: row?.currency || (provider === 'MSB' ? 'VND' : 'JPY'),
     note: row?.note || '',
     updatedAt: row?.updated_at || null,
@@ -304,11 +314,11 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
   const qrImageUrlTemplate = null;
   const qrTemplate = isMsb ? cleanSettingText(body?.qrTemplate, 64) || 'compact2' : null;
   const monthlyAmount = cleanSettingNumber(body?.monthlyAmount);
-  const sixMonthsAmount = cleanSettingNumber(body?.sixMonthsAmount);
   const yearlyAmount = cleanSettingNumber(body?.yearlyAmount);
+  const lifetimeAmount = cleanSettingNumber(body?.lifetimeAmount);
   const monthlyOriginalAmount = cleanSettingNumber(body?.monthlyOriginalAmount);
-  const sixMonthsOriginalAmount = cleanSettingNumber(body?.sixMonthsOriginalAmount);
   const yearlyOriginalAmount = cleanSettingNumber(body?.yearlyOriginalAmount);
+  const lifetimeOriginalAmount = cleanSettingNumber(body?.lifetimeOriginalAmount);
   const currency = cleanSettingText(body?.currency, 8) || (isMsb ? 'VND' : 'JPY');
   const note = cleanSettingText(body?.note, 2000);
 
@@ -316,16 +326,16 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
     INSERT INTO manual_payment_setting (
       provider, enabled, bank_id, account_no, account_name, qr_image_url,
       payment_url_template, qr_image_url_template, qr_template,
-      monthly_amount, six_months_amount, yearly_amount,
-      monthly_original_amount, six_months_original_amount, yearly_original_amount,
+      monthly_amount, yearly_amount, lifetime_amount,
+      monthly_original_amount, yearly_original_amount, lifetime_original_amount,
       currency, note, updated_by,
       created_at, updated_at
     )
     VALUES (
       ${provider}, ${enabled}, ${bankId}, ${accountNo}, ${accountName}, ${qrImageUrl},
       ${paymentUrlTemplate}, ${qrImageUrlTemplate}, ${qrTemplate},
-      ${monthlyAmount}, ${sixMonthsAmount}, ${yearlyAmount},
-      ${monthlyOriginalAmount}, ${sixMonthsOriginalAmount}, ${yearlyOriginalAmount},
+      ${monthlyAmount}, ${yearlyAmount}, ${lifetimeAmount},
+      ${monthlyOriginalAmount}, ${yearlyOriginalAmount}, ${lifetimeOriginalAmount},
       ${currency}, ${note}, ${BigInt(adminId)},
       NOW(), NOW()
     )
@@ -339,11 +349,11 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
       qr_image_url_template = EXCLUDED.qr_image_url_template,
       qr_template = EXCLUDED.qr_template,
       monthly_amount = EXCLUDED.monthly_amount,
-      six_months_amount = EXCLUDED.six_months_amount,
       yearly_amount = EXCLUDED.yearly_amount,
+      lifetime_amount = EXCLUDED.lifetime_amount,
       monthly_original_amount = EXCLUDED.monthly_original_amount,
-      six_months_original_amount = EXCLUDED.six_months_original_amount,
       yearly_original_amount = EXCLUDED.yearly_original_amount,
+      lifetime_original_amount = EXCLUDED.lifetime_original_amount,
       currency = EXCLUDED.currency,
       note = EXCLUDED.note,
       updated_by = EXCLUDED.updated_by,
@@ -360,30 +370,32 @@ export function createManualPaymentRouter() {
     const settings = await getAllManualPaymentSettings();
     res.set('Cache-Control', 'no-store');
     return res.json({
+      trialDays: envNumber('PREMIUM_TRIAL_DAYS', 30),
+      plans: ['trial', 'monthly', 'yearly', 'lifetime'],
       MSB: {
         enabled: settings.MSB.enabled,
         monthlyAmount: settings.MSB.monthlyAmount,
-        sixMonthsAmount: settings.MSB.sixMonthsAmount,
         yearlyAmount: settings.MSB.yearlyAmount,
+        lifetimeAmount: settings.MSB.lifetimeAmount,
         monthlyOriginalAmount: settings.MSB.monthlyOriginalAmount,
-        sixMonthsOriginalAmount: settings.MSB.sixMonthsOriginalAmount,
         yearlyOriginalAmount: settings.MSB.yearlyOriginalAmount,
+        lifetimeOriginalAmount: settings.MSB.lifetimeOriginalAmount,
         monthlyDiscountPercent: settings.MSB.monthlyDiscountPercent,
-        sixMonthsDiscountPercent: settings.MSB.sixMonthsDiscountPercent,
         yearlyDiscountPercent: settings.MSB.yearlyDiscountPercent,
+        lifetimeDiscountPercent: settings.MSB.lifetimeDiscountPercent,
         currency: settings.MSB.currency,
       },
       PAYPAY: {
         enabled: settings.PAYPAY.enabled,
         monthlyAmount: settings.PAYPAY.monthlyAmount,
-        sixMonthsAmount: settings.PAYPAY.sixMonthsAmount,
         yearlyAmount: settings.PAYPAY.yearlyAmount,
+        lifetimeAmount: settings.PAYPAY.lifetimeAmount,
         monthlyOriginalAmount: settings.PAYPAY.monthlyOriginalAmount,
-        sixMonthsOriginalAmount: settings.PAYPAY.sixMonthsOriginalAmount,
         yearlyOriginalAmount: settings.PAYPAY.yearlyOriginalAmount,
+        lifetimeOriginalAmount: settings.PAYPAY.lifetimeOriginalAmount,
         monthlyDiscountPercent: settings.PAYPAY.monthlyDiscountPercent,
-        sixMonthsDiscountPercent: settings.PAYPAY.sixMonthsDiscountPercent,
         yearlyDiscountPercent: settings.PAYPAY.yearlyDiscountPercent,
+        lifetimeDiscountPercent: settings.PAYPAY.lifetimeDiscountPercent,
         currency: settings.PAYPAY.currency,
       },
     });
@@ -486,7 +498,11 @@ export function createAdminManualPaymentRouter() {
     await requireAdmin(_req);
     const settings = await getAllManualPaymentSettings();
     res.set('Cache-Control', 'no-store');
-    return res.json(settings);
+    return res.json({
+      trialDays: envNumber('PREMIUM_TRIAL_DAYS', 30),
+      plans: ['trial', 'monthly', 'yearly', 'lifetime'],
+      ...settings,
+    });
   });
 
   router.put('/settings', async (req: Request, res: Response) => {
@@ -540,7 +556,7 @@ export function createAdminManualPaymentRouter() {
       `);
       const payment = rows[0];
       if (!payment) return null;
-      if (payment.status === 'APPROVED') return payment;
+      if (payment.status === 'APPROVED') return { payment, user: null, premiumUntil: null, newlyApproved: false };
       if (payment.status === 'REJECTED') {
         const error = new Error('Cannot approve a rejected payment') as Error & { status?: number };
         error.status = 400;
@@ -559,6 +575,7 @@ export function createAdminManualPaymentRouter() {
         data: {
           plan: 'PREMIUM',
           premiumValidUntil: premiumUntil,
+          premiumSource: 'manual',
         },
       });
       const updatedRows = await tx.$queryRaw<any[]>(Prisma.sql`
@@ -571,11 +588,29 @@ export function createAdminManualPaymentRouter() {
         WHERE id = ${BigInt(id)}
         RETURNING *
       `);
-      return updatedRows[0];
+      return { payment: updatedRows[0], user, premiumUntil, newlyApproved: true };
     });
 
     if (!result) return res.status(404).json({ message: 'Payment request not found' });
-    return res.json({ request: mapPaymentRow(result) });
+    if (result.newlyApproved && result.user && result.premiumUntil) {
+      await notifyTelegram({
+        title: 'Manual payment approved',
+        lines: [
+          `User: ${formatUserLine({
+            id: result.user.id,
+            username: result.user.username,
+            fullname: result.user.fullname,
+            email: result.user.email,
+          })}`,
+          `Plan: ${result.payment.billing_period}`,
+          `Amount: ${result.payment.amount} ${result.payment.currency}`,
+          `Provider: ${result.payment.provider}`,
+          `Payment code: ${result.payment.payment_code}`,
+          `Premium until: ${result.premiumUntil.toISOString()}`,
+        ],
+      });
+    }
+    return res.json({ request: mapPaymentRow(result.payment) });
   });
 
   router.post('/:id/reject', async (req: Request, res: Response) => {
