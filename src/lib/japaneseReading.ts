@@ -2,7 +2,10 @@ import path from 'path';
 
 type KuromojiToken = {
   surface_form: string;
+  basic_form?: string;
   reading?: string;
+  pos?: string;
+  pos_detail_1?: string;
 };
 
 type KuromojiTokenizer = {
@@ -40,6 +43,13 @@ export async function toRubyHtml(text: string, options?: ReadingConvertOptions):
   const lines = cleaned.split('\n');
   const convertedLines = lines.map((line) => tokenizeLineToRubyHtml(tokenizer, line, surfaceReadings));
   return convertedLines.join('<br/>');
+}
+
+export async function tokenizeJapaneseText(text: string): Promise<KuromojiToken[]> {
+  const normalized = String(text || '');
+  if (!normalized.trim()) return [];
+  const tokenizer = await getTokenizer();
+  return tokenizer.tokenize(normalized);
 }
 
 function tokenizeLineToHiragana(
