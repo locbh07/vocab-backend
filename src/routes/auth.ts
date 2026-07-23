@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../lib/prisma';
 import { formatUserLine, notifyTelegram } from '../lib/telegram';
+import { signAuthToken } from '../lib/authToken';
 
 const googleOAuthClient = new OAuth2Client();
 const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
@@ -73,6 +74,7 @@ export function createAuthRouter() {
           success: true,
           message: 'Register success',
           user: sanitizeUser(created),
+          token: signAuthToken({ userId: Number(created.id) }),
         });
       }
 
@@ -153,6 +155,7 @@ export function createAuthRouter() {
               premiumTrialStartedAt: inserted.premium_trial_started_at,
             }
           : null,
+        token: inserted ? signAuthToken({ userId: Number(inserted.id) }) : undefined,
       });
     } catch (error) {
       return res.status(500).json({ success: false, message: (error as Error).message });
@@ -185,6 +188,7 @@ export function createAuthRouter() {
           success: true,
           message: 'Đăng nhập thành công',
           user: sanitizeUser(profile),
+          token: signAuthToken({ userId: Number(profile.id) }),
         });
       }
 
@@ -242,6 +246,7 @@ export function createAuthRouter() {
             }
           : null,
         session: signInData.session,
+        token: profile ? signAuthToken({ userId: Number(profile.id) }) : undefined,
       });
     } catch (error) {
       const status = (error as { status?: number })?.status || 500;
@@ -358,6 +363,7 @@ export function createAuthRouter() {
         message: 'Google login success',
         user: sanitizeUser(user),
         session,
+        token: signAuthToken({ userId: Number(user.id) }),
       });
     } catch (error) {
       const status = (error as { status?: number })?.status || 500;

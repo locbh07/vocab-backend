@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import { prisma } from './prisma';
+import { readBearerToken, verifyAuthToken } from './authToken';
 
 export type ContentAccess = {
   isPremium: boolean;
@@ -7,9 +8,9 @@ export type ContentAccess = {
 };
 
 function readUserId(req: Request): number | null {
-  const raw = req.header('X-User-Id') || req.query.userId;
-  const userId = Number(raw);
-  return Number.isSafeInteger(userId) && userId > 0 ? userId : null;
+  const token = readBearerToken(req.header('Authorization'));
+  const decoded = token ? verifyAuthToken(token) : null;
+  return decoded?.userId ?? null;
 }
 
 export function isPremiumRole(role: unknown): boolean {

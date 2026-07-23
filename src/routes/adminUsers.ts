@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
 import { dateOnly } from '../lib/http';
+import { signAuthToken } from '../lib/authToken';
 
 const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
 const USER_PLANS = new Set(['FREE', 'PREMIUM']);
@@ -152,6 +153,7 @@ export function createAdminUsersRouter() {
     const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
     return res.json({
       user: sanitizeUser(target),
+      token: signAuthToken({ userId: Number(target.id), impersonatedBy: admin.id }),
       impersonation: {
         mode: 'admin_impersonation',
         adminId: admin.id,

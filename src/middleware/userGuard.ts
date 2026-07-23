@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import { prisma } from '../lib/prisma';
+import { readBearerToken, verifyAuthToken } from '../lib/authToken';
 
 export type UserIdentity = {
   id: number;
@@ -11,8 +12,9 @@ export type UserIdentity = {
 };
 
 export async function requireUser(req: Request): Promise<UserIdentity> {
-  const rawUserId = req.header('X-User-Id');
-  const userId = rawUserId ? Number(rawUserId) : NaN;
+  const token = readBearerToken(req.header('Authorization'));
+  const decoded = token ? verifyAuthToken(token) : null;
+  const userId = decoded?.userId ?? NaN;
 
   if (!Number.isSafeInteger(userId) || userId <= 0) {
     const error = new Error('Bạn cần đăng nhập để thực hiện thao tác này.') as Error & { status?: number };

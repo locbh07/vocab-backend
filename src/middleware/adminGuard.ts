@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import { prisma } from '../lib/prisma';
+import { readBearerToken, verifyAuthToken } from '../lib/authToken';
 
 type AdminIdentity = {
   id: number;
@@ -8,19 +9,16 @@ type AdminIdentity = {
 };
 
 export async function requireAdmin(req: Request): Promise<AdminIdentity> {
-  const adminUsername = String(req.header('X-Admin-Username') || '').trim();
-  const idHeader = req.header('X-Admin-UserId');
-  const adminUserId = idHeader ? Number(idHeader) : null;
+  const token = readBearerToken(req.header('Authorization'));
+  const decoded = token ? verifyAuthToken(token) : null;
 
-  if (!adminUsername && !adminUserId) {
+  if (!decoded) {
     const error = new Error('Missing admin identity') as Error & { status?: number };
     error.status = 401;
     throw error;
   }
 
-  const user = adminUserId
-    ? await prisma.userAccount.findUnique({ where: { id: BigInt(adminUserId) } })
-    : await prisma.userAccount.findUnique({ where: { username: adminUsername } });
+  const user = await prisma.userAccount.findUnique({ where: { id: BigInt(decoded.userId) } });
 
   if (!user) {
     const error = new Error('Admin not found') as Error & { status?: number };
