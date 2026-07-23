@@ -147,15 +147,6 @@ function normalizeCorodomoVocabulary(vocabularyData) {
   return out;
 }
 
-function sqlQuote(value) {
-  if (value === null || value === undefined) return "NULL";
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function sqlNumberOrNull(value) {
-  return Number.isFinite(Number(value)) ? String(Number(value)) : "NULL";
-}
-
 async function ensureTables() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS listening_video (
@@ -280,27 +271,26 @@ async function main() {
   const corodomoVocabulary = normalizeCorodomoVocabulary(corodomoVocabularyRaw);
   for (let index = 0; index < corodomoVocabulary.length; index += 500) {
     const chunk = corodomoVocabulary.slice(index, index + 500);
-    const values = chunk
-      .map(
+    const rows = Prisma.join(
+      chunk.map(
         (item) =>
-          `(${sqlQuote(item.text)}, ${sqlQuote(item.lang)}, ${sqlQuote(item.targetLang)}, ${sqlQuote(
-            item.translation,
-          )}, ${sqlQuote(item.pos)}, ${sqlQuote(item.level)}, ${sqlQuote(item.sourceQuery)}, NOW(), NOW())`,
-      )
-      .join(",\n");
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO listening_corodomo_vocabulary (
-        text, lang, target_lang, translation, pos, level, source_query, created_at, updated_at
-      ) VALUES
-      ${values}
-      ON CONFLICT (text, lang, target_lang)
-      DO UPDATE SET
-        translation = EXCLUDED.translation,
-        pos = EXCLUDED.pos,
-        level = EXCLUDED.level,
-        source_query = EXCLUDED.source_query,
-        updated_at = NOW()
-    `);
+          Prisma.sql`(${item.text}, ${item.lang}, ${item.targetLang}, ${item.translation}, ${item.pos}, ${item.level}, ${item.sourceQuery}, NOW(), NOW())`,
+      ),
+    );
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO listening_corodomo_vocabulary (
+          text, lang, target_lang, translation, pos, level, source_query, created_at, updated_at
+        ) VALUES ${rows}
+        ON CONFLICT (text, lang, target_lang)
+        DO UPDATE SET
+          translation = EXCLUDED.translation,
+          pos = EXCLUDED.pos,
+          level = EXCLUDED.level,
+          source_query = EXCLUDED.source_query,
+          updated_at = NOW()
+      `,
+    );
     importedCorodomoVocabulary += chunk.length;
   }
 
@@ -342,48 +332,44 @@ async function main() {
       Prisma.sql`DELETE FROM listening_transcript_line WHERE video_id = ${video.video_id}`,
     );
     if (lines.length > 0) {
-      const values = lines
-        .map(
+      const rows = Prisma.join(
+        lines.map(
           (line) =>
-            `(${sqlQuote(line.video_id)}, ${line.line_index}, ${sqlQuote(line.text)}, ${sqlNumberOrNull(
-              line.start_sec,
-            )}, ${sqlNumberOrNull(line.end_sec)}, ${sqlNumberOrNull(line.dur_sec)}, ${sqlQuote(
-              line.ruby_html,
-            )})`,
-        )
-        .join(",\n");
-      await prisma.$executeRawUnsafe(`
-        INSERT INTO listening_transcript_line (
-          video_id, line_index, text, start_sec, end_sec, dur_sec, ruby_html
-        ) VALUES
-        ${values}
-      `);
+            Prisma.sql`(${line.video_id}, ${line.line_index}, ${line.text}, ${line.start_sec}, ${line.end_sec}, ${line.dur_sec}, ${line.ruby_html})`,
+        ),
+      );
+      await prisma.$executeRaw(
+        Prisma.sql`
+          INSERT INTO listening_transcript_line (
+            video_id, line_index, text, start_sec, end_sec, dur_sec, ruby_html
+          ) VALUES ${rows}
+        `,
+      );
     }
     importedLines += lines.length;
 
     const translationLines = normalizeTranslationLines(video.video_id, translationRaw);
     if (translationLines.length > 0) {
       const sourceByIndex = new Map(lines.map((line) => [line.line_index, line.text]));
-      const values = translationLines
-        .map((line) => {
+      const rows = Prisma.join(
+        translationLines.map((line) => {
           const sourceText = sourceByIndex.get(line.line_index) || line.source_text || "";
-          return `(${sqlQuote(line.video_id)}, ${line.line_index}, ${sqlQuote(line.language)}, ${sqlQuote(
-            sourceText,
-          )}, ${sqlQuote(line.translation)}, ${sqlQuote(line.provider)}, NOW(), NOW())`;
-        })
-        .join(",\n");
-      await prisma.$executeRawUnsafe(`
-        INSERT INTO listening_transcript_translation (
-          video_id, line_index, language, source_text, translation, provider, created_at, updated_at
-        ) VALUES
-        ${values}
-        ON CONFLICT (video_id, line_index, language)
-        DO UPDATE SET
-          source_text = EXCLUDED.source_text,
-          translation = EXCLUDED.translation,
-          provider = EXCLUDED.provider,
-          updated_at = NOW()
-      `);
+          return Prisma.sql`(${line.video_id}, ${line.line_index}, ${line.language}, ${sourceText}, ${line.translation}, ${line.provider}, NOW(), NOW())`;
+        }),
+      );
+      await prisma.$executeRaw(
+        Prisma.sql`
+          INSERT INTO listening_transcript_translation (
+            video_id, line_index, language, source_text, translation, provider, created_at, updated_at
+          ) VALUES ${rows}
+          ON CONFLICT (video_id, line_index, language)
+          DO UPDATE SET
+            source_text = EXCLUDED.source_text,
+            translation = EXCLUDED.translation,
+            provider = EXCLUDED.provider,
+            updated_at = NOW()
+        `,
+      );
     }
     importedTranslations += translationLines.length;
 

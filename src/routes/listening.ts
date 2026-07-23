@@ -119,6 +119,7 @@ const TRANSCRIPT_LINE_CORRECTIONS = new Map([
 const COMB_HAIR_RUBY_HTML =
   '<ruby>櫛<rt>くし</rt></ruby>で<ruby>髪<rt>かみ</rt></ruby>をとかします';
 let ensureListeningTranslationTablePromise: Promise<void> | null = null;
+let ensureListeningCorodomoVocabularyTablePromise: Promise<void> | null = null;
 
 function normalizeLevel(input: unknown) {
   return String(input || '').trim().toLowerCase();
@@ -768,18 +769,18 @@ async function replaceListeningTranscript(videoId: string, lines: YoutubeTranscr
   );
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const startSec = line.start === null ? null : String(line.start);
-    const endSec = line.end === null ? null : String(line.end);
-    const durSec = line.dur === null ? null : String(line.dur);
+    const startSec = Number.isFinite(line.start) ? Number(line.start) : null;
+    const endSec = Number.isFinite(line.end) ? Number(line.end) : null;
+    const durSec = Number.isFinite(line.dur) ? Number(line.dur) : null;
     await prisma.$executeRaw(
       Prisma.sql`
         INSERT INTO listening_transcript_line (
           video_id, line_index, text, start_sec, end_sec, dur_sec, ruby_html
         ) VALUES (
           ${videoId}, ${index}, ${line.text},
-          ${startSec}::double precision,
-          ${endSec}::double precision,
-          ${durSec}::double precision,
+          ${startSec},
+          ${endSec},
+          ${durSec},
           ${null}
         )
       `,
@@ -937,6 +938,19 @@ async function readCorodomoCookieHeader() {
   return '';
 }
 
+const CORODOMO_AI_LOOKUP_CONCURRENCY = 4;
+
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  async function next(): Promise<void> {
+    const current = cursor++;
+    if (current >= items.length) return;
+    await worker(items[current]);
+    return next();
+  }
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, () => next()));
+}
+
 async function fetchCorodomoAiVocabulary(term: string) {
   const query = normalizeLookupQuery(term);
   if (!query || !isJapaneseContentToken(query)) return [];
@@ -1071,16 +1085,16 @@ function isNumberToken(token: ListeningVocabLookupToken) {
   return token.posDetail === '数' || /^[0-9０-９一二三四五六七八九十百千万億兆]+$/u.test(token.surface);
 }
 
-function isCounterSuffixToken(token: ListeningVocabLookupToken) {
-  return NUMBER_COUNTER_SUFFIXES.has(token.surface);
+function isCounterSuffixToken(token: ListeningVocabLookupToken | undefined) {
+  return Boolean(token) && NUMBER_COUNTER_SUFFIXES.has(token!.surface);
 }
 
 function isInflectableToken(token: ListeningVocabLookupToken) {
   return token.pos === '動詞' || token.pos === '形容詞';
 }
 
-function isAuxiliaryToken(token: ListeningVocabLookupToken) {
-  return token.pos === '助動詞';
+function isAuxiliaryToken(token: ListeningVocabLookupToken | undefined) {
+  return Boolean(token) && token!.pos === '助動詞';
 }
 
 function collectLookupWords(keys: string[], wordsByKey: Map<string, ListeningVocabLookupWord[]>) {
@@ -1188,6 +1202,44 @@ function compactLookupTokens(
     });
   }
   return out;
+}
+
+async function ensureListeningCorodomoVocabularyTable() {
+  if (!ensureListeningCorodomoVocabularyTablePromise) {
+    ensureListeningCorodomoVocabularyTablePromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS listening_corodomo_vocabulary (
+          id BIGSERIAL PRIMARY KEY,
+          text TEXT NOT NULL,
+          lang VARCHAR(10) NOT NULL DEFAULT 'ja',
+          target_lang VARCHAR(10) NOT NULL DEFAULT 'vi',
+          translation TEXT NOT NULL,
+          pos TEXT,
+          level VARCHAR(50),
+          source_query TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT listening_corodomo_vocabulary_text_lang_uniq UNIQUE(text, lang, target_lang)
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_listening_corodomo_vocabulary_lookup
+        ON listening_corodomo_vocabulary (text, lang, target_lang);
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_corodomo_vocabulary
+        ADD COLUMN IF NOT EXISTS pos TEXT;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_corodomo_vocabulary
+        ADD COLUMN IF NOT EXISTS level VARCHAR(50);
+      `);
+    })().catch((error) => {
+      ensureListeningCorodomoVocabularyTablePromise = null;
+      throw error;
+    });
+  }
+  return ensureListeningCorodomoVocabularyTablePromise;
 }
 
 async function ensureListeningTranslationTable() {
@@ -1347,6 +1399,7 @@ export function createListeningRouter() {
   });
 
   router.post('/vocab-lookup', async (req: Request, res: Response) => {
+    try {
     const rawTexts = Array.isArray(req.body?.texts)
       ? req.body.texts
       : [req.body?.text];
@@ -1400,33 +1453,7 @@ export function createListeningRouter() {
     let terms = Array.from(candidates).filter((term) => term.length > 0).slice(0, 1200);
     const wordsByKey = new Map<string, ListeningVocabLookupWord[]>();
     if (terms.length > 0) {
-      await prisma.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS listening_corodomo_vocabulary (
-          id BIGSERIAL PRIMARY KEY,
-          text TEXT NOT NULL,
-          lang VARCHAR(10) NOT NULL DEFAULT 'ja',
-          target_lang VARCHAR(10) NOT NULL DEFAULT 'vi',
-          translation TEXT NOT NULL,
-          pos TEXT,
-          level VARCHAR(50),
-          source_query TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CONSTRAINT listening_corodomo_vocabulary_text_lang_uniq UNIQUE(text, lang, target_lang)
-        );
-      `);
-      await prisma.$executeRawUnsafe(`
-        CREATE INDEX IF NOT EXISTS idx_listening_corodomo_vocabulary_lookup
-        ON listening_corodomo_vocabulary (text, lang, target_lang);
-      `);
-      await prisma.$executeRawUnsafe(`
-        ALTER TABLE listening_corodomo_vocabulary
-        ADD COLUMN IF NOT EXISTS pos TEXT;
-      `);
-      await prisma.$executeRawUnsafe(`
-        ALTER TABLE listening_corodomo_vocabulary
-        ADD COLUMN IF NOT EXISTS level VARCHAR(50);
-      `);
+      await ensureListeningCorodomoVocabularyTable();
 
       const exactSpanTerms = new Set<string>();
       for (const line of tokenizedLines) {
@@ -1453,11 +1480,10 @@ export function createListeningRouter() {
           `,
         );
         const existingExact = new Set(existingExactRows.map((row) => String(row.text || '').trim()).filter(Boolean));
-        for (const term of exactSpanTerms) {
-          if (!existingExact.has(term)) {
-            await cacheCorodomoAiVocabulary(term).catch(() => []);
-          }
-        }
+        const missingTerms = Array.from(exactSpanTerms).filter((term) => !existingExact.has(term));
+        await runWithConcurrency(missingTerms, CORODOMO_AI_LOOKUP_CONCURRENCY, async (term) => {
+          await cacheCorodomoAiVocabulary(term).catch(() => []);
+        });
       }
 
       const corodomoRows = await prisma.$queryRaw<ListeningCorodomoVocabLookupRow[]>(
@@ -1518,6 +1544,14 @@ export function createListeningRouter() {
     }
 
     return res.json({ lines });
+    } catch (error) {
+      console.error('Cannot resolve vocab lookup', error);
+      return res.status(502).json({
+        success: false,
+        code: 'VOCAB_LOOKUP_FAILED',
+        message: 'Khong tra duoc tu vung cho cau nay. Vui long thu lai sau.',
+      });
+    }
   });
 
   router.post('/import-youtube', async (req: Request, res: Response) => {
