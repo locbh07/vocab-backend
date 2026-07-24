@@ -120,6 +120,7 @@ const COMB_HAIR_RUBY_HTML =
   '<ruby>櫛<rt>くし</rt></ruby>で<ruby>髪<rt>かみ</rt></ruby>をとかします';
 let ensureListeningTranslationTablePromise: Promise<void> | null = null;
 let ensureListeningCorodomoVocabularyTablePromise: Promise<void> | null = null;
+let ensureListeningSummaryTablePromise: Promise<void> | null = null;
 
 function normalizeLevel(input: unknown) {
   return String(input || '').trim().toLowerCase();
@@ -1242,6 +1243,220 @@ async function ensureListeningCorodomoVocabularyTable() {
   return ensureListeningCorodomoVocabularyTablePromise;
 }
 
+async function ensureListeningSummaryTable() {
+  if (!ensureListeningSummaryTablePromise) {
+    ensureListeningSummaryTablePromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS listening_video_summary (
+          id BIGSERIAL PRIMARY KEY,
+          video_id VARCHAR(20) NOT NULL,
+          language VARCHAR(10) NOT NULL,
+          summary TEXT NOT NULL,
+          key_points TEXT[] NOT NULL DEFAULT '{}',
+          model VARCHAR(100),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT listening_video_summary_video_fk
+            FOREIGN KEY (video_id) REFERENCES listening_video(video_id) ON DELETE CASCADE,
+          CONSTRAINT listening_video_summary_video_lang_uniq
+            UNIQUE(video_id, language)
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video_summary
+        ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'ai';
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video_summary
+        ADD COLUMN IF NOT EXISTS format VARCHAR(20) NOT NULL DEFAULT 'text';
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video_summary
+        ADD COLUMN IF NOT EXISTS key_vocabulary JSONB NOT NULL DEFAULT '[]';
+      `);
+    })().catch((error) => {
+      ensureListeningSummaryTablePromise = null;
+      throw error;
+    });
+  }
+  return ensureListeningSummaryTablePromise;
+}
+
+type StoredSummaryRow = {
+  summary: string;
+  key_points: string[];
+  model: string | null;
+  source: string;
+  format: string;
+  key_vocabulary: unknown;
+};
+
+async function readStoredSummary(videoId: string, language: string): Promise<StoredSummaryRow | null> {
+  await ensureListeningSummaryTable();
+  const rows = await prisma.$queryRaw<StoredSummaryRow[]>(
+    Prisma.sql`
+      SELECT summary, key_points, model, source, format, key_vocabulary
+      FROM listening_video_summary
+      WHERE video_id = ${videoId} AND language = ${language}
+      LIMIT 1
+    `,
+  );
+  return rows[0] || null;
+}
+
+async function saveStoredSummary(
+  videoId: string,
+  language: string,
+  summary: string,
+  keyPoints: string[],
+  model: string,
+  source: string,
+  format: string,
+  keyVocabulary: unknown[],
+): Promise<void> {
+  await ensureListeningSummaryTable();
+  await prisma.$executeRaw(
+    Prisma.sql`
+      INSERT INTO listening_video_summary (
+        video_id, language, summary, key_points, model, source, format, key_vocabulary, created_at, updated_at
+      )
+      VALUES (
+        ${videoId}, ${language}, ${summary}, ${keyPoints}, ${model}, ${source}, ${format},
+        ${JSON.stringify(keyVocabulary)}::jsonb, NOW(), NOW()
+      )
+      ON CONFLICT (video_id, language)
+      DO UPDATE SET
+        summary = EXCLUDED.summary,
+        key_points = EXCLUDED.key_points,
+        model = EXCLUDED.model,
+        source = EXCLUDED.source,
+        format = EXCLUDED.format,
+        key_vocabulary = EXCLUDED.key_vocabulary,
+        updated_at = NOW()
+    `,
+  );
+}
+
+async function resolveCorodomoVideoCuid(videoId: string): Promise<string> {
+  const rows = await prisma.$queryRaw<Array<{ source_id: string | null }>>(
+    Prisma.sql`SELECT source_id FROM listening_video WHERE video_id = ${videoId} LIMIT 1`,
+  );
+  const raw = String(rows[0]?.source_id || '').replace(/^crawl-/, '').trim();
+  return /^cm[a-z0-9]+$/i.test(raw) ? raw : '';
+}
+
+async function fetchCorodomoVideoSummary(
+  corodomoCuid: string,
+  language: string,
+): Promise<{ summary: string; keyVocabulary: unknown[] } | null> {
+  try {
+    const cookie = await readCorodomoCookieHeader();
+    const response = await fetch(
+      `https://corodomo.com/api/v1/videos/${encodeURIComponent(corodomoCuid)}/summary?lang=${encodeURIComponent(language)}`,
+      {
+        headers: {
+          accept: 'application/json',
+          referer: 'https://corodomo.com/videos',
+          'user-agent': 'Mozilla/5.0',
+          ...(cookie ? { cookie } : {}),
+        },
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { data?: { data?: unknown; keyVocabulary?: unknown } };
+    const markdown = String(payload?.data?.data || '').trim();
+    if (!markdown) return null;
+    const keyVocabulary = Array.isArray(payload?.data?.keyVocabulary) ? payload.data.keyVocabulary : [];
+    return { summary: markdown, keyVocabulary };
+  } catch {
+    return null;
+  }
+}
+
+const SUMMARY_LANGUAGE_NAMES: Record<string, string> = {
+  vi: 'Vietnamese',
+  en: 'English',
+  ja: 'Japanese',
+};
+
+async function generateListeningSummary(
+  transcriptText: string,
+  language: string,
+): Promise<{ summary: string; keyPoints: string[]; model: string }> {
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) {
+    const error = new Error('OPENAI_API_KEY is not configured') as Error & { status?: number };
+    error.status = 500;
+    throw error;
+  }
+  const model = process.env.OPENAI_LISTENING_SUMMARY_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const languageName = SUMMARY_LANGUAGE_NAMES[language] || 'Vietnamese';
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    signal: AbortSignal.timeout(60_000),
+    body: JSON.stringify({
+      model,
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Ban la giao vien tieng Nhat. Tom tat noi dung video luyen nghe cho hoc vien JLPT. ' +
+            `Tra loi bang tieng ${languageName}, ro rang, ngan gon, dung dinh dang JSON { "summary": string, "keyPoints": string[] }. ` +
+            'summary la doan tom tat 3-5 cau. keyPoints la 3-6 y chinh, moi y mot cau ngan.',
+        },
+        {
+          role: 'user',
+          content: `Day la phu de day du cua video (tieng Nhat):\n\n${transcriptText.slice(0, 12000)}`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    const error = new Error(`OpenAI request failed (${response.status}): ${detail}`) as Error & { status?: number };
+    error.status = 502;
+    throw error;
+  }
+
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const rawContent = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!rawContent) {
+    const error = new Error('OpenAI returned empty summary') as Error & { status?: number };
+    error.status = 502;
+    throw error;
+  }
+
+  let parsed: { summary?: unknown; keyPoints?: unknown };
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    const error = new Error('OpenAI returned invalid summary JSON') as Error & { status?: number };
+    error.status = 502;
+    throw error;
+  }
+
+  const summary = String(parsed?.summary || '').trim();
+  const keyPoints = Array.isArray(parsed?.keyPoints)
+    ? parsed.keyPoints.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+    : [];
+  if (!summary) {
+    const error = new Error('OpenAI returned empty summary') as Error & { status?: number };
+    error.status = 502;
+    throw error;
+  }
+
+  return { summary, keyPoints, model };
+}
+
 async function ensureListeningTranslationTable() {
   if (!ensureListeningTranslationTablePromise) {
     ensureListeningTranslationTablePromise = (async () => {
@@ -1799,6 +2014,118 @@ export function createListeningRouter() {
     });
 
     return res.json({ videoId, lines });
+  });
+
+  router.get('/videos/:videoId/summary', async (req: Request, res: Response) => {
+    const access = await resolveContentAccess(req);
+    const videoId = String(req.params.videoId || '').trim();
+    if (!videoId) {
+      return res.status(400).json({ success: false, message: 'videoId is required' });
+    }
+    const language = String(req.query.language || 'vi').trim().toLowerCase() || 'vi';
+
+    const videoRows = await prisma.$queryRaw<Array<{ is_free_preview: boolean | null }>>(
+      Prisma.sql`
+        SELECT is_free_preview
+        FROM listening_video
+        WHERE video_id = ${videoId}
+        LIMIT 1
+      `,
+    );
+    if (!videoRows.length) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+    if (!access.isPremium && !(await isUnlockedListeningPreviewVideo(videoId, String(req.query.level || '')))) {
+      return res.status(403).json({
+        success: false,
+        code: 'PREMIUM_REQUIRED',
+        message: 'Tom tat video nay danh cho thanh vien Premium.',
+      });
+    }
+
+    try {
+      const cached = await readStoredSummary(videoId, language);
+      if (cached) {
+        return res.json({
+          success: true,
+          videoId,
+          language,
+          summary: cached.summary,
+          keyPoints: Array.isArray(cached.key_points) ? cached.key_points : [],
+          keyVocabulary: Array.isArray(cached.key_vocabulary) ? cached.key_vocabulary : [],
+          source: cached.source || 'ai',
+          format: cached.format || 'text',
+          cached: true,
+        });
+      }
+
+      const corodomoCuid = await resolveCorodomoVideoCuid(videoId);
+      if (corodomoCuid) {
+        const corodomoSummary = await fetchCorodomoVideoSummary(corodomoCuid, language);
+        if (corodomoSummary) {
+          await saveStoredSummary(
+            videoId,
+            language,
+            corodomoSummary.summary,
+            [],
+            'corodomo',
+            'corodomo',
+            'markdown',
+            corodomoSummary.keyVocabulary,
+          );
+          return res.json({
+            success: true,
+            videoId,
+            language,
+            summary: corodomoSummary.summary,
+            keyPoints: [],
+            keyVocabulary: corodomoSummary.keyVocabulary,
+            source: 'corodomo',
+            format: 'markdown',
+            cached: false,
+          });
+        }
+      }
+
+      const lineRows = await prisma.$queryRaw<Array<{ text: string }>>(
+        Prisma.sql`
+          SELECT text
+          FROM listening_transcript_line
+          WHERE video_id = ${videoId}
+          ORDER BY line_index ASC
+        `,
+      );
+      const transcriptText = lineRows.map((row) => row.text).join('\n').trim();
+      if (!transcriptText) {
+        return res.status(404).json({
+          success: false,
+          code: 'TRANSCRIPT_NOT_AVAILABLE',
+          message: 'Video nay chua co phu de de tom tat.',
+        });
+      }
+
+      const { summary, keyPoints, model } = await generateListeningSummary(transcriptText, language);
+      await saveStoredSummary(videoId, language, summary, keyPoints, model, 'ai', 'text', []);
+      return res.json({
+        success: true,
+        videoId,
+        language,
+        summary,
+        keyPoints,
+        keyVocabulary: [],
+        source: 'ai',
+        format: 'text',
+        cached: false,
+      });
+    } catch (error) {
+      console.error('Cannot generate listening summary', error);
+      const status = (error as { status?: number })?.status || 502;
+      return res.status(status).json({
+        success: false,
+        code: 'SUMMARY_GENERATION_FAILED',
+        message: 'Khong tao duoc ban tom tat. Vui long thu lai sau.',
+      });
+    }
   });
 
   return router;
