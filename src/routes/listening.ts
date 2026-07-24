@@ -9,6 +9,7 @@ import { prisma } from '../lib/prisma';
 import { resolveContentAccess } from '../lib/contentAccess';
 import { listeningVideoMaskRule } from '../lib/contentMasking';
 import { tokenizeJapaneseText } from '../lib/japaneseReading';
+import { requireUser } from '../middleware/userGuard';
 
 type ListeningVideoRow = {
   source_id: string | null;
@@ -27,6 +28,9 @@ type ListeningVideoRow = {
   video_url: string | null;
   embed_url: string | null;
   is_free_preview: boolean | null;
+  imported_by_user_id?: bigint | number | null;
+  is_favorited?: boolean | null;
+  is_mine?: boolean | null;
 };
 
 type TranscriptRow = {
@@ -121,6 +125,8 @@ const COMB_HAIR_RUBY_HTML =
 let ensureListeningTranslationTablePromise: Promise<void> | null = null;
 let ensureListeningCorodomoVocabularyTablePromise: Promise<void> | null = null;
 let ensureListeningSummaryTablePromise: Promise<void> | null = null;
+let ensureListeningVideoImporterColumnPromise: Promise<void> | null = null;
+let ensureListeningVideoFavoriteTablePromise: Promise<void> | null = null;
 
 function normalizeLevel(input: unknown) {
   return String(input || '').trim().toLowerCase();
@@ -152,6 +158,8 @@ function mapVideo(row: ListeningVideoRow) {
     videoUrl: row.video_url || `https://www.youtube.com/watch?v=${row.video_id}`,
     embedUrl: row.embed_url || `https://www.youtube.com/embed/${row.video_id}`,
     isFreePreview: Boolean(row.is_free_preview),
+    isFavorited: Boolean(row.is_favorited),
+    isMine: Boolean(row.is_mine),
   };
 }
 
@@ -270,18 +278,23 @@ function maskLockedListeningVideo(item: any) {
 }
 
 
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'm.youtube.com', 'music.youtube.com']);
+
 function extractYoutubeVideoId(input: unknown): string {
   const raw = String(input || '').trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+  if (!raw) return '';
+
+  const withProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw) ? raw : `https://${raw}`;
 
   try {
-    const url = new URL(raw);
+    const url = new URL(withProtocol);
     const host = url.hostname.replace(/^www\./, '').toLowerCase();
     if (host === 'youtu.be') {
       const candidate = url.pathname.split('/').filter(Boolean)[0] || '';
       return /^[a-zA-Z0-9_-]{11}$/.test(candidate) ? candidate : '';
     }
-    if (host.endsWith('youtube.com')) {
+    if (YOUTUBE_HOSTS.has(host)) {
       const watchId = url.searchParams.get('v') || '';
       if (/^[a-zA-Z0-9_-]{11}$/.test(watchId)) return watchId;
       const parts = url.pathname.split('/').filter(Boolean);
@@ -730,17 +743,20 @@ async function fetchYoutubeImportData(videoId: string, options: YoutubeImportOpt
   };
 }
 
-async function saveImportedYoutubeVideo(importData: YoutubeImportResult) {
+async function saveImportedYoutubeVideo(importData: YoutubeImportResult, importedByUserId: number | null) {
+  await ensureListeningVideoImporterColumn();
   await prisma.$executeRaw(
     Prisma.sql`
       INSERT INTO listening_video (
         source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
-        category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url, updated_at
+        category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url, updated_at,
+        imported_by_user_id
       ) VALUES (
         ${`youtube-import-${importData.videoId}`}, ${importData.videoId}, ${importData.title}, ${importData.durationSec},
         ${importData.thumbnail}, ${[]}, ${[]}, ${['youtube-import']}, ${'YouTube'}, ${'Imported'}, ${BigInt(importData.views || 0)},
         ${null}, ${null}, ${`https://www.youtube.com/watch?v=${importData.videoId}`},
-        ${`https://www.youtube.com/embed/${importData.videoId}`}, NOW()
+        ${`https://www.youtube.com/embed/${importData.videoId}`}, NOW(),
+        ${importedByUserId !== null ? BigInt(importedByUserId) : null}
       )
       ON CONFLICT (video_id) DO UPDATE SET
         source_id = COALESCE(listening_video.source_id, EXCLUDED.source_id),
@@ -755,6 +771,7 @@ async function saveImportedYoutubeVideo(importData: YoutubeImportResult) {
         views = EXCLUDED.views,
         video_url = EXCLUDED.video_url,
         embed_url = EXCLUDED.embed_url,
+        imported_by_user_id = COALESCE(listening_video.imported_by_user_id, EXCLUDED.imported_by_user_id),
         updated_at = NOW()
     `,
   );
@@ -1282,6 +1299,43 @@ async function ensureListeningSummaryTable() {
   return ensureListeningSummaryTablePromise;
 }
 
+async function ensureListeningVideoImporterColumn() {
+  if (!ensureListeningVideoImporterColumnPromise) {
+    ensureListeningVideoImporterColumnPromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video
+        ADD COLUMN IF NOT EXISTS imported_by_user_id BIGINT;
+      `);
+    })().catch((error) => {
+      ensureListeningVideoImporterColumnPromise = null;
+      throw error;
+    });
+  }
+  return ensureListeningVideoImporterColumnPromise;
+}
+
+async function ensureListeningVideoFavoriteTable() {
+  if (!ensureListeningVideoFavoriteTablePromise) {
+    ensureListeningVideoFavoriteTablePromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS listening_video_favorite (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          video_id VARCHAR(20) NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT listening_video_favorite_video_fk
+            FOREIGN KEY (video_id) REFERENCES listening_video(video_id) ON DELETE CASCADE,
+          CONSTRAINT listening_video_favorite_user_video_uniq UNIQUE(user_id, video_id)
+        );
+      `);
+    })().catch((error) => {
+      ensureListeningVideoFavoriteTablePromise = null;
+      throw error;
+    });
+  }
+  return ensureListeningVideoFavoriteTablePromise;
+}
+
 type StoredSummaryRow = {
   summary: string;
   key_points: string[];
@@ -1593,7 +1647,7 @@ export function createListeningRouter() {
           return res.status(502).json({
             success: false,
             code: 'TRANSLATION_EMPTY_RESPONSE',
-            message: 'Dich vu khong tra ve ban dich.',
+            message: 'Dịch vụ không trả về bản dịch.',
           });
         }
 
@@ -1606,7 +1660,7 @@ export function createListeningRouter() {
         return res.status(502).json({
           success: false,
           code: 'TRANSLATION_PROVIDER_UNAVAILABLE',
-          message: 'Khong ket noi duoc dich vu dich.',
+          message: 'Không kết nối được dịch vụ dịch.',
         });
       }
     }
@@ -1764,7 +1818,7 @@ export function createListeningRouter() {
       return res.status(502).json({
         success: false,
         code: 'VOCAB_LOOKUP_FAILED',
-        message: 'Khong tra duoc tu vung cho cau nay. Vui long thu lai sau.',
+        message: 'Không tra được từ vựng cho câu này. Vui lòng thử lại sau.',
       });
     }
   });
@@ -1775,7 +1829,7 @@ export function createListeningRouter() {
       return res.status(403).json({
         success: false,
         code: 'PREMIUM_REQUIRED',
-        message: 'Tinh nang dan link YouTube danh cho tai khoan Premium.',
+        message: 'Tính năng dán link YouTube dành cho tài khoản Premium.',
       });
     }
 
@@ -1784,13 +1838,13 @@ export function createListeningRouter() {
       return res.status(400).json({
         success: false,
         code: 'INVALID_YOUTUBE_URL',
-        message: 'Link YouTube khong hop le.',
+        message: 'Link YouTube không hợp lệ.',
       });
     }
 
     try {
       const importData = await fetchYoutubeImportData(videoId, { allowAiTranscript: true });
-      await saveImportedYoutubeVideo(importData);
+      await saveImportedYoutubeVideo(importData, access.userId);
       const hasTranscript = importData.lines.length > 0;
       const generatedByAi = importData.transcriptSource.startsWith('openai-transcribe:');
       return res.status(hasTranscript ? 200 : 202).json({
@@ -1804,26 +1858,30 @@ export function createListeningRouter() {
         redirectUrl: `/listening/${videoId}`,
         message: hasTranscript
           ? generatedByAi
-            ? 'Da import video YouTube va tao transcript bang AI.'
-            : 'Da import video YouTube.'
-          : 'Da them video, nhung chua tao duoc transcript cho video nay.',
+            ? 'Đã import video YouTube và tạo transcript bằng AI.'
+            : 'Đã import video YouTube.'
+          : 'Đã thêm video, nhưng chưa tạo được transcript cho video này.',
       });
     } catch (error) {
       console.error('Cannot import YouTube video', error);
       return res.status(502).json({
         success: false,
         code: 'YOUTUBE_IMPORT_FAILED',
-        message: 'Khong import duoc video YouTube. Vui long thu lai sau.',
+        message: 'Không import được video YouTube. Vui lòng thử lại sau.',
       });
     }
   });
 
   router.get('/videos', async (req: Request, res: Response) => {
     const access = await resolveContentAccess(req);
+    await ensureListeningVideoImporterColumn();
+    await ensureListeningVideoFavoriteTable();
     const q = String(req.query.q || '').trim();
     const level = normalizeLevel(req.query.level);
     const limitRaw = Number(req.query.limit || 5000);
     const limit = Math.min(Math.max(limitRaw, 1), 5000);
+    const mineOnly = ['1', 'true'].includes(String(req.query.mine || '').trim().toLowerCase());
+    const favoriteOnly = ['1', 'true'].includes(String(req.query.favorite || '').trim().toLowerCase());
     const predicates: Prisma.Sql[] = [];
 
     if (q) {
@@ -1834,17 +1892,38 @@ export function createListeningRouter() {
     if (level && level !== 'all') {
       predicates.push(listeningLevelSql(level));
     }
+    if (mineOnly) {
+      predicates.push(
+        access.userId !== null
+          ? Prisma.sql`imported_by_user_id = ${BigInt(access.userId)}`
+          : Prisma.sql`FALSE`,
+      );
+    }
+    if (favoriteOnly) {
+      predicates.push(
+        access.userId !== null
+          ? Prisma.sql`EXISTS (SELECT 1 FROM listening_video_favorite f WHERE f.video_id = listening_video.video_id AND f.user_id = ${BigInt(access.userId)})`
+          : Prisma.sql`FALSE`,
+      );
+    }
 
     const whereSql = predicates.length
       ? Prisma.sql`WHERE ${Prisma.join(predicates, ' AND ')}`
       : Prisma.sql``;
+
+    const favoriteSelect = access.userId !== null
+      ? Prisma.sql`EXISTS (SELECT 1 FROM listening_video_favorite f WHERE f.video_id = listening_video.video_id AND f.user_id = ${BigInt(access.userId)})`
+      : Prisma.sql`FALSE`;
+    const mineSelect = access.userId !== null
+      ? Prisma.sql`(imported_by_user_id = ${BigInt(access.userId)})`
+      : Prisma.sql`FALSE`;
 
     const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
       Prisma.sql`
         SELECT
           source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
           category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
-          is_free_preview
+          is_free_preview, ${favoriteSelect} AS is_favorited, ${mineSelect} AS is_mine
         FROM listening_video
         ${whereSql}
         ${predicates.length ? Prisma.sql`AND` : Prisma.sql`WHERE`} (duration_sec > 0 OR 'youtube-import' = ANY(tags))
@@ -1863,17 +1942,26 @@ export function createListeningRouter() {
 
   router.get('/videos/:videoId', async (req: Request, res: Response) => {
     const access = await resolveContentAccess(req);
+    await ensureListeningVideoImporterColumn();
+    await ensureListeningVideoFavoriteTable();
     const videoId = String(req.params.videoId || '').trim();
     if (!videoId) {
       return res.status(400).json({ message: 'videoId is required' });
     }
+
+    const favoriteSelect = access.userId !== null
+      ? Prisma.sql`EXISTS (SELECT 1 FROM listening_video_favorite f WHERE f.video_id = listening_video.video_id AND f.user_id = ${BigInt(access.userId)})`
+      : Prisma.sql`FALSE`;
+    const mineSelect = access.userId !== null
+      ? Prisma.sql`(imported_by_user_id = ${BigInt(access.userId)})`
+      : Prisma.sql`FALSE`;
 
     const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
       Prisma.sql`
         SELECT
           source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
           category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
-          is_free_preview
+          is_free_preview, ${favoriteSelect} AS is_favorited, ${mineSelect} AS is_mine
         FROM listening_video
         WHERE video_id = ${videoId}
         LIMIT 1
@@ -1889,10 +1977,52 @@ export function createListeningRouter() {
         success: false,
         code: 'PREMIUM_REQUIRED',
         item: maskLockedListeningVideo(item as any),
-        message: 'Video nay danh cho thanh vien Premium.',
+        message: 'Video này dành cho thành viên Premium.',
       });
     }
     return res.json(item);
+  });
+
+  router.post('/videos/:videoId/favorite', async (req: Request, res: Response) => {
+    const user = await requireUser(req);
+    await ensureListeningVideoFavoriteTable();
+    const videoId = String(req.params.videoId || '').trim();
+    if (!videoId) {
+      return res.status(400).json({ success: false, message: 'videoId is required' });
+    }
+
+    const videoRows = await prisma.$queryRaw<Array<{ video_id: string }>>(
+      Prisma.sql`SELECT video_id FROM listening_video WHERE video_id = ${videoId} LIMIT 1`,
+    );
+    if (!videoRows.length) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO listening_video_favorite (user_id, video_id)
+        VALUES (${BigInt(user.id)}, ${videoId})
+        ON CONFLICT (user_id, video_id) DO NOTHING
+      `,
+    );
+    return res.json({ success: true, favorited: true });
+  });
+
+  router.delete('/videos/:videoId/favorite', async (req: Request, res: Response) => {
+    const user = await requireUser(req);
+    await ensureListeningVideoFavoriteTable();
+    const videoId = String(req.params.videoId || '').trim();
+    if (!videoId) {
+      return res.status(400).json({ success: false, message: 'videoId is required' });
+    }
+
+    await prisma.$executeRaw(
+      Prisma.sql`
+        DELETE FROM listening_video_favorite
+        WHERE user_id = ${BigInt(user.id)} AND video_id = ${videoId}
+      `,
+    );
+    return res.json({ success: true, favorited: false });
   });
 
   router.post('/videos/:videoId/transcript', async (req: Request, res: Response) => {
@@ -1901,7 +2031,7 @@ export function createListeningRouter() {
       return res.status(403).json({
         success: false,
         code: 'PREMIUM_REQUIRED',
-        message: 'Chi tai khoan Premium moi duoc cap nhat transcript tuy chinh.',
+        message: 'Chỉ tài khoản Premium mới được cập nhật transcript tùy chỉnh.',
       });
     }
 
@@ -1927,7 +2057,7 @@ export function createListeningRouter() {
       return res.status(400).json({
         success: false,
         code: 'EMPTY_TRANSCRIPT',
-        message: 'Transcript khong duoc de trong.',
+        message: 'Transcript không được để trống.',
       });
     }
 
@@ -1968,7 +2098,7 @@ export function createListeningRouter() {
       return res.status(403).json({
         success: false,
         code: 'PREMIUM_REQUIRED',
-        message: 'Transcript nay danh cho thanh vien Premium.',
+        message: 'Transcript này dành cho thành viên Premium.',
       });
     }
 
@@ -2039,7 +2169,7 @@ export function createListeningRouter() {
       return res.status(403).json({
         success: false,
         code: 'PREMIUM_REQUIRED',
-        message: 'Tom tat video nay danh cho thanh vien Premium.',
+        message: 'Tóm tắt video này dành cho thành viên Premium.',
       });
     }
 
@@ -2100,7 +2230,7 @@ export function createListeningRouter() {
         return res.status(404).json({
           success: false,
           code: 'TRANSCRIPT_NOT_AVAILABLE',
-          message: 'Video nay chua co phu de de tom tat.',
+          message: 'Video này chưa có phụ đề để tóm tắt.',
         });
       }
 
@@ -2123,7 +2253,7 @@ export function createListeningRouter() {
       return res.status(status).json({
         success: false,
         code: 'SUMMARY_GENERATION_FAILED',
-        message: 'Khong tao duoc ban tom tat. Vui long thu lai sau.',
+        message: 'Không tạo được bản tóm tắt. Vui lòng thử lại sau.',
       });
     }
   });

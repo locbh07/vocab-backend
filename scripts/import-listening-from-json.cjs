@@ -90,7 +90,7 @@ function normalizeLines(videoId, transcriptData) {
   }));
 }
 
-function normalizeTranslationLines(videoId, translationData) {
+function normalizeTranslationLines(videoId, translationData, transcriptLineCount) {
   const byLanguage = translationData?.data?.[videoId];
   if (!byLanguage || typeof byLanguage !== "object") {
     return [];
@@ -100,6 +100,20 @@ function normalizeTranslationLines(videoId, translationData) {
   for (const [language, entry] of Object.entries(byLanguage)) {
     const rows = entry?.lines;
     if (!/^[a-z]{2,10}$/i.test(language) || !Array.isArray(rows)) {
+      continue;
+    }
+    // Corodomo's translation export and transcript export are captured
+    // independently and are NOT guaranteed to share the same line
+    // segmentation (a transcript cue we split into 2 lines may only have 1
+    // translation line, etc). Zipping them by raw array position when the
+    // counts differ silently shifts every translation after the point of
+    // divergence onto the wrong line. Only trust positional alignment when
+    // both sources report the same number of lines for this video.
+    if (rows.length !== transcriptLineCount) {
+      console.warn(
+        `Skipping corodomo "${language}" translations for ${videoId}: ` +
+          `${rows.length} translation lines vs ${transcriptLineCount} transcript lines (segmentation mismatch).`,
+      );
       continue;
     }
     rows.forEach((line, index) => {
@@ -348,7 +362,7 @@ async function main() {
     }
     importedLines += lines.length;
 
-    const translationLines = normalizeTranslationLines(video.video_id, translationRaw);
+    const translationLines = normalizeTranslationLines(video.video_id, translationRaw, lines.length);
     if (translationLines.length > 0) {
       const sourceByIndex = new Map(lines.map((line) => [line.line_index, line.text]));
       const rows = Prisma.join(

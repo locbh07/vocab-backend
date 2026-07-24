@@ -104,6 +104,8 @@ export const listeningVideoMaskRule: MaskRule = {
     'views',
     'isFreePreview',
     'is_free_preview',
+    'isFavorited',
+    'isMine',
   ],
   maskFields: ['videoUrl', 'video_url', 'embedUrl', 'embed_url'],
 };
