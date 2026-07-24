@@ -924,12 +924,14 @@ export function createLearningRouter() {
       }
     }
 
+    // Dùng CURRENT_DATE thay vì Date tính theo giờ local server — tránh lệch múi giờ
+    // giữa server và DB khiến todayNewKanji đếm sai (xem ghi chú tương tự ở /dashboard).
     const [todayNewRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
       SELECT COUNT(DISTINCT kanji_char) AS total
       FROM user_kanji_review_log
       WHERE user_id = ${userBigId}
         AND mode = 'new'
-        AND DATE(review_time) = ${today}
+        AND DATE(review_time) = CURRENT_DATE
     `;
 
     const [dueKanjiReviewsRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
@@ -1013,12 +1015,15 @@ export function createLearningRouter() {
       }
     }
 
+    // Dùng CURRENT_DATE (ngày theo timezone của DB) thay vì truyền Date đã tính theo giờ
+    // local của server Node — nếu không, lệch múi giờ giữa server và DB khiến "hôm nay"
+    // của server rơi vào một ngày UTC khác, làm todayNewWords luôn đếm sai/0.
     const [todayNewRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
       SELECT COUNT(DISTINCT vocab_id) AS total
       FROM user_review_log
       WHERE user_id = ${userBigId}
         AND mode = 'new'
-        AND DATE(review_time) = ${today}
+        AND DATE(review_time) = CURRENT_DATE
     `;
 
     const [dueReviewsRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
