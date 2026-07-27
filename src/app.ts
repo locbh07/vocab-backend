@@ -25,6 +25,7 @@ import { createAdminContactRouter } from './routes/adminContact';
 import { createBillingRouter, createStripeWebhookRouter } from './routes/billing';
 import { createAdminManualPaymentRouter, createManualPaymentRouter } from './routes/manualPayments';
 import { createAdminAiReviewRouter } from './routes/adminAiReview';
+import { createBookRouter } from './routes/books';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
@@ -215,6 +216,18 @@ app.use(
   contentGuard,
   createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'api-listening' }),
   createListeningRouter(),
+);
+app.use(
+  '/books',
+  ...(apiShieldEnabled ? [createRouteShield('books-shield', 60, 40)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 40, keyPrefix: 'books' }),
+  createBookRouter(),
+);
+app.use(
+  '/api/books',
+  ...(apiShieldEnabled ? [createRouteShield('api-books-shield', 60, 40)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 40, keyPrefix: 'api-books' }),
+  createBookRouter(),
 );
 app.use('/feedback', createSimpleRateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'feedback' }), createFeedbackRouter());
 app.use('/api/feedback', createSimpleRateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'api-feedback' }), createFeedbackRouter());
