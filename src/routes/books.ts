@@ -42,6 +42,11 @@ function canReadBook(book: { isPremiumOnly: boolean; uploadedBy: bigint }, user:
   return hasActivePremium(user);
 }
 
+function canUploadBooks(user: UserIdentity): boolean {
+  // hasActivePremium() already treats ADMIN role as premium.
+  return hasActivePremium(user);
+}
+
 async function serializeBook(book: BookWithUploader, user: UserIdentity) {
   const isMine = Number(book.uploadedBy) === user.id;
   const coverUrl = book.coverStoragePath ? await createDownloadSignedUrl(book.coverStoragePath).catch(() => null) : null;
@@ -128,6 +133,12 @@ export function createBookRouter() {
 
   router.post('/presign', async (req: Request, res: Response) => {
     const user = await requireUser(req);
+
+    if (!canUploadBooks(user)) {
+      res.status(403).json({ success: false, message: 'Chỉ thành viên Premium mới có thể tải sách lên.' });
+      return;
+    }
+
     const fileName = String(req.body.fileName || '').trim();
     const fileSize = Number(req.body.fileSize);
 
@@ -141,6 +152,15 @@ export function createBookRouter() {
     }
     if (fileSize > MAX_FILE_SIZE_BYTES) {
       res.status(413).json({ success: false, message: 'File PDF vượt quá dung lượng cho phép (tối đa 150MB).' });
+      return;
+    }
+
+    const existing = await prisma.book.findFirst({
+      where: { fileName: { equals: fileName, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (existing) {
+      res.status(409).json({ success: false, message: `File "${fileName}" đã có trong thư viện rồi.` });
       return;
     }
 
@@ -158,6 +178,11 @@ export function createBookRouter() {
   router.post('/', async (req: Request, res: Response) => {
     const user = await requireUser(req);
 
+    if (!canUploadBooks(user)) {
+      res.status(403).json({ success: false, message: 'Chỉ thành viên Premium mới có thể tải sách lên.' });
+      return;
+    }
+
     const storagePath = String(req.body.storagePath || '').trim();
     if (!storagePath || !storagePath.startsWith(`${user.id}/`)) {
       res.status(400).json({ success: false, message: 'Đường dẫn file không hợp lệ.' });
@@ -171,6 +196,16 @@ export function createBookRouter() {
     }
 
     const fileName = String(req.body.fileName || '').trim() || 'book.pdf';
+
+    const existing = await prisma.book.findFirst({
+      where: { fileName: { equals: fileName, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (existing) {
+      res.status(409).json({ success: false, message: `File "${fileName}" đã có trong thư viện rồi.` });
+      return;
+    }
+
     const title = String(req.body.title || '').trim() || fileName.replace(/\.pdf$/i, '');
     const description = String(req.body.description || '').trim() || null;
     const pageCountRaw = Number(req.body.pageCount);
