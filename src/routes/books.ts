@@ -5,6 +5,7 @@ import { hasActivePremium } from '../lib/contentAccess';
 import {
   buildBookStoragePath,
   coverStorageKeyFor,
+  createCoverSignedUrl,
   createDownloadSignedUrl,
   createUploadSignedUrl,
   deleteStorageObjects,
@@ -25,6 +26,8 @@ type BookWithUploader = {
   isPremiumOnly: boolean;
   coverStoragePath: string | null;
   pagesCached: boolean;
+  sortOrder: number;
+  isHidden: boolean;
   storagePath: string;
   uploadedBy: bigint;
   createdAt: Date;
@@ -49,7 +52,7 @@ function canUploadBooks(user: UserIdentity): boolean {
 
 async function serializeBook(book: BookWithUploader, user: UserIdentity) {
   const isMine = Number(book.uploadedBy) === user.id;
-  const coverUrl = book.coverStoragePath ? await createDownloadSignedUrl(book.coverStoragePath).catch(() => null) : null;
+  const coverUrl = book.coverStoragePath ? await createCoverSignedUrl(book.coverStoragePath).catch(() => null) : null;
 
   return {
     id: Number(book.id),
@@ -60,6 +63,8 @@ async function serializeBook(book: BookWithUploader, user: UserIdentity) {
     pageCount: book.pageCount,
     isPremiumOnly: book.isPremiumOnly,
     pagesCached: book.pagesCached,
+    sortOrder: book.sortOrder,
+    isHidden: book.isHidden,
     coverUrl,
     createdAt: book.createdAt,
     uploadedBy: Number(book.uploadedBy),
@@ -77,13 +82,17 @@ export function createBookRouter() {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(48, Math.max(1, Number(req.query.pageSize) || 12));
     const search = String(req.query.search || '').trim();
+    const admin = isAdminUser(user);
 
-    const where = search ? { title: { contains: search, mode: 'insensitive' as const } } : {};
+    const where = {
+      ...(search ? { title: { contains: search, mode: 'insensitive' as const } } : {}),
+      ...(admin ? {} : { isHidden: false }),
+    };
 
     const [items, total] = await Promise.all([
       prisma.book.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: { uploader: { select: { username: true, fullname: true } } },
@@ -100,6 +109,35 @@ export function createBookRouter() {
     });
   });
 
+  router.get('/check-filename', async (req: Request, res: Response) => {
+    await requireUser(req);
+    const fileName = String(req.query.fileName || '').trim();
+    if (!fileName) {
+      res.json({ success: true, exists: false });
+      return;
+    }
+
+    const existing = await prisma.book.findFirst({
+      where: { fileName: { equals: fileName, mode: 'insensitive' } },
+      include: { uploader: { select: { username: true, fullname: true } } },
+    });
+
+    if (!existing) {
+      res.json({ success: true, exists: false });
+      return;
+    }
+
+    res.json({
+      success: true,
+      exists: true,
+      book: {
+        id: Number(existing.id),
+        title: existing.title,
+        uploaderName: existing.uploader?.fullname || existing.uploader?.username || 'Ẩn danh',
+      },
+    });
+  });
+
   router.get('/:id', async (req: Request, res: Response) => {
     const user = await requireUser(req);
     const id = BigInt(req.params.id);
@@ -109,6 +147,12 @@ export function createBookRouter() {
     });
 
     if (!book) {
+      res.status(404).json({ success: false, message: 'Không tìm thấy sách.' });
+      return;
+    }
+
+    const isOwner = Number(book.uploadedBy) === user.id;
+    if (book.isHidden && !isOwner && !isAdminUser(user)) {
       res.status(404).json({ success: false, message: 'Không tìm thấy sách.' });
       return;
     }
@@ -294,6 +338,65 @@ export function createBookRouter() {
     });
 
     res.json({ success: true });
+  });
+
+  router.patch('/:id', async (req: Request, res: Response) => {
+    const user = await requireUser(req);
+    const id = BigInt(req.params.id);
+
+    if (!isAdminUser(user)) {
+      res.status(403).json({ success: false, message: 'Chỉ admin mới có thể chỉnh sửa sách.' });
+      return;
+    }
+
+    const book = await prisma.book.findUnique({ where: { id } });
+    if (!book) {
+      res.status(404).json({ success: false, message: 'Không tìm thấy sách.' });
+      return;
+    }
+
+    const data: {
+      title?: string;
+      description?: string | null;
+      isPremiumOnly?: boolean;
+      sortOrder?: number;
+      isHidden?: boolean;
+    } = {};
+
+    if (req.body.title !== undefined) {
+      const title = String(req.body.title || '').trim();
+      if (!title) {
+        res.status(400).json({ success: false, message: 'Tên sách không được để trống.' });
+        return;
+      }
+      data.title = title;
+    }
+    if (req.body.description !== undefined) {
+      const description = String(req.body.description || '').trim();
+      data.description = description || null;
+    }
+    if (req.body.isPremiumOnly !== undefined) {
+      data.isPremiumOnly = req.body.isPremiumOnly === true || req.body.isPremiumOnly === 'true';
+    }
+    if (req.body.sortOrder !== undefined) {
+      const sortOrder = Number(req.body.sortOrder);
+      if (!Number.isFinite(sortOrder)) {
+        res.status(400).json({ success: false, message: 'Thứ tự hiển thị không hợp lệ.' });
+        return;
+      }
+      data.sortOrder = Math.trunc(sortOrder);
+    }
+    if (req.body.isHidden !== undefined) {
+      data.isHidden = req.body.isHidden === true || req.body.isHidden === 'true';
+    }
+
+    const updated = await prisma.book.update({
+      where: { id },
+      data,
+      include: { uploader: { select: { username: true, fullname: true } } },
+    });
+
+    res.json({ success: true, book: await serializeBook(updated, user) });
   });
 
   router.delete('/:id', async (req: Request, res: Response) => {

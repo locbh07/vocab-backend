@@ -336,6 +336,8 @@ model Book {
   isPremiumOnly Boolean @default(false) @map("is_premium_only")
   coverStoragePath String? @map("cover_storage_path") @db.Text
   pagesCached Boolean  @default(false) @map("pages_cached")
+  sortOrder   Int      @default(0) @map("sort_order")
+  isHidden    Boolean  @default(false) @map("is_hidden")
   uploadedBy  BigInt   @map("uploaded_by")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @map("updated_at")
@@ -343,6 +345,7 @@ model Book {
   uploader UserAccount @relation(fields: [uploadedBy], references: [id])
 
   @@index([createdAt], map: "idx_book_created_at")
+  @@index([sortOrder], map: "idx_book_sort_order")
   @@map("book")
 }
 

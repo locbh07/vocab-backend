@@ -10,6 +10,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 const BUCKET = process.env.R2_BUCKET || 'books';
 const DOWNLOAD_URL_TTL_SECONDS = 60 * 60;
 const UPLOAD_URL_TTL_SECONDS = 15 * 60;
+const COVER_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+const COVER_URL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 let cachedClient: S3Client | null = null;
 
@@ -74,6 +76,33 @@ export async function createDownloadSignedUrl(storagePath: string): Promise<stri
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : 'unknown error';
     const err = new Error(`Không thể tạo link xem file: ${message}`) as Error & { status?: number };
+    err.status = 500;
+    throw err;
+  }
+}
+
+// Cover thumbnails are the same non-sensitive image for everyone, forever (a given storagePath
+// is never overwritten), so they're the one asset worth making genuinely browser-cacheable.
+// `createDownloadSignedUrl` re-signs with the current timestamp on every call, which produces a
+// brand-new URL each time — even a `max-age` response header can't help the browser reuse its
+// cache if the URL itself never repeats. Quantizing the expiry to a stable daily window keeps
+// the signed URL (and therefore the cache key) identical across repeat page loads within that
+// window, and `ResponseCacheControl` tells the browser to keep it for a full year once fetched.
+export async function createCoverSignedUrl(storagePath: string): Promise<string> {
+  const client = getR2Client();
+  const now = Date.now();
+  const windowEnd = Math.ceil(now / COVER_URL_WINDOW_MS) * COVER_URL_WINDOW_MS;
+  const expiresIn = Math.ceil((windowEnd - now) / 1000) + 60 * 60;
+
+  try {
+    return await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: BUCKET, Key: storagePath, ResponseCacheControl: COVER_CACHE_CONTROL }),
+      { expiresIn },
+    );
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : 'unknown error';
+    const err = new Error(`Không thể tạo link ảnh bìa: ${message}`) as Error & { status?: number };
     err.status = 500;
     throw err;
   }
