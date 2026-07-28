@@ -339,6 +339,7 @@ model Book {
   pagesCached Boolean  @default(false) @map("pages_cached")
   sortOrder   Int      @default(0) @map("sort_order")
   isHidden    Boolean  @default(false) @map("is_hidden")
+  isApproved  Boolean  @default(true) @map("is_approved")
   uploadedBy  BigInt   @map("uploaded_by")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @map("updated_at")

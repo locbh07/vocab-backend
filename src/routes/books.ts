@@ -15,6 +15,7 @@ import {
 
 const MAX_FILE_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_PAGE_COUNT = 2000;
+const MAX_BOOKS_PER_USER = 3;
 
 type BookWithUploader = {
   id: bigint;
@@ -28,6 +29,7 @@ type BookWithUploader = {
   pagesCached: boolean;
   sortOrder: number;
   isHidden: boolean;
+  isApproved: boolean;
   storagePath: string;
   uploadedBy: bigint;
   createdAt: Date;
@@ -45,9 +47,16 @@ function canReadBook(book: { isPremiumOnly: boolean; uploadedBy: bigint }, user:
   return hasActivePremium(user);
 }
 
-function canUploadBooks(user: UserIdentity): boolean {
-  // hasActivePremium() already treats ADMIN role as premium.
-  return hasActivePremium(user);
+// Upload is open to any logged-in user now (previously premium-only) — non-admin uploads just
+// start unapproved (see POST /) and don't appear in the public list until an admin reviews them,
+// and are capped at MAX_BOOKS_PER_USER each since storage isn't unlimited.
+async function assertCanUploadMoreBooks(user: UserIdentity): Promise<string | null> {
+  if (isAdminUser(user)) return null;
+  const count = await prisma.book.count({ where: { uploadedBy: BigInt(user.id) } });
+  if (count >= MAX_BOOKS_PER_USER) {
+    return `Bạn đã đạt giới hạn tối đa ${MAX_BOOKS_PER_USER} quyển sách (do dung lượng lưu trữ có hạn).`;
+  }
+  return null;
 }
 
 async function serializeBook(book: BookWithUploader, user: UserIdentity) {
@@ -65,6 +74,7 @@ async function serializeBook(book: BookWithUploader, user: UserIdentity) {
     pagesCached: book.pagesCached,
     sortOrder: book.sortOrder,
     isHidden: book.isHidden,
+    isApproved: book.isApproved,
     coverUrl,
     createdAt: book.createdAt,
     uploadedBy: Number(book.uploadedBy),
@@ -86,7 +96,7 @@ export function createBookRouter() {
 
     const where = {
       ...(search ? { title: { contains: search, mode: 'insensitive' as const } } : {}),
-      ...(admin ? {} : { isHidden: false }),
+      ...(admin ? {} : { isHidden: false, isApproved: true }),
     };
 
     const [items, total] = await Promise.all([
@@ -152,7 +162,7 @@ export function createBookRouter() {
     }
 
     const isOwner = Number(book.uploadedBy) === user.id;
-    if (book.isHidden && !isOwner && !isAdminUser(user)) {
+    if ((book.isHidden || !book.isApproved) && !isOwner && !isAdminUser(user)) {
       res.status(404).json({ success: false, message: 'Không tìm thấy sách.' });
       return;
     }
@@ -178,8 +188,9 @@ export function createBookRouter() {
   router.post('/presign', async (req: Request, res: Response) => {
     const user = await requireUser(req);
 
-    if (!canUploadBooks(user)) {
-      res.status(403).json({ success: false, message: 'Chỉ thành viên Premium mới có thể tải sách lên.' });
+    const capMessage = await assertCanUploadMoreBooks(user);
+    if (capMessage) {
+      res.status(403).json({ success: false, message: capMessage });
       return;
     }
 
@@ -222,8 +233,9 @@ export function createBookRouter() {
   router.post('/', async (req: Request, res: Response) => {
     const user = await requireUser(req);
 
-    if (!canUploadBooks(user)) {
-      res.status(403).json({ success: false, message: 'Chỉ thành viên Premium mới có thể tải sách lên.' });
+    const capMessage = await assertCanUploadMoreBooks(user);
+    if (capMessage) {
+      res.status(403).json({ success: false, message: capMessage });
       return;
     }
 
@@ -256,6 +268,9 @@ export function createBookRouter() {
     const pageCount = Number.isFinite(pageCountRaw) && pageCountRaw > 0 ? Math.trunc(pageCountRaw) : null;
     const requestedPremiumOnly = req.body.isPremiumOnly === true || req.body.isPremiumOnly === 'true';
     const isPremiumOnly = requestedPremiumOnly && isAdminUser(user);
+    // Admin uploads go live immediately; everyone else's need an admin to review and approve
+    // before the book shows up in the public list (see GET / and GET /:id filtering above).
+    const isApproved = isAdminUser(user);
 
     const requestedCoverStoragePath = String(req.body.coverStoragePath || '').trim();
     let coverStoragePath: string | null = null;
@@ -274,6 +289,7 @@ export function createBookRouter() {
         fileSize: actualSize,
         pageCount,
         isPremiumOnly,
+        isApproved,
         uploadedBy: BigInt(user.id),
       },
       include: { uploader: { select: { username: true, fullname: true } } },
@@ -361,6 +377,7 @@ export function createBookRouter() {
       isPremiumOnly?: boolean;
       sortOrder?: number;
       isHidden?: boolean;
+      isApproved?: boolean;
     } = {};
 
     if (req.body.title !== undefined) {
@@ -388,6 +405,9 @@ export function createBookRouter() {
     }
     if (req.body.isHidden !== undefined) {
       data.isHidden = req.body.isHidden === true || req.body.isHidden === 'true';
+    }
+    if (req.body.isApproved !== undefined) {
+      data.isApproved = req.body.isApproved === true || req.body.isApproved === 'true';
     }
 
     const updated = await prisma.book.update({
