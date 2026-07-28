@@ -9,6 +9,7 @@ import { prisma } from '../lib/prisma';
 import { resolveContentAccess } from '../lib/contentAccess';
 import { listeningVideoMaskRule } from '../lib/contentMasking';
 import { tokenizeJapaneseText } from '../lib/japaneseReading';
+import { classifyListeningLevelFromTranscript } from '../lib/listeningLevelClassifier';
 import { requireUser } from '../middleware/userGuard';
 
 type ListeningVideoRow = {
@@ -19,6 +20,7 @@ type ListeningVideoRow = {
   thumbnail: string | null;
   levels: string[] | null;
   normalized_levels: string[] | null;
+  computed_levels: string[] | null;
   tags: string[] | null;
   category_label: string | null;
   created_relative: string | null;
@@ -127,6 +129,7 @@ let ensureListeningCorodomoVocabularyTablePromise: Promise<void> | null = null;
 let ensureListeningSummaryTablePromise: Promise<void> | null = null;
 let ensureListeningVideoImporterColumnPromise: Promise<void> | null = null;
 let ensureListeningVideoFavoriteTablePromise: Promise<void> | null = null;
+let ensureListeningVideoComputedLevelColumnsPromise: Promise<void> | null = null;
 
 function normalizeLevel(input: unknown) {
   return String(input || '').trim().toLowerCase();
@@ -138,9 +141,17 @@ function isPremiumRole(role: unknown) {
 }
 
 function mapVideo(row: ListeningVideoRow) {
+  const computedLevels = Array.isArray(row.computed_levels) ? row.computed_levels : [];
   const normalizedLevels = Array.isArray(row.normalized_levels) ? row.normalized_levels : [];
   const sourceLevels = Array.isArray(row.levels) ? row.levels : [];
-  const levels = normalizedLevels.length > 0 ? normalizedLevels : sourceLevels;
+  // Priority: computed_levels (measured from the actual transcript vocabulary)
+  // beats normalized_levels (explicit "N3" mentioned in the title) beats the
+  // raw scraped levels (corodomo.com's own, occasionally unreliable, tagging).
+  const levels = computedLevels.length > 0
+    ? computedLevels
+    : normalizedLevels.length > 0
+      ? normalizedLevels
+      : sourceLevels;
   return {
     id: row.source_id || `db-${row.video_id}`,
     videoId: row.video_id,
@@ -217,12 +228,19 @@ function unlockedListeningVideoIdsForCurrentList(
 
 function listeningLevelSql(level: string): Prisma.Sql {
   return Prisma.sql`(
-    ${level} = ANY(normalized_levels)
-    OR (COALESCE(array_length(normalized_levels, 1), 0) = 0 AND ${level} = ANY(levels))
+    ${level} = ANY(computed_levels)
+    OR (
+      COALESCE(array_length(computed_levels, 1), 0) = 0
+      AND (
+        ${level} = ANY(normalized_levels)
+        OR (COALESCE(array_length(normalized_levels, 1), 0) = 0 AND ${level} = ANY(levels))
+      )
+    )
   )`;
 }
 
 async function isUnlockedListeningPreviewVideo(videoId: string, requestedLevel?: string): Promise<boolean> {
+  await ensureListeningVideoComputedLevelColumns();
   const level = normalizeLevel(requestedLevel);
   const predicates: Prisma.Sql[] = [Prisma.sql`(duration_sec > 0 OR 'youtube-import' = ANY(tags))`];
   if (level && level !== 'all') {
@@ -232,7 +250,7 @@ async function isUnlockedListeningPreviewVideo(videoId: string, requestedLevel?:
   const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
     Prisma.sql`
       SELECT
-        source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
+        source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, computed_levels, tags,
         category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
         is_free_preview
       FROM listening_video
@@ -804,6 +822,17 @@ async function replaceListeningTranscript(videoId: string, lines: YoutubeTranscr
       `,
     );
   }
+
+  // Best-effort: re-derive the JLPT level from actual vocabulary usage whenever
+  // the transcript changes. Never let a classification hiccup fail the import/save.
+  try {
+    await classifyAndStoreListeningVideoLevel(videoId);
+  } catch (error) {
+    console.warn('Cannot classify listening video level', {
+      videoId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function rememberTranslation(cacheKey: string, translation: string) {
@@ -1312,6 +1341,45 @@ async function ensureListeningVideoImporterColumn() {
     });
   }
   return ensureListeningVideoImporterColumnPromise;
+}
+
+async function ensureListeningVideoComputedLevelColumns() {
+  if (!ensureListeningVideoComputedLevelColumnsPromise) {
+    ensureListeningVideoComputedLevelColumnsPromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video
+        ADD COLUMN IF NOT EXISTS computed_levels TEXT[] NOT NULL DEFAULT '{}';
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video
+        ADD COLUMN IF NOT EXISTS computed_level_stats JSONB;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE listening_video
+        ADD COLUMN IF NOT EXISTS computed_level_at TIMESTAMPTZ;
+      `);
+    })().catch((error) => {
+      ensureListeningVideoComputedLevelColumnsPromise = null;
+      throw error;
+    });
+  }
+  return ensureListeningVideoComputedLevelColumnsPromise;
+}
+
+async function classifyAndStoreListeningVideoLevel(videoId: string): Promise<void> {
+  await ensureListeningVideoComputedLevelColumns();
+  const lines = await prisma.$queryRaw<Array<{ text: string }>>(
+    Prisma.sql`SELECT text FROM listening_transcript_line WHERE video_id = ${videoId} ORDER BY line_index ASC`,
+  );
+  const transcriptText = lines.map((line) => line.text).join('\n');
+  const { levels, stats } = await classifyListeningLevelFromTranscript(transcriptText);
+  await prisma.$executeRaw(
+    Prisma.sql`
+      UPDATE listening_video
+      SET computed_levels = ${levels}, computed_level_stats = ${JSON.stringify(stats)}::jsonb, computed_level_at = NOW()
+      WHERE video_id = ${videoId}
+    `,
+  );
 }
 
 async function ensureListeningVideoFavoriteTable() {
@@ -1876,6 +1944,7 @@ export function createListeningRouter() {
     const access = await resolveContentAccess(req);
     await ensureListeningVideoImporterColumn();
     await ensureListeningVideoFavoriteTable();
+    await ensureListeningVideoComputedLevelColumns();
     const q = String(req.query.q || '').trim();
     const level = normalizeLevel(req.query.level);
     const limitRaw = Number(req.query.limit || 5000);
@@ -1921,7 +1990,7 @@ export function createListeningRouter() {
     const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
       Prisma.sql`
         SELECT
-          source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
+          source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, computed_levels, tags,
           category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
           is_free_preview, ${favoriteSelect} AS is_favorited, ${mineSelect} AS is_mine
         FROM listening_video
@@ -1944,6 +2013,7 @@ export function createListeningRouter() {
     const access = await resolveContentAccess(req);
     await ensureListeningVideoImporterColumn();
     await ensureListeningVideoFavoriteTable();
+    await ensureListeningVideoComputedLevelColumns();
     const videoId = String(req.params.videoId || '').trim();
     if (!videoId) {
       return res.status(400).json({ message: 'videoId is required' });
@@ -1959,7 +2029,7 @@ export function createListeningRouter() {
     const rows = await prisma.$queryRaw<ListeningVideoRow[]>(
       Prisma.sql`
         SELECT
-          source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, tags,
+          source_id, video_id, title, duration_sec, thumbnail, levels, normalized_levels, computed_levels, tags,
           category_label, created_relative, views, created_at_src, updated_at_src, video_url, embed_url,
           is_free_preview, ${favoriteSelect} AS is_favorited, ${mineSelect} AS is_mine
         FROM listening_video
