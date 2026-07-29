@@ -207,7 +207,7 @@ export function createBookRouter() {
       res.status(400).json({ success: false, message: 'Dung lượng file không hợp lệ.' });
       return;
     }
-    if (fileSize > MAX_FILE_SIZE_BYTES) {
+    if (fileSize > MAX_FILE_SIZE_BYTES && !isAdminUser(user)) {
       res.status(413).json({ success: false, message: 'File PDF vượt quá dung lượng cho phép (tối đa 150MB).' });
       return;
     }
