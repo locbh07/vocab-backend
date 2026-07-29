@@ -1,0 +1,6 @@
+downloads/
+backups/
+node_modules/
+dist/
+prisma/dev.db
+*.log
