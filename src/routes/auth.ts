@@ -3,7 +3,8 @@ import { getSupabaseAdmin, getSupabaseAnon } from '../lib/supabase';
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../lib/prisma';
-import { formatUserLine, notifyTelegram } from '../lib/telegram';
+import { formatUserLine } from '../lib/telegram';
+import { notifyAdmins, sendWelcomeMailbox } from '../lib/adminNotify';
 import { signAuthToken } from '../lib/authToken';
 
 const googleOAuthClient = new OAuth2Client();
@@ -56,7 +57,7 @@ export function createAuthRouter() {
           },
         });
 
-        await notifyTelegram({
+        await notifyAdmins({
           title: 'New user registered',
           lines: [
             `User: ${formatUserLine({
@@ -69,6 +70,7 @@ export function createAuthRouter() {
             'Method: password',
           ],
         });
+        await sendWelcomeMailbox(created.id);
 
         return res.json({
           success: true,
@@ -121,7 +123,7 @@ export function createAuthRouter() {
       }
 
       if (inserted) {
-        await notifyTelegram({
+        await notifyAdmins({
           title: 'New user registered',
           lines: [
             `User: ${formatUserLine({
@@ -134,6 +136,7 @@ export function createAuthRouter() {
             'Method: password',
           ],
         });
+        await sendWelcomeMailbox(inserted.id);
       }
 
       return res.json({
@@ -331,7 +334,7 @@ export function createAuthRouter() {
         }
 
         if (createdGoogleUser) {
-          await notifyTelegram({
+          await notifyAdmins({
             title: 'New user registered',
             lines: [
               `User: ${formatUserLine({
@@ -344,6 +347,7 @@ export function createAuthRouter() {
               'Method: google',
             ],
           });
+          await sendWelcomeMailbox(user.id);
         }
       } else {
         if (!user.level || (authUserId && !user.authUserId) || !user.googleId) {
