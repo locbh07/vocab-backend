@@ -93,6 +93,9 @@ export function createBookRouter() {
     const pageSize = Math.min(48, Math.max(1, Number(req.query.pageSize) || 12));
     const search = String(req.query.search || '').trim();
     const admin = isAdminUser(user);
+    // Admin-only escape hatch for the reorder UI, which needs the full list (in sortOrder)
+    // to build a draggable list rather than one paginated page at a time.
+    const wantsAll = admin && String(req.query.all || '') === 'true';
 
     const where = {
       ...(search ? { title: { contains: search, mode: 'insensitive' as const } } : {}),
@@ -103,8 +106,7 @@ export function createBookRouter() {
       prisma.book.findMany({
         where,
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        ...(wantsAll ? {} : { skip: (page - 1) * pageSize, take: pageSize }),
         include: { uploader: { select: { username: true, fullname: true } } },
       }),
       prisma.book.count({ where }),
@@ -352,6 +354,39 @@ export function createBookRouter() {
         ...(pageCount && !book.pageCount ? { pageCount } : {}),
       },
     });
+
+    res.json({ success: true });
+  });
+
+  // Registered before the /:id param route below so Express doesn't match "reorder" as an id.
+  router.patch('/reorder', async (req: Request, res: Response) => {
+    const user = await requireUser(req);
+    if (!isAdminUser(user)) {
+      res.status(403).json({ success: false, message: 'Chỉ admin mới có thể sắp xếp thứ tự sách.' });
+      return;
+    }
+
+    const order: unknown[] = Array.isArray(req.body.order) ? req.body.order : [];
+    const updates: Array<{ id: number; sortOrder: number }> = order
+      .map((entry) => {
+        const record = entry as { id?: unknown; sortOrder?: unknown };
+        return { id: Number(record?.id), sortOrder: Number(record?.sortOrder) };
+      })
+      .filter((entry) => Number.isFinite(entry.id) && entry.id > 0 && Number.isFinite(entry.sortOrder));
+
+    if (!updates.length) {
+      res.status(400).json({ success: false, message: 'Danh sách thứ tự không hợp lệ.' });
+      return;
+    }
+
+    await prisma.$transaction(
+      updates.map((entry) =>
+        prisma.book.update({
+          where: { id: BigInt(entry.id) },
+          data: { sortOrder: Math.trunc(entry.sortOrder) },
+        }),
+      ),
+    );
 
     res.json({ success: true });
   });
