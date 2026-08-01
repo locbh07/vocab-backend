@@ -4,6 +4,12 @@ import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
 import { resolveContentAccess } from '../lib/contentAccess';
 import { vocabularyMaskRule } from '../lib/contentMasking';
+import {
+  translateVocabularyItem,
+  translateVocabularyExampleItem,
+  translateVocabularyTopic,
+  overlayVocabularyTranslations,
+} from '../lib/contentTranslation';
 
 const ALLOWED_PREFIXES = new Set([
   '3000_common_',
@@ -14,6 +20,7 @@ const ALLOWED_PREFIXES = new Set([
   '3000_N1_',
 ]);
 const ALLOWED_TRACKS = new Set(['core', 'book']);
+const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en']);
 const FREE_CORE_PREFIXES = ['3000_common_', '1000_N5_', '1500_N4_', '2000_N3_', '2500_N2_', '3000_N1_'];
 const TANGO_JLPT_SOURCE_BOOKS = new Set(['N1', 'N2', 'N3', 'N4', 'N5']);
 
@@ -36,6 +43,69 @@ function cleanText(value: unknown): string {
 function normalizeBoolean(value: unknown): boolean {
   const text = String(value || '').trim().toLowerCase();
   return text === '1' || text === 'true' || text === 'yes' || text === 'on';
+}
+
+function normalizeLanguage(value: unknown): string {
+  const lang = String(value || 'vi').trim().toLowerCase();
+  return SUPPORTED_CONTENT_LANGUAGES.has(lang) ? lang : 'vi';
+}
+
+function resolveRequestLanguage(req: Request): string {
+  return normalizeLanguage(req.query.language ?? req.headers['x-language']);
+}
+
+async function overlayVocabularyExampleTranslations(
+  examplesByVocabId: Map<number, Array<{ id: number; order_index: number; example_ja: string | null; example_vi: string | null }>>,
+  language: string,
+): Promise<void> {
+  if (language === 'vi') return;
+
+  const exampleIds = Array.from(examplesByVocabId.values())
+    .flat()
+    .map((ex) => BigInt(ex.id));
+  if (!exampleIds.length) return;
+
+  const translations = await prisma.vocabularyExampleTranslation.findMany({
+    where: { vocab_example_id: { in: exampleIds }, language },
+  });
+  const byExampleId = new Map(translations.map((t) => [String(t.vocab_example_id), t]));
+
+  for (const [vocabId, examples] of examplesByVocabId) {
+    examplesByVocabId.set(
+      vocabId,
+      examples.map((ex) => {
+        const translation = byExampleId.get(String(ex.id));
+        if (!translation) {
+          void translateVocabularyExampleItem(ex.id, language);
+          return ex;
+        }
+        return { ...ex, example_vi: translation.example ?? ex.example_vi };
+      }),
+    );
+  }
+}
+
+// Topics are shared strings (not per-row), so this batches lookups by distinct topic text —
+// translating each of the ~800 distinct topics once instead of once per vocabulary row.
+async function overlayTopicTranslations(topics: string[], language: string): Promise<Map<string, string>> {
+  const distinctTopics = Array.from(new Set(topics.filter(Boolean)));
+  const result = new Map<string, string>();
+  if (language === 'vi' || !distinctTopics.length) return result;
+
+  const cached = await prisma.vocabularyTopicTranslation.findMany({
+    where: { topic: { in: distinctTopics }, language },
+  });
+  const byTopic = new Map(cached.map((row) => [row.topic, row.translation]));
+
+  for (const topic of distinctTopics) {
+    const translation = byTopic.get(topic);
+    if (translation) {
+      result.set(topic, translation);
+    } else {
+      void translateVocabularyTopic(topic, language);
+    }
+  }
+  return result;
 }
 
 function isTangoJlptVocabulary(item: { track?: unknown; topic?: unknown; source_book?: unknown }): boolean {
@@ -82,6 +152,7 @@ export function createVocabularyRouter() {
 
   router.get('/all', async (req: Request, res: Response) => {
     const access = await resolveContentAccess(req);
+    const language = resolveRequestLanguage(req);
     const track = normalizeTrack(req.query.track);
     const prefix = normalizePrefix(req.query.prefix);
     const sourceBook = cleanText(req.query.sourceBook);
@@ -108,29 +179,36 @@ export function createVocabularyRouter() {
 
     const rows = await prisma.vocabulary.findMany({ where, orderBy, ...(limit ? { take: limit } : {}) });
     if (!includeExamples || !rows.length) {
-      return res.json(maskVocabularyListForAccess(rows as any[], access.isPremium));
+      const topicTranslations = await overlayTopicTranslations(rows.map((r) => String(r.topic || '')), language);
+      const rowsWithTopic = topicTranslations.size
+        ? rows.map((row) => ({ ...row, topic: topicTranslations.get(String(row.topic || '')) ?? row.topic }))
+        : (rows as any[]);
+      const translatedRows = await overlayVocabularyTranslations(rowsWithTopic, language);
+      return res.json(maskVocabularyListForAccess(translatedRows, access.isPremium));
     }
 
     const vocabIds = rows.map((row) => Number(row.id)).filter(Number.isFinite);
     const examples = await prisma.$queryRaw<Array<{
+      id: bigint | number;
       vocab_id: bigint | number;
       order_index: number;
       example_ja: string | null;
       example_vi: string | null;
     }>>(
       Prisma.sql`
-        SELECT vocab_id, order_index, example_ja, example_vi
+        SELECT id, vocab_id, order_index, example_ja, example_vi
         FROM vocabulary_example
         WHERE vocab_id IN (${Prisma.join(vocabIds)})
         ORDER BY vocab_id ASC, order_index ASC
       `,
     );
 
-    const byVocabId = new Map<number, Array<{ order_index: number; example_ja: string | null; example_vi: string | null }>>();
+    const byVocabId = new Map<number, Array<{ id: number; order_index: number; example_ja: string | null; example_vi: string | null }>>();
     for (const ex of examples) {
       const id = Number(ex.vocab_id);
       const list = byVocabId.get(id) || [];
       list.push({
+        id: Number(ex.id),
         order_index: Number(ex.order_index),
         example_ja: ex.example_ja,
         example_vi: ex.example_vi,
@@ -138,15 +216,21 @@ export function createVocabularyRouter() {
       byVocabId.set(id, list);
     }
 
+    await overlayVocabularyExampleTranslations(byVocabId, language);
+    const topicTranslations = await overlayTopicTranslations(rows.map((r) => String(r.topic || '')), language);
+
     const items = rows.map((row) => ({
         ...row,
+        topic: topicTranslations.get(String(row.topic || '')) ?? row.topic,
         examples: byVocabId.get(Number(row.id)) || [],
       }));
 
-    return res.json(maskVocabularyListForAccess(items as any[], access.isPremium));
+    const translatedItems = await overlayVocabularyTranslations(items, language);
+    return res.json(maskVocabularyListForAccess(translatedItems, access.isPremium));
   });
 
   router.get('/topics', async (req: Request, res: Response) => {
+    const language = resolveRequestLanguage(req);
     const track = normalizeTrack(req.query.track);
     const prefix = normalizePrefix(req.query.prefix);
     const sourceBook = cleanText(req.query.sourceBook);
@@ -173,7 +257,9 @@ export function createVocabularyRouter() {
       `,
     );
 
-    return res.json(rows.map((r) => String(r.topic || '')).filter(Boolean));
+    const topics = rows.map((r) => String(r.topic || '')).filter(Boolean);
+    const topicTranslations = await overlayTopicTranslations(topics, language);
+    return res.json(topics.map((topic) => topicTranslations.get(topic) ?? topic));
   });
 
   router.get('/books', async (req: Request, res: Response) => {
@@ -264,6 +350,7 @@ export function createVocabularyRouter() {
     };
 
     const updated = await prisma.vocabulary.update({ where: { id: BigInt(id) }, data });
+    void translateVocabularyItem(updated.id, 'en');
     return res.json(updated);
   });
 

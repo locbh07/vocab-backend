@@ -11,6 +11,7 @@ import { listeningVideoMaskRule } from '../lib/contentMasking';
 import { tokenizeJapaneseText } from '../lib/japaneseReading';
 import { classifyListeningLevelFromTranscript } from '../lib/listeningLevelClassifier';
 import { requireUser } from '../middleware/userGuard';
+import { translateVocabularyItem } from '../lib/contentTranslation';
 
 type ListeningVideoRow = {
   source_id: string | null;
@@ -1050,6 +1051,48 @@ async function cacheCorodomoAiVocabulary(term: string) {
   return items;
 }
 
+// Corodomo's own AI lookup only ever returns Vietnamese glosses (targetLang is fixed
+// upstream), so a non-Vietnamese dictionary popup needs a second translation pass —
+// straight from the Japanese term itself (not a vi->en double-hop) using the same
+// Google Translate helpers already used for subtitle-line translation. Cached in the
+// same table under the requested target_lang, reusing the (text, lang, target_lang)
+// uniqueness the schema already supports.
+async function translateCorodomoTermToLanguage(term: string, language: string): Promise<string> {
+  try {
+    const apiKey = String(process.env.GOOGLE_TRANSLATE_API_KEY || '').trim();
+    if (apiKey) {
+      try {
+        const translation = await translateWithApiKey(term, language, apiKey);
+        if (translation) return translation;
+      } catch {
+        // fall through to the public endpoint
+      }
+    }
+    return await translateWithPublicEndpoint(term, language);
+  } catch {
+    return '';
+  }
+}
+
+async function cacheCorodomoVocabularyTranslation(term: string, language: string) {
+  const translation = await translateCorodomoTermToLanguage(term, language);
+  if (!translation) return;
+  await prisma.$executeRaw(
+    Prisma.sql`
+      INSERT INTO listening_corodomo_vocabulary (
+        text, lang, target_lang, translation, pos, level, source_query, created_at, updated_at
+      )
+      VALUES (
+        ${term}, 'ja', ${language}, ${translation}, 'google-translate', '', ${term}, NOW(), NOW()
+      )
+      ON CONFLICT (text, lang, target_lang)
+      DO UPDATE SET
+        translation = EXCLUDED.translation,
+        updated_at = NOW()
+    `,
+  );
+}
+
 function buildTokenNgrams(tokens: ListeningVocabLookupToken[]) {
   const ngrams = new Set<string>();
   for (let start = 0; start < tokens.length; start += 1) {
@@ -1737,6 +1780,8 @@ export function createListeningRouter() {
 
   router.post('/vocab-lookup', async (req: Request, res: Response) => {
     try {
+    const rawLanguage = String(req.body?.language || '').trim().toLowerCase();
+    const language = SUPPORTED_TRANSLATION_LANGUAGES.has(rawLanguage) ? rawLanguage : 'vi';
     const rawTexts = Array.isArray(req.body?.texts)
       ? req.body.texts
       : [req.body?.text];
@@ -1821,6 +1866,26 @@ export function createListeningRouter() {
         await runWithConcurrency(missingTerms, CORODOMO_AI_LOOKUP_CONCURRENCY, async (term) => {
           await cacheCorodomoAiVocabulary(term).catch(() => []);
         });
+
+        // Corodomo's own AI lookup is Vietnamese-only — for any other requested language,
+        // translate the same exact-span terms straight from Japanese and cache them under
+        // that target_lang so repeat lookups (same video, same line) hit the cache.
+        if (language !== 'vi') {
+          const existingLangRows = await prisma.$queryRaw<Array<{ text: string | null }>>(
+            Prisma.sql`
+              SELECT text
+              FROM listening_corodomo_vocabulary
+              WHERE text IN (${Prisma.join(Array.from(exactSpanTerms))})
+                AND lang = 'ja'
+                AND target_lang = ${language}
+            `,
+          );
+          const existingLang = new Set(existingLangRows.map((row) => String(row.text || '').trim()).filter(Boolean));
+          const missingLangTerms = Array.from(exactSpanTerms).filter((term) => !existingLang.has(term));
+          await runWithConcurrency(missingLangTerms, CORODOMO_AI_LOOKUP_CONCURRENCY, async (term) => {
+            await cacheCorodomoVocabularyTranslation(term, language).catch(() => {});
+          });
+        }
       }
 
       const corodomoRows = await prisma.$queryRaw<ListeningCorodomoVocabLookupRow[]>(
@@ -1829,7 +1894,7 @@ export function createListeningRouter() {
           FROM listening_corodomo_vocabulary
           WHERE text IN (${Prisma.join(terms)})
             AND lang = 'ja'
-            AND target_lang = 'vi'
+            AND target_lang = ${language}
           ORDER BY LENGTH(text) DESC, id ASC
           LIMIT 2000
         `,
@@ -1857,6 +1922,29 @@ export function createListeningRouter() {
           LIMIT 2000
         `,
       );
+
+      // The curated vocabulary table's meaning is Vietnamese-only in this column, but most
+      // words already get a Gemini-translated row in vocabulary_translation the moment
+      // they're created/edited (see adminVocabulary.ts / vocabulary.ts). Reuse that when it
+      // exists; for the remaining gap, kick off a background translation (same helper) so
+      // it's cached for next time — this request still falls back to the Vietnamese meaning
+      // rather than blocking on a fresh translation.
+      if (language !== 'vi' && rows.length > 0) {
+        const vocabIds = rows.map((row) => BigInt(row.id));
+        const translations = await prisma.vocabularyTranslation.findMany({
+          where: { vocab_id: { in: vocabIds }, language },
+          select: { vocab_id: true, word: true },
+        });
+        const translationByVocabId = new Map(translations.map((item) => [item.vocab_id.toString(), item.word]));
+        for (const row of rows) {
+          const translatedWord = translationByVocabId.get(String(row.id));
+          if (translatedWord && translatedWord.trim()) {
+            row.word_vi = translatedWord;
+          } else {
+            void translateVocabularyItem(row.id, language);
+          }
+        }
+      }
 
       for (const row of rows) {
         const word = mapLookupWord(row);

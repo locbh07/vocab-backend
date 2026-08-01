@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
+import { translateVocabularyItem } from '../lib/contentTranslation';
 
 const PATCH_FIELDS = [
   'word_ja',
@@ -108,6 +109,7 @@ export function createAdminVocabularyRouter() {
     await requireAdmin(req);
     const data = toPatch(req.body || {});
     const created = await prisma.vocabulary.create({ data: data as any });
+    void translateVocabularyItem(created.id, 'en');
     return res.json(created);
   });
 
@@ -119,6 +121,7 @@ export function createAdminVocabularyRouter() {
 
     const data = toPatch(req.body || {}, true);
     const updated = await prisma.vocabulary.update({ where: { id: BigInt(id) }, data: data as any });
+    void translateVocabularyItem(updated.id, 'en');
     return res.json(updated);
   });
 
@@ -140,6 +143,7 @@ export function createAdminVocabularyRouter() {
     const data = toPatch(req.body || {});
     if (!Object.keys(data).length) return res.status(400).json({ message: 'No supported fields to apply' });
     const updated = await prisma.vocabulary.update({ where: { id: BigInt(id) }, data: data as any });
+    void translateVocabularyItem(updated.id, 'en');
     return res.json(updated);
   });
 
@@ -211,6 +215,7 @@ export function createAdminVocabularyRouter() {
       }
       try {
         await prisma.vocabulary.update({ where: { id: BigInt(id) }, data: patch as any });
+        void translateVocabularyItem(id, 'en');
         updated += 1;
       } catch (error) {
         failed.push({ id, message: (error as Error).message });

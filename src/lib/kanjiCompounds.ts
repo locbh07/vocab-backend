@@ -174,6 +174,17 @@ export async function listKanjiCompounds(args: {
     return asCompoundRows(cachedRows[0].compounds_json);
   }
 
+  // `priority` already encodes the vocabulary-vs-jmdict split by construction (build-kanji-
+  // compounds.cjs assigns vocabulary-sourced rows `core_order` or `1_000_000 + id`, and jmdict
+  // rows `2_000_000 + frequency_rank` — always a full magnitude higher), so sorting by
+  // `priority ASC` alone already puts curated vocabulary entries before generic dictionary
+  // ones, correctly ordered by frequency within each group. An earlier version of this query
+  // additionally tie-broke on "does meaning_vi exist" before priority — that was redundant for
+  // vocabulary-sourced rows (word_vi is essentially always populated there) but skewed jmdict
+  // ordering: a less common jmdict word that happened to have a Mazii-matched Vietnamese gloss
+  // would rank ahead of a genuinely more common one that didn't, and — since it checked
+  // meaning_vi specifically, never meaning_en — did so identically regardless of which UI
+  // language the request was for. Removed; `priority ASC` is both simpler and language-neutral.
   const seedLimit = Math.min(
     FAST_QUERY_SEED_MAX,
     Math.max(FAST_QUERY_SEED_MIN, limit * 40),
@@ -185,15 +196,7 @@ export async function listKanjiCompounds(args: {
           kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
         FROM kanji_compound
         WHERE kanji_char = $1
-        ORDER BY
-          CASE
-            WHEN COALESCE(meaning_vi, '') <> '' THEN 0
-            WHEN COALESCE(meaning_en, '') <> '' THEN 1
-            ELSE 2
-          END,
-          CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
-          priority ASC,
-          word_ja ASC
+        ORDER BY priority ASC, word_ja ASC
         LIMIT $3
       ),
       ranked AS (
@@ -201,11 +204,7 @@ export async function listKanjiCompounds(args: {
           kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
           ROW_NUMBER() OVER (
             PARTITION BY word_ja, reading_kana
-            ORDER BY
-              CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
-              CASE WHEN COALESCE(meaning_vi, '') <> '' THEN 0 ELSE 1 END,
-              priority ASC,
-              word_ja ASC
+            ORDER BY priority ASC, word_ja ASC
           ) AS rn
         FROM seed
       )
@@ -213,14 +212,7 @@ export async function listKanjiCompounds(args: {
         kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
       FROM ranked
       WHERE rn = 1
-      ORDER BY
-        CASE
-          WHEN COALESCE(meaning_vi, '') <> '' THEN 0
-          WHEN COALESCE(meaning_en, '') <> '' THEN 1
-          ELSE 2
-        END,
-        priority ASC,
-        word_ja ASC
+      ORDER BY priority ASC, word_ja ASC
       LIMIT $2
     `,
     kanji,
@@ -237,11 +229,7 @@ export async function listKanjiCompounds(args: {
           kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
           ROW_NUMBER() OVER (
             PARTITION BY word_ja, reading_kana
-            ORDER BY
-              CASE source WHEN 'vocabulary' THEN 0 WHEN 'jmdict' THEN 1 ELSE 2 END,
-              CASE WHEN COALESCE(meaning_vi, '') <> '' THEN 0 ELSE 1 END,
-              priority ASC,
-              word_ja ASC
+            ORDER BY priority ASC, word_ja ASC
           ) AS rn
         FROM kanji_compound
         WHERE kanji_char = $1
@@ -250,14 +238,7 @@ export async function listKanjiCompounds(args: {
         kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
       FROM ranked
       WHERE rn = 1
-      ORDER BY
-        CASE
-          WHEN COALESCE(meaning_vi, '') <> '' THEN 0
-          WHEN COALESCE(meaning_en, '') <> '' THEN 1
-          ELSE 2
-        END,
-        priority ASC,
-        word_ja ASC
+      ORDER BY priority ASC, word_ja ASC
       LIMIT $2
     `,
     kanji,

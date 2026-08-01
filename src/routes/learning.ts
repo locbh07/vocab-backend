@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { prisma } from '../lib/prisma';
 import { dateOnly } from '../lib/http';
+import { resolveRequestLanguage, overlayVocabularyTranslations, overlayVocabularyMeanings } from '../lib/contentTranslation';
 
 const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
 type JlptLevel = (typeof JLPT_LEVELS)[number];
@@ -213,6 +214,7 @@ export function createLearningRouter() {
   router.get('/new-words', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const language = resolveRequestLanguage(req);
     const plan = await getActivePlan(userId);
     if (!plan?.daily_new_words || plan.daily_new_words <= 0) return res.json([]);
 
@@ -285,12 +287,14 @@ export function createLearningRouter() {
       }
     }
 
-    return res.json(rows);
+    const translatedRows = await overlayVocabularyTranslations(rows, language);
+    return res.json(translatedRows);
   });
 
   router.get('/reviews', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const language = resolveRequestLanguage(req);
     // Keep date filtering in SQL to match Java logic exactly and avoid timezone shifts.
     const dueRows = await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
       SELECT vocab_id
@@ -303,12 +307,14 @@ export function createLearningRouter() {
     const ids = dueRows.map((p) => p.vocab_id);
     if (!ids.length) return res.json([]);
     const words = await prisma.vocabulary.findMany({ where: { id: { in: ids } } });
-    return res.json(words);
+    const translatedWords = await overlayVocabularyTranslations(words, language);
+    return res.json(translatedWords);
   });
 
   router.get('/today', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const language = resolveRequestLanguage(req);
     const endDate = req.query.endDate ? new Date(String(req.query.endDate)) : dateOnly(new Date());
     const startDate = req.query.startDate
       ? new Date(String(req.query.startDate))
@@ -341,11 +347,15 @@ export function createLearningRouter() {
       ORDER BY COALESCE(p.last_reviewed_at, p.first_seen_date) DESC NULLS LAST, p.first_seen_date DESC, p.vocab_id ASC
     `;
 
+    const meaningMap = await overlayVocabularyMeanings(
+      rows.map((row) => ({ id: row.word_id, meaning: row.meaning })),
+      language,
+    );
     const items = rows.map((row: any) => ({
       wordId: Number(row.word_id),
       surface: row.surface,
       reading: row.reading,
-      meaning: row.meaning,
+      meaning: meaningMap.get(String(row.word_id)) ?? row.meaning,
       learnedAt: row.learned_at,
       status: row.status,
       stage: row.stage,
@@ -360,6 +370,7 @@ export function createLearningRouter() {
   router.get('/quiz/plan', async (req: Request, res: Response) => {
     const userId = Number(req.query.userId);
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const language = resolveRequestLanguage(req);
     const batchSize = 5;
     const learned = await prisma.userVocabProgress.count({ where: { user_id: BigInt(userId) } });
     const plannedSessions = Math.min(Math.max(1 + Math.floor(learned / 50), 1), 10);
@@ -391,13 +402,17 @@ export function createLearningRouter() {
         ORDER BY p.last_reviewed_at DESC NULLS LAST, p.vocab_id ASC
         LIMIT ${batchSize}
       `;
+      const meaningMap = await overlayVocabularyMeanings(
+        rows.map((r) => ({ id: r.word_id, meaning: r.meaning })),
+        language,
+      );
       nextSession = {
         sessionIndex: completed + 1,
         items: rows.map((r: any) => ({
           wordId: Number(r.word_id),
           surface: r.surface,
           reading: r.reading,
-          meaning: r.meaning,
+          meaning: meaningMap.get(String(r.word_id)) ?? r.meaning,
         })),
       };
     }
@@ -417,6 +432,7 @@ export function createLearningRouter() {
     if (!Number.isFinite(userId) || !Number.isFinite(sessionIndex)) {
       return res.status(400).json({ message: 'Invalid userId or sessionIndex' });
     }
+    const language = resolveRequestLanguage(req);
     const batchSize = 5;
     const today = dateOnly(new Date());
 
@@ -471,6 +487,11 @@ export function createLearningRouter() {
       ORDER BY qsi.item_order ASC
     `;
 
+    const meaningMap = await overlayVocabularyMeanings(
+      words.map((w) => ({ id: w.word_id, meaning: w.meaning })),
+      language,
+    );
+
     return res.json({
       sessionId: Number(session.id),
       batchSize,
@@ -478,7 +499,7 @@ export function createLearningRouter() {
         wordId: Number(w.word_id),
         surface: w.surface,
         reading: w.reading,
-        meaning: w.meaning,
+        meaning: meaningMap.get(String(w.word_id)) ?? w.meaning,
       })),
     });
   });

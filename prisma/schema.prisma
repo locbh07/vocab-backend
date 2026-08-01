@@ -30,6 +30,7 @@ model Grammar {
   note                 String?        @db.Text
   isFreePreview        Boolean        @default(false) @map("is_free_preview")
   usages               GrammarUsage[] @relation("GrammarToUsage", fields: [], references: [])
+  translations         GrammarTranslation[]
 
   @@map("grammar")
 }
@@ -41,9 +42,46 @@ model GrammarUsage {
   example_ja String? @db.Text
   example_vi String? @db.Text
 
-  grammar Grammar @relation("GrammarToUsage", fields: [grammar_id], references: [grammar_id])
+  grammar      Grammar                    @relation("GrammarToUsage", fields: [grammar_id], references: [grammar_id])
+  translations GrammarUsageTranslation[]
 
   @@map("grammar_usage")
+}
+
+model GrammarTranslation {
+  id          BigInt   @id @default(autoincrement())
+  grammar_id  BigInt
+  language    String   @db.VarChar(10)
+  meaning     String?  @db.Text
+  usage_text  String?  @db.Text
+  note        String?  @db.Text
+  provider    String   @default("gemini") @db.VarChar(20)
+  source_hash String   @db.VarChar(64)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  grammar Grammar @relation(fields: [grammar_id], references: [grammar_id], onDelete: Cascade)
+
+  @@unique([grammar_id, language])
+  @@index([grammar_id])
+  @@map("grammar_translation")
+}
+
+model GrammarUsageTranslation {
+  id          BigInt   @id @default(autoincrement())
+  usage_id    BigInt
+  language    String   @db.VarChar(10)
+  example     String?  @db.Text
+  provider    String   @default("gemini") @db.VarChar(20)
+  source_hash String   @db.VarChar(64)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  grammarUsage GrammarUsage @relation(fields: [usage_id], references: [usage_id], onDelete: Cascade)
+
+  @@unique([usage_id, language])
+  @@index([usage_id])
+  @@map("grammar_usage_translation")
 }
 
 model JlptExam {
@@ -304,6 +342,7 @@ model Vocabulary {
   quizSessionItems QuizSessionItem[]
   vocabProgress    UserVocabProgress[]
   examples         VocabularyExample[]
+  translations     VocabularyTranslation[]
 
   @@map("vocabulary")
 }
@@ -317,11 +356,64 @@ model VocabularyExample {
   created_at  DateTime @default(now())
   updated_at  DateTime @default(now())
 
-  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id], onDelete: Cascade)
+  vocabulary   Vocabulary                     @relation(fields: [vocab_id], references: [id], onDelete: Cascade)
+  translations VocabularyExampleTranslation[]
 
   @@unique([vocab_id, order_index])
   @@index([vocab_id])
   @@map("vocabulary_example")
+}
+
+model VocabularyTranslation {
+  id          BigInt   @id @default(autoincrement())
+  vocab_id    BigInt
+  language    String   @db.VarChar(10)
+  word        String?  @db.Text
+  example     String?  @db.Text
+  provider    String   @default("gemini") @db.VarChar(20)
+  source_hash String   @db.VarChar(64)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  vocabulary Vocabulary @relation(fields: [vocab_id], references: [id], onDelete: Cascade)
+
+  @@unique([vocab_id, language])
+  @@index([vocab_id])
+  @@map("vocabulary_translation")
+}
+
+// Vocabulary topics (Tango N5-N1 workbook category names) are a shared string across many
+// rows, not a per-row field — so unlike VocabularyTranslation this keys off the raw topic
+// text itself rather than a vocab_id foreign key.
+model VocabularyTopicTranslation {
+  id          BigInt   @id @default(autoincrement())
+  topic       String   @db.VarChar(255)
+  language    String   @db.VarChar(10)
+  translation String?  @db.Text
+  provider    String   @default("gemini") @db.VarChar(20)
+  source_hash String   @db.VarChar(64)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  @@unique([topic, language])
+  @@map("vocabulary_topic_translation")
+}
+
+model VocabularyExampleTranslation {
+  id               BigInt   @id @default(autoincrement())
+  vocab_example_id BigInt
+  language         String   @db.VarChar(10)
+  example          String?  @db.Text
+  provider         String   @default("gemini") @db.VarChar(20)
+  source_hash      String   @db.VarChar(64)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @default(now())
+
+  vocabularyExample VocabularyExample @relation(fields: [vocab_example_id], references: [id], onDelete: Cascade)
+
+  @@unique([vocab_example_id, language])
+  @@index([vocab_example_id])
+  @@map("vocabulary_example_translation")
 }
 
 // Note: vocabulary_backup_coreorder has no PK in your description  Eskip mapping for now or add a manual model if needed.

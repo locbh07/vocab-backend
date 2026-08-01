@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { generateGeminiJson, generateGeminiGroundedText } from '../lib/gemini';
 import { requireAdmin } from '../middleware/adminGuard';
 import { upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
+import { translateVocabularyItem, translateGrammarItem, translateGrammarUsageItem } from '../lib/contentTranslation';
 
 type TargetType = 'vocabulary' | 'grammar' | 'grammar_usage' | 'kanji_compound' | 'exam_question';
 type ReviewStatus = 'pending' | 'reviewed' | 'no_change' | 'failed' | 'accepted' | 'rejected' | 'applied';
@@ -897,6 +898,7 @@ async function applyVocabularyItem(item: ReviewItemRecord, patch: Record<string,
   if (!before) throw new Error('Vocabulary not found');
   const data = sanitizePatch('vocabulary', patch, Array.from(VOCAB_FIELDS));
   const after = await prisma.vocabulary.update({ where: { id: BigInt(id) }, data: data as any });
+  void translateVocabularyItem(id, 'en');
   return saveApplyResult(item, before, data, after, adminId);
 }
 
@@ -906,6 +908,7 @@ async function applyGrammarItem(item: ReviewItemRecord, patch: Record<string, un
   if (!before) throw new Error('Grammar not found');
   const data = sanitizePatch('grammar', patch, Array.from(GRAMMAR_FIELDS));
   const after = await prisma.grammar.update({ where: { grammar_id: BigInt(id) }, data: data as any });
+  void translateGrammarItem(id, 'en');
   return saveApplyResult(item, before, data, after, adminId);
 }
 
@@ -915,6 +918,7 @@ async function applyGrammarUsageItem(item: ReviewItemRecord, patch: Record<strin
   if (!before) throw new Error('Grammar usage not found');
   const data = sanitizePatch('grammar_usage', patch, Array.from(GRAMMAR_USAGE_FIELDS));
   const after = await prisma.grammarUsage.update({ where: { usage_id: BigInt(id) }, data: data as any });
+  void translateGrammarUsageItem(id, 'en');
   return saveApplyResult(item, before, data, after, adminId);
 }
 
