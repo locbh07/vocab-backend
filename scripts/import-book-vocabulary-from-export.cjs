@@ -8,7 +8,10 @@ const prisma = new PrismaClient();
 const DEFAULT_IGNORE = new Set(['all_vocabulary_merged.json', 'download_summary.json']);
 
 function parseArgs(argv) {
-  const args = { dataDir: process.env.VOCAB_BOOK_DATA_DIR || path.resolve(process.cwd(), 'tmp_vocab_export') };
+  const args = {
+    dataDir: process.env.VOCAB_BOOK_DATA_DIR || path.resolve(process.cwd(), 'tmp_vocab_export'),
+    only: null,
+  };
   for (let i = 2; i < argv.length; i += 1) {
     const token = String(argv[i] || '').trim();
     if (!token) continue;
@@ -18,6 +21,15 @@ function parseArgs(argv) {
     }
     if (token === '--data-dir' && i + 1 < argv.length) {
       args.dataDir = String(argv[i + 1] || '').trim() || args.dataDir;
+      i += 1;
+      continue;
+    }
+    if (token.startsWith('--only=')) {
+      args.only = token.slice('--only='.length).trim() || null;
+      continue;
+    }
+    if (token === '--only' && i + 1 < argv.length) {
+      args.only = String(argv[i + 1] || '').trim() || null;
       i += 1;
       continue;
     }
@@ -246,8 +258,10 @@ async function main() {
   await ensureColumns();
 
   const files = await fs.readdir(dataDir, { withFileTypes: true });
+  const onlyBook = args.only ? args.only.replace(/\.json$/i, '').toLowerCase() : null;
   const jsonFiles = files
     .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.json') && !DEFAULT_IGNORE.has(d.name))
+    .filter((d) => !onlyBook || d.name.replace(/\.json$/i, '').toLowerCase() === onlyBook)
     .map((d) => d.name)
     .sort((a, b) => a.localeCompare(b));
 
