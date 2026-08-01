@@ -1,5 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { listKanjiCompounds } from '../lib/kanjiCompounds';
+import { resolveRequestLanguage } from '../lib/contentTranslation';
 
 export function createKanjiRouter() {
   const router = Router();
@@ -8,7 +9,8 @@ export function createKanjiRouter() {
     const kanji = String(req.params.kanji || '').trim();
     const limit = Number(req.query.limit || 30);
     if (!kanji) return res.status(400).json({ message: 'Missing kanji' });
-    const compounds = await listKanjiCompounds({ kanji, limit });
+    const language = resolveRequestLanguage(req);
+    const compounds = await listKanjiCompounds({ kanji, limit, language });
     return res.json({
       kanji,
       count: compounds.length,
@@ -20,7 +22,8 @@ export function createKanjiRouter() {
     const kanji = String(req.query.kanji || '').trim();
     const limit = Number(req.query.limit || 30);
     if (!kanji) return res.status(400).json({ message: 'Missing kanji query' });
-    const compounds = await listKanjiCompounds({ kanji, limit });
+    const language = resolveRequestLanguage(req);
+    const compounds = await listKanjiCompounds({ kanji, limit, language });
     return res.json({
       kanji,
       count: compounds.length,

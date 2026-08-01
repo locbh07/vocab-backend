@@ -18,7 +18,7 @@ function isPlaceholderUsage(exampleJa?: string | null, exampleVi?: string | null
   return PLACEHOLDER_PATTERNS.some((pattern) => text.includes(pattern));
 }
 
-const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en']);
+const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
 
 function normalizeLanguage(value: unknown): string {
   const lang = String(value || 'vi').trim().toLowerCase();

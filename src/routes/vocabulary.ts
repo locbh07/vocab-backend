@@ -20,7 +20,7 @@ const ALLOWED_PREFIXES = new Set([
   '3000_N1_',
 ]);
 const ALLOWED_TRACKS = new Set(['core', 'book']);
-const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en']);
+const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
 const FREE_CORE_PREFIXES = ['3000_common_', '1000_N5_', '1500_N4_', '2000_N3_', '2500_N2_', '3000_N1_'];
 const TANGO_JLPT_SOURCE_BOOKS = new Set(['N1', 'N2', 'N3', 'N4', 'N5']);
 

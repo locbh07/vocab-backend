@@ -4,8 +4,9 @@
 // — see src/lib/kanjiCompounds.ts). Mirrors the batching/Gemini-calling approach of
 // scripts/batch-translate-content.cjs, but writes directly to a meaning_<lang> column instead
 // of a separate *_translation table since this table carries language columns inline.
-// Currently only meaning_vi/meaning_en columns exist — adding a third language requires a
-// migration to add a meaning_<lang> column first (see prisma/migrations for the pattern).
+// Only languages with an actual meaning_<lang> column on kanji_compound (see MEANING_COLUMNS
+// below) can be targeted — add the column (ensureKanjiCompoundTable() in kanjiCompounds.ts)
+// before adding a new entry here.
 //
 // Usage: node scripts/backfill-kanji-compound-meaning-en.cjs [--lang en] [--batch-size 40] [--delay-ms 400] [--limit 100000] [--dry-run]
 require("dotenv").config();
@@ -22,6 +23,12 @@ const LANGUAGE_NAMES = {
   ne: "Nepali",
   my: "Burmese",
   fil: "Filipino",
+};
+
+// Only languages that actually have a meaning_<lang> column on kanji_compound today.
+const MEANING_COLUMNS = {
+  en: "meaning_en",
+  zh: "meaning_zh",
 };
 
 function parseArgs(argv) {
@@ -113,29 +120,31 @@ async function translateBatchWithRetry(geminiOptions, items) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (args.lang !== "en") {
-    // Only meaning_vi/meaning_en columns exist today. Add a `meaning_<lang>` column via a new
-    // migration (see prisma/migrations/20260731150000_add_vocabulary_topic_translation for the
-    // pattern) before pointing this script at another language.
-    throw new Error(`kanji_compound has no meaning_${args.lang} column yet — add a migration first.`);
+  const column = MEANING_COLUMNS[args.lang];
+  if (!column) {
+    throw new Error(
+      `kanji_compound has no meaning_${args.lang} column — add it to ensureKanjiCompoundTable() ` +
+        `in src/lib/kanjiCompounds.ts and to MEANING_COLUMNS in this script first.`,
+    );
   }
+  const columnIdent = Prisma.raw(column);
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
   const model = process.env.GEMINI_TRANSLATE_MODEL || "gemini-3.5-flash-lite";
   const languageName = LANGUAGE_NAMES[args.lang] || args.lang;
   const geminiOptions = { model, apiKey, languageName };
 
-  console.log(`Backfilling kanji_compound.meaning_en (${languageName}) using model '${model}'${args.dryRun ? " [dry-run]" : ""}`);
+  console.log(`Backfilling kanji_compound.${column} (${languageName}) using model '${model}'${args.dryRun ? " [dry-run]" : ""}`);
 
   const rows = await prisma.$queryRaw(Prisma.sql`
     SELECT id, meaning_vi
     FROM kanji_compound
-    WHERE (meaning_en IS NULL OR meaning_en = '')
+    WHERE (${columnIdent} IS NULL OR ${columnIdent} = '')
       AND meaning_vi IS NOT NULL AND meaning_vi <> ''
     ORDER BY id
     LIMIT ${args.limit}
   `);
-  console.log(`${rows.length} row(s) need an English meaning.`);
+  console.log(`${rows.length} row(s) need a ${languageName} meaning.`);
   if (!rows.length) return;
 
   const batches = chunk(rows, args.batchSize);
@@ -157,7 +166,7 @@ async function main() {
         continue;
       }
       await prisma.$executeRaw(Prisma.sql`
-        UPDATE kanji_compound SET meaning_en = ${result.meaning}, updated_at = NOW() WHERE id = ${row.id}
+        UPDATE kanji_compound SET ${columnIdent} = ${result.meaning}, updated_at = NOW() WHERE id = ${row.id}
       `);
       translated += 1;
     }

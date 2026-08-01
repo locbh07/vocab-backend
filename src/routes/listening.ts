@@ -113,7 +113,7 @@ const LISTENING_AI_TRANSCRIPT_MODEL = String(process.env.OPENAI_LISTENING_TRANSC
 const LISTENING_AI_TRANSCRIPT_LANGUAGE = String(process.env.LISTENING_AI_TRANSCRIPT_LANGUAGE || 'ja').trim();
 const LISTENING_AI_TRANSCRIPT_MAX_DURATION_SEC = Math.max(30, Number(process.env.LISTENING_AI_TRANSCRIPT_MAX_DURATION_SEC || 45 * 60));
 const LISTENING_AI_TRANSCRIPT_MAX_AUDIO_BYTES = Math.max(1024 * 1024, Number(process.env.LISTENING_AI_TRANSCRIPT_MAX_AUDIO_BYTES || 24 * 1024 * 1024));
-const SUPPORTED_TRANSLATION_LANGUAGES = new Set(['vi', 'en']);
+const SUPPORTED_TRANSLATION_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
 const translationCache = new Map<string, string>();
 const MAX_TRANSLATION_CACHE_SIZE = 1000;
 const LISTENING_VOCAB_LOOKUP_MAX_LINES = 400;
@@ -1543,6 +1543,13 @@ const SUMMARY_LANGUAGE_NAMES: Record<string, string> = {
   vi: 'Vietnamese',
   en: 'English',
   ja: 'Japanese',
+  zh: 'Chinese (Simplified)',
+  ko: 'Korean',
+  pt: 'Portuguese (Brazil)',
+  id: 'Indonesian',
+  ne: 'Nepali',
+  my: 'Burmese',
+  fil: 'Filipino',
 };
 
 async function generateListeningSummary(

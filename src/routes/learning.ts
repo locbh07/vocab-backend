@@ -1240,6 +1240,7 @@ type KanjiLearningItemRow = {
   example_reading_kana?: string | null;
   example_meaning_vi?: string | null;
   example_meaning_en?: string | null;
+  example_meaning_zh?: string | null;
 };
 
 let ensureKanjiLearningTablesPromise: Promise<void> | null = null;
@@ -1523,10 +1524,11 @@ async function listScheduledNewKanjiRows(userId: number, plan: KanjiLearningPlan
         ex.word_ja AS example_word_ja,
         ex.reading_kana AS example_reading_kana,
         ex.meaning_vi AS example_meaning_vi,
-        ex.meaning_en AS example_meaning_en
+        ex.meaning_en AS example_meaning_en,
+        ex.meaning_zh AS example_meaning_zh
       FROM scheduled s
       LEFT JOIN LATERAL (
-        SELECT word_ja, reading_kana, meaning_vi, meaning_en
+        SELECT word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh
         FROM kanji_compound k2
         WHERE k2.kanji_char = s.kanji_char
         ORDER BY
@@ -1553,6 +1555,7 @@ function mapKanjiLearningItem(row: KanjiLearningItemRow) {
     exampleReadingKana: String(row.example_reading_kana || '').trim(),
     exampleMeaningVi: String(row.example_meaning_vi || '').trim(),
     exampleMeaningEn: String(row.example_meaning_en || '').trim(),
+    exampleMeaningZh: String(row.example_meaning_zh || '').trim(),
   };
 }
 
@@ -1600,10 +1603,11 @@ async function listDueKanjiRows(userId: number): Promise<KanjiLearningItemRow[]>
         ex.word_ja AS example_word_ja,
         ex.reading_kana AS example_reading_kana,
         ex.meaning_vi AS example_meaning_vi,
-        ex.meaning_en AS example_meaning_en
+        ex.meaning_en AS example_meaning_en,
+        ex.meaning_zh AS example_meaning_zh
       FROM due d
       LEFT JOIN LATERAL (
-        SELECT word_ja, reading_kana, meaning_vi, meaning_en
+        SELECT word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh
         FROM kanji_compound k2
         WHERE k2.kanji_char = d.kanji_char
         ORDER BY
@@ -1660,10 +1664,11 @@ async function pickNewKanjiRowsForUser(args: PickNewKanjiRowsArgs): Promise<Kanj
         ex.word_ja AS example_word_ja,
         ex.reading_kana AS example_reading_kana,
         ex.meaning_vi AS example_meaning_vi,
-        ex.meaning_en AS example_meaning_en
+        ex.meaning_en AS example_meaning_en,
+        ex.meaning_zh AS example_meaning_zh
       FROM limited l
       LEFT JOIN LATERAL (
-        SELECT word_ja, reading_kana, meaning_vi, meaning_en
+        SELECT word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh
         FROM kanji_compound k2
         WHERE k2.kanji_char = l.kanji_char
         ORDER BY

@@ -1,4 +1,5 @@
 import { prisma } from './prisma';
+import { translateKanjiCompoundMeaning } from './contentTranslation';
 
 export type KanjiCompoundRecord = {
   kanji_char: string;
@@ -6,23 +7,40 @@ export type KanjiCompoundRecord = {
   reading_kana: string;
   meaning_vi: string;
   meaning_en: string;
+  meaning_zh: string;
   hanviet_word: string;
   source: string;
   source_ref: string;
   priority: number;
 };
 
+// Languages beyond vi/en/zh are never populated at import time (see bulkUpsertKanjiCompounds) —
+// only ever written by scripts/backfill-kanji-compound-meaning-en.cjs after the fact. Kept off
+// KanjiCompoundRecord (the import/write shape) on purpose so a re-run of the JMDict/vocabulary
+// import can never accidentally wipe an already-backfilled meaning_<lang> value for these.
+type ExtraCompoundLanguage = 'meaning_ko' | 'meaning_pt' | 'meaning_id' | 'meaning_ne' | 'meaning_my' | 'meaning_fil';
+const EXTRA_COMPOUND_LANGUAGE_COLUMNS: ExtraCompoundLanguage[] = [
+  'meaning_ko',
+  'meaning_pt',
+  'meaning_id',
+  'meaning_ne',
+  'meaning_my',
+  'meaning_fil',
+];
+
 type CompoundRow = {
+  id?: number;
   kanji_char: string;
   word_ja: string;
   reading_kana: string;
   meaning_vi: string;
   meaning_en: string;
+  meaning_zh: string;
   hanviet_word: string;
   source: string;
   source_ref: string;
   priority: number;
-};
+} & Record<ExtraCompoundLanguage, string>;
 
 type CompoundCacheRow = {
   compounds_json: unknown;
@@ -44,6 +62,7 @@ export async function ensureKanjiCompoundTable() {
           reading_kana VARCHAR(255) NOT NULL DEFAULT '',
           meaning_vi TEXT NOT NULL DEFAULT '',
           meaning_en TEXT NOT NULL DEFAULT '',
+          meaning_zh TEXT NOT NULL DEFAULT '',
           hanviet_word VARCHAR(255) NOT NULL DEFAULT '',
           source VARCHAR(30) NOT NULL,
           source_ref VARCHAR(255) NOT NULL DEFAULT '',
@@ -51,6 +70,19 @@ export async function ensureKanjiCompoundTable() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE kanji_compound
+        ADD COLUMN IF NOT EXISTS meaning_zh TEXT NOT NULL DEFAULT '';
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE kanji_compound
+        ADD COLUMN IF NOT EXISTS meaning_ko TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS meaning_pt TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS meaning_id TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS meaning_ne TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS meaning_my TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS meaning_fil TEXT NOT NULL DEFAULT '';
       `);
       await prisma.$executeRawUnsafe(`
         CREATE UNIQUE INDEX IF NOT EXISTS uq_kanji_compound_unique
@@ -108,26 +140,27 @@ export async function bulkUpsertKanjiCompounds(rows: KanjiCompoundRecord[]) {
     const params: unknown[] = [];
     const valuesSql = chunk
       .map((row, index) => {
-        const base = index * 9;
+        const base = index * 10;
         params.push(
           row.kanji_char,
           row.word_ja,
           row.reading_kana,
           row.meaning_vi,
           row.meaning_en,
+          row.meaning_zh,
           row.hanviet_word,
           row.source,
           row.source_ref,
           row.priority,
         );
-        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`;
+        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`;
       })
       .join(', ');
 
     await prisma.$executeRawUnsafe(
       `
         INSERT INTO kanji_compound (
-          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word,
+          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh, hanviet_word,
           source, source_ref, priority
         )
         VALUES ${valuesSql}
@@ -135,6 +168,7 @@ export async function bulkUpsertKanjiCompounds(rows: KanjiCompoundRecord[]) {
         DO UPDATE SET
           meaning_vi = EXCLUDED.meaning_vi,
           meaning_en = EXCLUDED.meaning_en,
+          meaning_zh = EXCLUDED.meaning_zh,
           hanviet_word = EXCLUDED.hanviet_word,
           source_ref = EXCLUDED.source_ref,
           priority = EXCLUDED.priority,
@@ -153,11 +187,13 @@ export async function bulkUpsertKanjiCompounds(rows: KanjiCompoundRecord[]) {
 export async function listKanjiCompounds(args: {
   kanji: string;
   limit?: number;
+  language?: string;
 }): Promise<CompoundRow[]> {
   await ensureKanjiCompoundTable();
   const kanji = String(args.kanji || '').trim();
   if (!kanji) return [];
   const limit = Number.isFinite(args.limit) ? Math.max(1, Math.min(Number(args.limit), 200)) : 30;
+  const language = args.language || 'vi';
 
   const cachedRows = await prisma.$queryRawUnsafe<Array<CompoundCacheRow>>(
     `
@@ -171,7 +207,10 @@ export async function listKanjiCompounds(args: {
     limit,
   );
   if (cachedRows.length > 0) {
-    return asCompoundRows(cachedRows[0].compounds_json);
+    const rows = asCompoundRows(cachedRows[0].compounds_json);
+    const translatedAny = await ensureCompoundMeanings(rows, language);
+    if (translatedAny) await saveCompoundLookupCache(kanji, limit, rows);
+    return rows;
   }
 
   // `priority` already encodes the vocabulary-vs-jmdict split by construction (build-kanji-
@@ -193,7 +232,7 @@ export async function listKanjiCompounds(args: {
     `
       WITH seed AS (
         SELECT
-          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+          id, kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh, meaning_ko, meaning_pt, meaning_id, meaning_ne, meaning_my, meaning_fil, hanviet_word, source, source_ref, priority
         FROM kanji_compound
         WHERE kanji_char = $1
         ORDER BY priority ASC, word_ja ASC
@@ -201,7 +240,7 @@ export async function listKanjiCompounds(args: {
       ),
       ranked AS (
         SELECT
-          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
+          id, kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh, meaning_ko, meaning_pt, meaning_id, meaning_ne, meaning_my, meaning_fil, hanviet_word, source, source_ref, priority,
           ROW_NUMBER() OVER (
             PARTITION BY word_ja, reading_kana
             ORDER BY priority ASC, word_ja ASC
@@ -209,7 +248,7 @@ export async function listKanjiCompounds(args: {
         FROM seed
       )
       SELECT
-        kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+        id, kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh, meaning_ko, meaning_pt, meaning_id, meaning_ne, meaning_my, meaning_fil, hanviet_word, source, source_ref, priority
       FROM ranked
       WHERE rn = 1
       ORDER BY priority ASC, word_ja ASC
@@ -219,6 +258,7 @@ export async function listKanjiCompounds(args: {
     limit,
     seedLimit,
   );
+  normalizeCompoundRowIds(rows);
 
   // If seed window was not enough due to heavy duplicates, run full query for correctness.
   if (rows.length < limit) {
@@ -226,7 +266,7 @@ export async function listKanjiCompounds(args: {
     `
       WITH ranked AS (
         SELECT
-          kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority,
+          id, kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh, meaning_ko, meaning_pt, meaning_id, meaning_ne, meaning_my, meaning_fil, hanviet_word, source, source_ref, priority,
           ROW_NUMBER() OVER (
             PARTITION BY word_ja, reading_kana
             ORDER BY priority ASC, word_ja ASC
@@ -235,7 +275,7 @@ export async function listKanjiCompounds(args: {
         WHERE kanji_char = $1
       )
       SELECT
-        kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, hanviet_word, source, source_ref, priority
+        id, kanji_char, word_ja, reading_kana, meaning_vi, meaning_en, meaning_zh, meaning_ko, meaning_pt, meaning_id, meaning_ne, meaning_my, meaning_fil, hanviet_word, source, source_ref, priority
       FROM ranked
       WHERE rn = 1
       ORDER BY priority ASC, word_ja ASC
@@ -244,9 +284,47 @@ export async function listKanjiCompounds(args: {
     kanji,
     limit,
   );
+  normalizeCompoundRowIds(rows);
   }
+  await ensureCompoundMeanings(rows, language);
   await saveCompoundLookupCache(kanji, limit, rows);
   return rows;
+}
+
+// `id` is a Postgres BIGINT column, so $queryRawUnsafe deserializes it as a native JS `bigint`
+// — JSON.stringify (used by saveCompoundLookupCache) can't serialize that and throws. Every
+// other numeric-looking field here is already a plain number/string from Postgres; `id` is the
+// only bigint in this row shape, so normalize it right after each raw query, before it can reach
+// JSON.stringify or get handed to translateKanjiCompoundMeaning (which expects a JS number).
+function normalizeCompoundRowIds(rows: CompoundRow[]): void {
+  for (const row of rows) {
+    if (typeof row.id === 'bigint') row.id = Number(row.id);
+  }
+}
+
+// Lazy-translates whatever this specific request needs instead of requiring a bulk backfill
+// job up front — keeps Supabase storage growth proportional to what real users actually browse
+// per language, not to every compound row times every supported language. Mutates `rows` in
+// place (so the cache write right after this call already includes the fresh translations) and
+// returns whether anything was actually translated, so the caller knows whether a cache entry
+// needs rewriting.
+async function ensureCompoundMeanings(rows: CompoundRow[], language: string): Promise<boolean> {
+  if (language === 'vi' || !rows.length) return false;
+  const field = `meaning_${language}` as keyof CompoundRow;
+  const missing = rows.filter((row) => row.id && !String(row[field] || '').trim());
+  if (!missing.length) return false;
+
+  const results = await Promise.all(
+    missing.map(async (row) => ({ row, translated: await translateKanjiCompoundMeaning(row.id as number, language) })),
+  );
+  let any = false;
+  for (const { row, translated } of results) {
+    if (translated) {
+      (row as Record<string, string>)[field] = translated;
+      any = true;
+    }
+  }
+  return any;
 }
 
 async function saveCompoundLookupCache(kanji: string, limit: number, rows: CompoundRow[]) {
@@ -281,6 +359,7 @@ function normalizeRecord(row: KanjiCompoundRecord): KanjiCompoundRecord | null {
     reading_kana: String(row.reading_kana || '').trim(),
     meaning_vi: String(row.meaning_vi || '').trim(),
     meaning_en: String(row.meaning_en || '').trim(),
+    meaning_zh: String(row.meaning_zh || '').trim(),
     hanviet_word: String(row.hanviet_word || '').trim(),
     source: String(row.source || 'unknown').trim() || 'unknown',
     source_ref: String(row.source_ref || '').trim(),
@@ -304,16 +383,21 @@ function asCompoundRows(value: unknown): CompoundRow[] {
       if (typeof row !== 'object' || row === null) return null;
       const item = row as Record<string, unknown>;
       return {
+        id: Number.isFinite(Number(item.id)) ? Number(item.id) : undefined,
         kanji_char: String(item.kanji_char || '').trim(),
         word_ja: String(item.word_ja || '').trim(),
         reading_kana: String(item.reading_kana || '').trim(),
         meaning_vi: String(item.meaning_vi || '').trim(),
         meaning_en: String(item.meaning_en || '').trim(),
+        meaning_zh: String(item.meaning_zh || '').trim(),
+        ...Object.fromEntries(
+          EXTRA_COMPOUND_LANGUAGE_COLUMNS.map((col) => [col, String(item[col] || '').trim()]),
+        ),
         hanviet_word: String(item.hanviet_word || '').trim(),
         source: String(item.source || '').trim(),
         source_ref: String(item.source_ref || '').trim(),
         priority: Number(item.priority || 0),
-      };
+      } as CompoundRow;
     })
     .filter((row): row is CompoundRow => Boolean(row && row.kanji_char && row.word_ja));
 }

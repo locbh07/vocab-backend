@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Request } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
 import { generateGeminiJson } from './gemini';
 
@@ -17,7 +18,7 @@ const LANGUAGE_NAMES: Record<string, string> = {
 // Shared across every route that serves translatable content — keep this Set in sync with
 // LANGUAGE_NAMES above (and with frontend `SUPPORTED_LANGUAGES` in utils/language.js) when
 // adding a new language.
-const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en']);
+const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
 
 export function resolveRequestLanguage(req: Request): string {
   const raw = String(req.query.language ?? req.headers['x-language'] ?? 'vi').trim().toLowerCase();
@@ -465,4 +466,52 @@ export async function translateContactChannels<T extends { id: number; label: st
       }
     }),
   );
+}
+
+// kanji_compound (Pattern C — inline meaning_<lang> columns, raw-SQL table, see kanjiCompounds.ts)
+// has no ORM model to bind a dynamic column name through, so the column identifier goes through
+// Prisma.raw() — safe only because it's always looked up from this fixed allow-list, never taken
+// from request input. Keep in sync with the ALTER TABLE columns in ensureKanjiCompoundTable().
+const KANJI_COMPOUND_MEANING_COLUMNS: Record<string, string> = {
+  en: 'meaning_en',
+  zh: 'meaning_zh',
+  ko: 'meaning_ko',
+  pt: 'meaning_pt',
+  id: 'meaning_id',
+  ne: 'meaning_ne',
+  my: 'meaning_my',
+  fil: 'meaning_fil',
+};
+
+// Lazy, on-demand counterpart to scripts/backfill-kanji-compound-meaning-en.cjs — translates a
+// single compound row's meaning on cache miss instead of requiring a bulk batch job up front.
+// Deliberately synchronous (like translateContactSettings) rather than fire-and-forget: kanji
+// compound lists are short (<=30 rows) and low-traffic enough that a first-request Gemini
+// round-trip per untranslated row is an acceptable tradeoff for not needing a bulk backfill at
+// all — this keeps Supabase storage growth proportional to what users actually browse, not to
+// every row in the table times every supported language.
+export async function translateKanjiCompoundMeaning(compoundId: bigint | number, language: string): Promise<string | null> {
+  const column = KANJI_COMPOUND_MEANING_COLUMNS[language];
+  if (!column) return null;
+  try {
+    const rows = await prisma.$queryRaw<Array<{ meaning_vi: string | null }>>`
+      SELECT meaning_vi FROM kanji_compound WHERE id = ${BigInt(compoundId)} LIMIT 1
+    `;
+    const meaningVi = rows[0]?.meaning_vi;
+    if (!meaningVi || !meaningVi.trim()) return null;
+
+    const languageName = LANGUAGE_NAMES[language] || language;
+    const result = await translateFields(languageName, language, { meaning: meaningVi });
+    const translated = result.meaning;
+    if (!translated) return null;
+
+    const columnIdent = Prisma.raw(column);
+    await prisma.$executeRaw`
+      UPDATE kanji_compound SET ${columnIdent} = ${translated}, updated_at = NOW() WHERE id = ${BigInt(compoundId)}
+    `;
+    return translated;
+  } catch (error) {
+    console.error(`[contentTranslation] translateKanjiCompoundMeaning failed for id=${compoundId}, language=${language}:`, error);
+    return null;
+  }
 }
