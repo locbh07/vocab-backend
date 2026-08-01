@@ -20,6 +20,10 @@ export async function ensureMailboxTable(): Promise<void> {
         );
       `);
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_mailbox
+        ADD COLUMN IF NOT EXISTS link VARCHAR(300) NULL;
+      `);
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS idx_user_mailbox_user_read_created
           ON user_mailbox(user_id, is_read, created_at DESC);
       `);

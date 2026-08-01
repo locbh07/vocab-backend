@@ -4,6 +4,8 @@ import { prisma } from '../lib/prisma';
 import { requireAdmin } from '../middleware/adminGuard';
 import { requireUser } from '../middleware/userGuard';
 import { formatUserLine, notifyTelegram } from '../lib/telegram';
+import { notifyAdmins } from '../lib/adminNotify';
+import { ensureMailboxTable } from '../lib/mailboxStore';
 
 type ManualPaymentProvider = 'MSB' | 'PAYPAY';
 type ManualPaymentPlan = 'monthly' | 'yearly' | 'lifetime';
@@ -91,6 +93,23 @@ async function ensureManualPaymentTable() {
         ADD COLUMN IF NOT EXISTS premium_trial_started_at TIMESTAMPTZ NULL,
         ADD COLUMN IF NOT EXISTS premium_source VARCHAR(20) NULL,
         ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255) NULL;
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS manual_payment_chat_message (
+          id BIGSERIAL PRIMARY KEY,
+          request_id BIGINT NOT NULL REFERENCES manual_payment_request(id) ON DELETE CASCADE,
+          sender_role VARCHAR(10) NOT NULL,
+          sender_id BIGINT NOT NULL REFERENCES useraccount(id) ON DELETE CASCADE,
+          body TEXT,
+          image_data TEXT,
+          is_read_by_user BOOLEAN NOT NULL DEFAULT FALSE,
+          is_read_by_admin BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_manual_payment_chat_message_request
+        ON manual_payment_chat_message (request_id, created_at);
       `);
     })();
   }
@@ -238,7 +257,45 @@ function mapPaymentRow(row: any) {
     reviewedAt: row.reviewed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    unreadMessages: Number(row.unread_messages || 0),
   };
+}
+
+const MAX_CHAT_IMAGE_BYTES = 1024 * 1024;
+
+function mapChatMessageRow(row: any) {
+  return {
+    id: Number(row.id),
+    requestId: Number(row.request_id),
+    senderRole: row.sender_role,
+    senderId: Number(row.sender_id),
+    body: row.body,
+    image: row.image_data,
+    createdAt: row.created_at,
+  };
+}
+
+function normalizeChatImage(value: unknown): string | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const match = text.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) {
+    const error = new Error('Ảnh phải là PNG, JPEG hoặc WEBP.') as Error & { status?: number };
+    error.status = 400;
+    throw error;
+  }
+  const bytes = Math.floor((match[2].length * 3) / 4);
+  if (bytes > MAX_CHAT_IMAGE_BYTES) {
+    const error = new Error('Ảnh vượt quá 1 MB.') as Error & { status?: number };
+    error.status = 400;
+    throw error;
+  }
+  return text;
+}
+
+function normalizeChatBody(value: unknown): string | null {
+  const text = String(value || '').trim();
+  return text ? text.slice(0, 2000) : null;
 }
 
 function cleanSettingText(value: unknown, maxLength = 2000): string | null {
@@ -406,11 +463,51 @@ export function createManualPaymentRouter() {
     const user = await requireUser(req);
     const provider = normalizeProvider(req.body?.provider);
     const billingPeriod = normalizePlan(req.body?.billingPeriod || req.body?.plan);
+
     if (provider === 'PAYPAY') {
-      return res.status(400).json({
-        message: 'PayPay dang xu ly thu cong. Vui long lien he admin de duoc huong dan thanh toan.',
+      const config = await getManualPaymentConfig(provider, billingPeriod);
+      if (!config.enabled) {
+        return res.status(400).json({ message: 'Phuong thuc thanh toan nay dang tam tat.' });
+      }
+      const note = String(req.body?.note || '').trim().slice(0, 500) || null;
+      const paymentCode = buildPaymentCode(user.id);
+
+      const [row] = await prisma.$queryRaw<any[]>(Prisma.sql`
+        INSERT INTO manual_payment_request (
+          user_id, payment_code, provider, billing_period, amount, currency,
+          status, qr_image_url, payment_url, transfer_content, proof_note
+        )
+        VALUES (
+          ${BigInt(user.id)}, ${paymentCode}, ${provider}, ${billingPeriod}, ${config.amount}, ${config.currency},
+          'PENDING', ${null}, ${null}, ${paymentCode}, ${note}
+        )
+        RETURNING *
+      `);
+
+      await notifyAdmins({
+        title: 'PayPay payment request',
+        lines: [
+          `User: ${formatUserLine({
+            id: user.id,
+            username: user.username,
+            fullName: user.fullName,
+            email: user.email,
+          })}`,
+          `Plan: ${billingPeriod}`,
+          `Amount: ${config.amount} ${config.currency}`,
+          `Payment code: ${paymentCode}`,
+          note ? `Note: ${note}` : null,
+        ],
+        link: `/admin/manual-payments?openRequestId=${Number(row.id)}`,
+      });
+
+      return res.json({
+        request: mapPaymentRow(row),
+        account: { provider, accountName: null, accountNo: null },
+        note: 'Admin da nhan duoc yeu cau va se lien he huong dan thanh toan qua Telegram/thong bao trong app.',
       });
     }
+
     const config = await getManualPaymentConfig(provider, billingPeriod);
     if (!config.enabled) {
       return res.status(400).json({ message: 'Phuong thuc thanh toan nay dang tam tat.' });
@@ -488,6 +585,66 @@ export function createManualPaymentRouter() {
     return res.json({ request: mapPaymentRow(rows[0]) });
   });
 
+  router.get('/requests/:id/messages', async (req: Request, res: Response) => {
+    await ensureManualPaymentTable();
+    const user = await requireUser(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
+
+    const owned = await prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT id FROM manual_payment_request WHERE id = ${BigInt(id)} AND user_id = ${BigInt(user.id)} LIMIT 1
+    `);
+    if (!owned.length) return res.status(404).json({ message: 'Payment request not found' });
+
+    const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT * FROM manual_payment_chat_message WHERE request_id = ${BigInt(id)} ORDER BY created_at ASC
+    `);
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE manual_payment_chat_message
+      SET is_read_by_user = TRUE
+      WHERE request_id = ${BigInt(id)} AND sender_role = 'admin' AND is_read_by_user = FALSE
+    `);
+    return res.json({ items: rows.map(mapChatMessageRow) });
+  });
+
+  router.post('/requests/:id/messages', async (req: Request, res: Response) => {
+    await ensureManualPaymentTable();
+    const user = await requireUser(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
+
+    const owned = await prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT id, payment_code FROM manual_payment_request WHERE id = ${BigInt(id)} AND user_id = ${BigInt(user.id)} LIMIT 1
+    `);
+    const request = owned[0];
+    if (!request) return res.status(404).json({ message: 'Payment request not found' });
+
+    const body = normalizeChatBody(req.body?.body);
+    const image = normalizeChatImage(req.body?.image);
+    if (!body && !image) return res.status(400).json({ message: 'Tin nhắn trống.' });
+
+    const [row] = await prisma.$queryRaw<any[]>(Prisma.sql`
+      INSERT INTO manual_payment_chat_message (request_id, sender_role, sender_id, body, image_data, is_read_by_user, is_read_by_admin)
+      VALUES (${BigInt(id)}, 'user', ${BigInt(user.id)}, ${body}, ${image}, TRUE, FALSE)
+      RETURNING *
+    `);
+
+    // Every follow-up chat message (not just the initial request) pings the admin bell with a
+    // deep link straight into this request's chat — this is the primary way admins are expected
+    // to notice and respond to an ongoing conversation, not just Telegram.
+    await notifyAdmins({
+      title: 'New chat message (payment support)',
+      lines: [
+        `User: ${formatUserLine({ id: user.id, username: user.username, fullName: user.fullName, email: user.email })}`,
+        `Payment code: ${request.payment_code}`,
+        body ? `Message: ${body}` : '[Image]',
+      ],
+      link: `/admin/manual-payments?openRequestId=${id}`,
+    });
+
+    return res.json({ message: mapChatMessageRow(row) });
+  });
+
   return router;
 }
 
@@ -530,7 +687,11 @@ export function createAdminManualPaymentRouter() {
         mpr.*,
         u.username,
         u.fullname,
-        u.email
+        u.email,
+        (
+          SELECT COUNT(*) FROM manual_payment_chat_message m
+          WHERE m.request_id = mpr.id AND m.sender_role = 'user' AND m.is_read_by_admin = FALSE
+        ) AS unread_messages
       FROM manual_payment_request mpr
       LEFT JOIN useraccount u ON u.id = mpr.user_id
       ${whereSql}
@@ -538,6 +699,59 @@ export function createAdminManualPaymentRouter() {
       LIMIT ${limit}
     `);
     return res.json({ items: rows.map(mapPaymentRow) });
+  });
+
+  router.get('/:id/messages', async (req: Request, res: Response) => {
+    await ensureManualPaymentTable();
+    await requireAdmin(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
+
+    const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT * FROM manual_payment_chat_message WHERE request_id = ${BigInt(id)} ORDER BY created_at ASC
+    `);
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE manual_payment_chat_message
+      SET is_read_by_admin = TRUE
+      WHERE request_id = ${BigInt(id)} AND sender_role = 'user' AND is_read_by_admin = FALSE
+    `);
+    return res.json({ items: rows.map(mapChatMessageRow) });
+  });
+
+  router.post('/:id/messages', async (req: Request, res: Response) => {
+    await ensureManualPaymentTable();
+    const admin = await requireAdmin(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
+
+    const owned = await prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT id, user_id, payment_code FROM manual_payment_request WHERE id = ${BigInt(id)} LIMIT 1
+    `);
+    const request = owned[0];
+    if (!request) return res.status(404).json({ message: 'Payment request not found' });
+
+    const body = normalizeChatBody(req.body?.body);
+    const image = normalizeChatImage(req.body?.image);
+    if (!body && !image) return res.status(400).json({ message: 'Tin nhắn trống.' });
+
+    const [row] = await prisma.$queryRaw<any[]>(Prisma.sql`
+      INSERT INTO manual_payment_chat_message (request_id, sender_role, sender_id, body, image_data, is_read_by_user, is_read_by_admin)
+      VALUES (${BigInt(id)}, 'admin', ${BigInt(admin.id)}, ${body}, ${image}, FALSE, TRUE)
+      RETURNING *
+    `);
+
+    await ensureMailboxTable();
+    await prisma.$executeRaw(Prisma.sql`
+      INSERT INTO user_mailbox (user_id, title, body, sent_by_admin_id)
+      VALUES (
+        ${request.user_id},
+        ${'Admin đã trả lời yêu cầu thanh toán #' + request.payment_code},
+        ${body || '[Đã gửi hình ảnh]'},
+        ${BigInt(admin.id)}
+      )
+    `);
+
+    return res.json({ message: mapChatMessageRow(row) });
   });
 
   router.post('/:id/approve', async (req: Request, res: Response) => {

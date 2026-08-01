@@ -12,6 +12,7 @@ type MailboxRow = {
   is_read: boolean;
   read_at: Date | null;
   sent_by_admin_id: bigint | null;
+  link: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -33,7 +34,7 @@ export function createMailboxRouter() {
 
     const [rows, unreadRows] = await Promise.all([
       prisma.$queryRaw<Array<MailboxRow>>(Prisma.sql`
-        SELECT id, user_id, feedback_id, title, body, is_read, read_at, sent_by_admin_id, created_at, updated_at
+        SELECT id, user_id, feedback_id, title, body, is_read, read_at, sent_by_admin_id, link, created_at, updated_at
         FROM user_mailbox
         WHERE user_id = ${BigInt(userId)} ${unreadClause}
         ORDER BY created_at DESC
@@ -91,6 +92,7 @@ function toMailboxResponse(row: MailboxRow) {
     isRead: row.is_read,
     readAt: row.read_at,
     sentByAdminId: row.sent_by_admin_id ? Number(row.sent_by_admin_id) : null,
+    link: row.link || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

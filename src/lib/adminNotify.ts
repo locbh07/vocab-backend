@@ -6,6 +6,7 @@ import { notifyTelegram } from './telegram';
 type AdminNotification = {
   title: string;
   lines?: Array<string | null | undefined | false>;
+  link?: string;
 };
 
 const WELCOME_TITLE = 'Chào mừng bạn đến với Tiếng Nhật 大好き! 🎌';
@@ -21,11 +22,11 @@ export async function notifyAdmins(notification: AdminNotification): Promise<voi
 
   await Promise.all([
     notifyTelegram(notification),
-    notifyAdminMailboxes(notification.title, body || notification.title),
+    notifyAdminMailboxes(notification.title, body || notification.title, notification.link || null),
   ]);
 }
 
-async function notifyAdminMailboxes(title: string, body: string): Promise<void> {
+async function notifyAdminMailboxes(title: string, body: string, link: string | null = null): Promise<void> {
   try {
     const admins = await prisma.userAccount.findMany({
       where: { role: { contains: 'ADMIN', mode: 'insensitive' } },
@@ -37,8 +38,8 @@ async function notifyAdminMailboxes(title: string, body: string): Promise<void> 
     await Promise.all(
       admins.map((admin) =>
         prisma.$executeRaw(Prisma.sql`
-          INSERT INTO user_mailbox (user_id, title, body)
-          VALUES (${admin.id}, ${title}, ${body})
+          INSERT INTO user_mailbox (user_id, title, body, link)
+          VALUES (${admin.id}, ${title}, ${body}, ${link})
         `),
       ),
     );
