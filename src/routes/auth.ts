@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma';
 import { formatUserLine } from '../lib/telegram';
 import { notifyAdmins, sendWelcomeMailbox } from '../lib/adminNotify';
 import { signAuthToken } from '../lib/authToken';
+import { requireUser } from '../middleware/userGuard';
 
 const googleOAuthClient = new OAuth2Client();
 const JLPT_LEVELS = new Set(['N5', 'N4', 'N3', 'N2', 'N1']);
@@ -378,6 +379,22 @@ export function createAuthRouter() {
         session,
         token: signAuthToken({ userId: Number(user.id) }),
       });
+    } catch (error) {
+      const status = (error as { status?: number })?.status || 500;
+      return res.status(status).json({ success: false, message: (error as Error).message });
+    }
+  });
+
+  // Lets the frontend refresh its cached profile (e.g. emailVerifiedAt after the user confirms
+  // their email in another tab) without forcing a full logout/login.
+  router.get('/me', async (req: Request, res: Response) => {
+    try {
+      const identity = await requireUser(req);
+      const user = await prisma.userAccount.findUnique({ where: { id: BigInt(identity.id) } });
+      if (!user) {
+        return res.status(401).json({ success: false, message: 'Không tìm thấy tài khoản.' });
+      }
+      return res.json({ success: true, user: sanitizeUser(user) });
     } catch (error) {
       const status = (error as { status?: number })?.status || 500;
       return res.status(status).json({ success: false, message: (error as Error).message });
