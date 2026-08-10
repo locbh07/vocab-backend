@@ -94,7 +94,7 @@ export function createAuthRouter() {
       const { data: created, error: createError } = await admin.auth.admin.createUser({
         email,
         password,
-        email_confirm: true,
+        email_confirm: false,
       });
 
       if (createError || !created?.user?.id) {
@@ -114,13 +114,17 @@ export function createAuthRouter() {
           auth_user_id: authUserId,
           level,
         })
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at')
         .maybeSingle();
 
       if (insertError) {
         await admin.auth.admin.deleteUser(authUserId).catch(() => {});
         return res.status(500).json({ success: false, message: 'Create profile failed' });
       }
+
+      await getSupabaseAnon()
+        .auth.resend({ type: 'signup', email })
+        .catch(() => {});
 
       if (inserted) {
         await notifyAdmins({
@@ -156,6 +160,7 @@ export function createAuthRouter() {
               plan: inserted.plan,
               premiumValidUntil: inserted.premium_valid_until,
               premiumTrialStartedAt: inserted.premium_trial_started_at,
+              emailVerifiedAt: inserted.email_verified_at,
             }
           : null,
         token: inserted ? signAuthToken({ userId: Number(inserted.id) }) : undefined,
@@ -215,7 +220,7 @@ export function createAuthRouter() {
       const authUserId = signInData.user.id;
       const { data: byAuth } = await admin
         .from('useraccount')
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at')
         .eq('auth_user_id', authUserId)
         .maybeSingle();
 
@@ -224,7 +229,7 @@ export function createAuthRouter() {
         : (
             await admin
               .from('useraccount')
-              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at')
+              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at')
               .eq('email', email)
               .maybeSingle()
           ).data;
@@ -246,6 +251,7 @@ export function createAuthRouter() {
               plan: profile.plan,
               premiumValidUntil: profile.premium_valid_until,
               premiumTrialStartedAt: profile.premium_trial_started_at,
+              emailVerifiedAt: profile.email_verified_at,
             }
           : null,
         session: signInData.session,
@@ -312,6 +318,7 @@ export function createAuthRouter() {
               googleId,
               ...(authUserId && !user.authUserId ? { authUserId } : {}),
               ...(level && !user.level ? { level } : {}),
+              ...(!user.emailVerifiedAt ? { emailVerifiedAt: new Date() } : {}),
             },
           });
         } else {
@@ -327,6 +334,7 @@ export function createAuthRouter() {
               exam_enabled: false,
               level,
               googleId,
+              emailVerifiedAt: new Date(),
               ...(authUserId ? { authUserId } : {}),
             },
           });
@@ -350,13 +358,14 @@ export function createAuthRouter() {
           await sendWelcomeMailbox(user.id);
         }
       } else {
-        if (!user.level || (authUserId && !user.authUserId) || !user.googleId) {
+        if (!user.level || (authUserId && !user.authUserId) || !user.googleId || !user.emailVerifiedAt) {
           user = await prisma.userAccount.update({
             where: { id: user.id },
             data: {
               ...(!user.level ? { level } : {}),
               ...(authUserId && !user.authUserId ? { authUserId } : {}),
               ...(!user.googleId ? { googleId } : {}),
+              ...(!user.emailVerifiedAt ? { emailVerifiedAt: new Date() } : {}),
             },
           });
         }
@@ -372,6 +381,60 @@ export function createAuthRouter() {
     } catch (error) {
       const status = (error as { status?: number })?.status || 500;
       return res.status(status).json({ success: false, message: (error as Error).message });
+    }
+  });
+
+  // Supabase's "Confirm signup" email template must point its confirmation link at this route
+  // (e.g. `{{ .SiteURL }}/api/auth/confirm-email?token_hash={{ .TokenHash }}&type=signup`) instead
+  // of the default Supabase-hosted verify URL, otherwise this handler never receives the click.
+  router.get('/confirm-email', async (req: Request, res: Response) => {
+    const frontendUrl = String(process.env.FRONTEND_URL || 'http://localhost:5173').trim().replace(/\/$/, '');
+    const redirect = (status: 'success' | 'error') => res.redirect(`${frontendUrl}/xac-thuc-email?status=${status}`);
+
+    if (!isSupabaseConfigured()) return redirect('error');
+
+    try {
+      const tokenHash = String(req.query?.token_hash || '').trim();
+      const type = String(req.query?.type || 'signup').trim();
+      if (!tokenHash) return redirect('error');
+
+      const anon = getSupabaseAnon();
+      const { data, error } = await anon.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: type as 'signup' | 'email',
+      });
+      if (error || !data?.user?.id) return redirect('error');
+
+      const admin = getSupabaseAdmin();
+      await admin
+        .from('useraccount')
+        .update({ email_verified_at: new Date().toISOString() })
+        .eq('auth_user_id', data.user.id)
+        .is('email_verified_at', null);
+
+      return redirect('success');
+    } catch {
+      return redirect('error');
+    }
+  });
+
+  router.post('/resend-verification', async (req: Request, res: Response) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      if (!email) {
+        return res.status(400).json({ success: false, message: 'Missing email' });
+      }
+      if (!isSupabaseConfigured()) {
+        return res.status(400).json({ success: false, message: 'Email verification is not available' });
+      }
+
+      const { error } = await getSupabaseAnon().auth.resend({ type: 'signup', email });
+      if (error) {
+        return res.status(400).json({ success: false, message: error.message });
+      }
+      return res.json({ success: true, message: 'Verification email sent' });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: (error as Error).message });
     }
   });
 
@@ -439,6 +502,7 @@ function sanitizeUser(user: {
   plan?: string | null;
   premiumValidUntil?: Date | string | null;
   premiumTrialStartedAt?: Date | string | null;
+  emailVerifiedAt?: Date | string | null;
 }) {
   return {
     id: Number(user.id),
@@ -453,5 +517,6 @@ function sanitizeUser(user: {
     plan: user.plan || 'FREE',
     premiumValidUntil: user.premiumValidUntil || null,
     premiumTrialStartedAt: user.premiumTrialStartedAt || null,
+    emailVerifiedAt: user.emailVerifiedAt || null,
   };
 }

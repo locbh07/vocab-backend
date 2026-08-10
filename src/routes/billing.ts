@@ -199,6 +199,12 @@ export function createBillingRouter() {
   router.post('/trial/activate', async (req: Request, res: Response) => {
     await ensurePremiumTrialColumns();
     const user = await requireUser(req);
+    if (!user.googleId && !user.emailVerifiedAt) {
+      return res.status(403).json({
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Vui lòng xác thực email trước khi dùng thử Premium.',
+      });
+    }
     const now = new Date();
     const premiumUntil = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
     const rows = await prisma.$queryRaw<Array<{
