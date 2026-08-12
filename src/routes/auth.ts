@@ -202,61 +202,56 @@ export function createAuthRouter() {
       }
 
       const admin = getSupabaseAdmin();
-      let email = identifier;
+      const profileColumns =
+        'id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at, auth_user_id, passwordhash';
 
-      if (!identifier.includes('@')) {
-        const { data } = await admin.from('useraccount').select('email').eq('username', identifier).maybeSingle();
-        if (!data?.email) {
-          return res.status(401).json({ success: false, message: 'Invalid credentials' });
-        }
-        email = data.email;
-      }
+      const { data: profile } = identifier.includes('@')
+        ? await admin.from('useraccount').select(profileColumns).eq('email', identifier).maybeSingle()
+        : await admin.from('useraccount').select(profileColumns).eq('username', identifier).maybeSingle();
 
-      const anon = getSupabaseAnon();
-      const { data: signInData, error: signInError } = await anon.auth.signInWithPassword({ email, password });
-      if (signInError || !signInData?.user) {
+      if (!profile) {
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
       }
 
-      const authUserId = signInData.user.id;
-      const { data: byAuth } = await admin
-        .from('useraccount')
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at')
-        .eq('auth_user_id', authUserId)
-        .maybeSingle();
+      let session = null;
 
-      const profile = byAuth
-        ? byAuth
-        : (
-            await admin
-              .from('useraccount')
-              .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at')
-              .eq('email', email)
-              .maybeSingle()
-          ).data;
+      if (profile.auth_user_id) {
+        // Account was registered through Supabase Auth (post-migration) - verify via Supabase.
+        const anon = getSupabaseAnon();
+        const { data: signInData, error: signInError } = await anon.auth.signInWithPassword({ email: profile.email, password });
+        if (signInError || !signInData?.user) {
+          return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        }
+        session = signInData.session;
+      } else {
+        // Legacy account predating the Supabase Auth migration - no linked Supabase identity exists,
+        // so fall back to the local bcrypt hash exactly like the pre-migration login flow did.
+        const isMatch = profile.passwordhash ? await bcrypt.compare(password, profile.passwordhash) : false;
+        if (!isMatch) {
+          return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        }
+      }
 
       return res.json({
         success: true,
         message: 'Login success',
-        user: profile
-          ? {
-              id: profile.id,
-              username: profile.username,
-              fullName: profile.fullname,
-              email: profile.email,
-              role: profile.role,
-              examEnabled: profile.exam_enabled,
-              examCode: profile.exam_code,
-              level: profile.level,
-              googleId: profile.google_id,
-              plan: profile.plan,
-              premiumValidUntil: profile.premium_valid_until,
-              premiumTrialStartedAt: profile.premium_trial_started_at,
-              emailVerifiedAt: profile.email_verified_at,
-            }
-          : null,
-        session: signInData.session,
-        token: profile ? signAuthToken({ userId: Number(profile.id) }) : undefined,
+        user: {
+          id: profile.id,
+          username: profile.username,
+          fullName: profile.fullname,
+          email: profile.email,
+          role: profile.role,
+          examEnabled: profile.exam_enabled,
+          examCode: profile.exam_code,
+          level: profile.level,
+          googleId: profile.google_id,
+          plan: profile.plan,
+          premiumValidUntil: profile.premium_valid_until,
+          premiumTrialStartedAt: profile.premium_trial_started_at,
+          emailVerifiedAt: profile.email_verified_at,
+        },
+        session,
+        token: signAuthToken({ userId: Number(profile.id) }),
       });
     } catch (error) {
       const status = (error as { status?: number })?.status || 500;
