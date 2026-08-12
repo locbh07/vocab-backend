@@ -12,6 +12,7 @@ export type UserIdentity = {
   premiumValidUntil: Date | null;
   googleId: string | null;
   emailVerifiedAt: Date | null;
+  authUserId: string | null;
 };
 
 export async function requireUser(req: Request): Promise<UserIdentity> {
@@ -37,6 +38,7 @@ export async function requireUser(req: Request): Promise<UserIdentity> {
       premiumValidUntil: true,
       googleId: true,
       emailVerifiedAt: true,
+      authUserId: true,
     },
   });
 
@@ -56,5 +58,6 @@ export async function requireUser(req: Request): Promise<UserIdentity> {
     premiumValidUntil: user.premiumValidUntil,
     googleId: user.googleId,
     emailVerifiedAt: user.emailVerifiedAt,
+    authUserId: user.authUserId,
   };
 }

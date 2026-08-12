@@ -199,7 +199,10 @@ export function createBillingRouter() {
   router.post('/trial/activate', async (req: Request, res: Response) => {
     await ensurePremiumTrialColumns();
     const user = await requireUser(req);
-    if (!user.googleId && !user.emailVerifiedAt) {
+    // Accounts predating the Supabase Auth migration (no authUserId) never got a verifiable
+    // Supabase identity, so they're grandfathered in - only accounts registered through Supabase
+    // (authUserId set) must verify email before starting the trial, same as Google accounts skip it.
+    if (!user.googleId && user.authUserId && !user.emailVerifiedAt) {
       return res.status(403).json({
         code: 'EMAIL_NOT_VERIFIED',
         message: 'Vui lòng xác thực email trước khi dùng thử Premium.',

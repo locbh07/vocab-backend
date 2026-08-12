@@ -26,13 +26,13 @@ export function createAuthRouter() {
       const level = normalizeJlptLevel(req.body?.level);
 
       if (!username || !password || !confirmPassword || !fullName || !email) {
-        return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ thông tin đăng ký.' });
+        return res.status(400).json({ success: false, code: 'MISSING_FIELDS', message: 'Vui lòng nhập đầy đủ thông tin đăng ký.' });
       }
       if (password !== confirmPassword) {
-        return res.status(400).json({ success: false, message: 'Mật khẩu nhập lại không khớp.' });
+        return res.status(400).json({ success: false, code: 'PASSWORD_MISMATCH', message: 'Mật khẩu nhập lại không khớp.' });
       }
       if (!level) {
-        return res.status(400).json({ success: false, message: 'Trình độ không hợp lệ. Vui lòng chọn từ N5 đến N1.' });
+        return res.status(400).json({ success: false, code: 'INVALID_LEVEL', message: 'Trình độ không hợp lệ. Vui lòng chọn từ N5 đến N1.' });
       }
 
       if (!isSupabaseConfigured()) {
@@ -42,7 +42,7 @@ export function createAuthRouter() {
           },
         });
         if (existing) {
-          return res.status(409).json({ success: false, message: 'Tên đăng nhập hoặc email đã tồn tại.' });
+          return res.status(409).json({ success: false, code: 'USERNAME_OR_EMAIL_TAKEN', message: 'Tên đăng nhập hoặc email đã tồn tại.' });
         }
 
         const passwordhash = await bcrypt.hash(password, 10);
@@ -89,7 +89,7 @@ export function createAuthRouter() {
         .limit(1);
 
       if (existing && existing.length > 0) {
-        return res.status(409).json({ success: false, message: 'Tên đăng nhập hoặc email đã tồn tại.' });
+        return res.status(409).json({ success: false, code: 'USERNAME_OR_EMAIL_TAKEN', message: 'Tên đăng nhập hoặc email đã tồn tại.' });
       }
 
       const { data: created, error: createError } = await admin.auth.admin.createUser({
@@ -99,7 +99,7 @@ export function createAuthRouter() {
       });
 
       if (createError || !created?.user?.id) {
-        return res.status(400).json({ success: false, message: 'Create user failed' });
+        return res.status(400).json({ success: false, code: 'REGISTER_FAILED', message: 'Create user failed' });
       }
 
       const authUserId = created.user.id;
@@ -120,7 +120,7 @@ export function createAuthRouter() {
 
       if (insertError) {
         await admin.auth.admin.deleteUser(authUserId).catch(() => {});
-        return res.status(500).json({ success: false, message: 'Create profile failed' });
+        return res.status(500).json({ success: false, code: 'REGISTER_FAILED', message: 'Create profile failed' });
       }
 
       await getSupabaseAnon()
@@ -162,6 +162,7 @@ export function createAuthRouter() {
               premiumValidUntil: inserted.premium_valid_until,
               premiumTrialStartedAt: inserted.premium_trial_started_at,
               emailVerifiedAt: inserted.email_verified_at,
+              requiresEmailVerification: true,
             }
           : null,
         token: inserted ? signAuthToken({ userId: Number(inserted.id) }) : undefined,
@@ -185,12 +186,12 @@ export function createAuthRouter() {
           : await prisma.userAccount.findUnique({ where: { username: identifier } });
 
         if (!profile) {
-          return res.status(401).json({ success: false, message: 'Sai tài khoản hoặc mật khẩu.' });
+          return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
         }
 
         const isMatch = await bcrypt.compare(password, profile.passwordhash);
         if (!isMatch) {
-          return res.status(401).json({ success: false, message: 'Sai tài khoản hoặc mật khẩu.' });
+          return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
         }
 
         return res.json({
@@ -210,7 +211,7 @@ export function createAuthRouter() {
         : await admin.from('useraccount').select(profileColumns).eq('username', identifier).maybeSingle();
 
       if (!profile) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
       }
 
       let session = null;
@@ -220,7 +221,7 @@ export function createAuthRouter() {
         const anon = getSupabaseAnon();
         const { data: signInData, error: signInError } = await anon.auth.signInWithPassword({ email: profile.email, password });
         if (signInError || !signInData?.user) {
-          return res.status(401).json({ success: false, message: 'Invalid credentials' });
+          return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
         }
         session = signInData.session;
       } else {
@@ -228,7 +229,7 @@ export function createAuthRouter() {
         // so fall back to the local bcrypt hash exactly like the pre-migration login flow did.
         const isMatch = profile.passwordhash ? await bcrypt.compare(password, profile.passwordhash) : false;
         if (!isMatch) {
-          return res.status(401).json({ success: false, message: 'Invalid credentials' });
+          return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
         }
       }
 
@@ -249,6 +250,7 @@ export function createAuthRouter() {
           premiumValidUntil: profile.premium_valid_until,
           premiumTrialStartedAt: profile.premium_trial_started_at,
           emailVerifiedAt: profile.email_verified_at,
+          requiresEmailVerification: Boolean(profile.auth_user_id) && !profile.google_id,
         },
         session,
         token: signAuthToken({ userId: Number(profile.id) }),
@@ -511,6 +513,7 @@ function sanitizeUser(user: {
   exam_code: string | null;
   level: string | null;
   googleId: string | null;
+  authUserId?: string | null;
   plan?: string | null;
   premiumValidUntil?: Date | string | null;
   premiumTrialStartedAt?: Date | string | null;
@@ -530,5 +533,9 @@ function sanitizeUser(user: {
     premiumValidUntil: user.premiumValidUntil || null,
     premiumTrialStartedAt: user.premiumTrialStartedAt || null,
     emailVerifiedAt: user.emailVerifiedAt || null,
+    // Accounts predating the Supabase Auth migration (no authUserId) never got a verifiable
+    // Supabase identity, so they're grandfathered out of the trial email-verification gate -
+    // see the matching check in billing.ts.
+    requiresEmailVerification: Boolean(user.authUserId) && !user.googleId,
   };
 }
