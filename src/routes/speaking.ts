@@ -231,6 +231,22 @@ export function createSpeakingRouter() {
     return res.json({ translation });
   });
 
+  // Reverse direction of the route above: the learner doesn't know how to say something in
+  // Japanese, so they speak/type it in whatever language the site is currently displayed in and
+  // this turns it into Japanese *before* it becomes their conversational turn — no session/message
+  // context needed, unlike the other translate route, since this text was never stored as a
+  // message in the first place (only the Japanese result is).
+  router.post('/ai/translate-to-japanese', async (req: Request, res: Response) => {
+    await requireUser(req);
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ message: 'Nội dung không được để trống.' });
+    if (text.length > 500) return res.status(400).json({ message: 'Câu quá dài.' });
+
+    const language = resolveRequestLanguage(req);
+    const japanese = await translateToJapaneseText(text, language);
+    return res.json({ japanese });
+  });
+
   router.post('/ai/sessions/:id/end', async (req: Request, res: Response) => {
     const user = await requireUser(req);
     await ensureAiSpeakingTables();
@@ -568,6 +584,49 @@ async function translateSpeakingMessageText(
     return { translation: extractTranslation(result.json), provider: 'groq' };
   } catch (groqCause) {
     console.error('translateSpeakingMessageText: Groq fallback also failed:', groqCause);
+    const status = (groqCause as { status?: number })?.status;
+    const friendly =
+      status === 429
+        ? 'AI đang tạm hết lượt dùng do quá tải, vui lòng thử lại sau ít phút.'
+        : 'Không thể dịch câu này lúc này, vui lòng thử lại.';
+    const error = new Error(friendly) as Error & { status?: number };
+    error.status = status === 429 ? 429 : 502;
+    throw error;
+  }
+}
+
+function extractJapanese(json: unknown): string {
+  const parsed = json as { japanese?: unknown };
+  const japanese = String(parsed?.japanese || '').trim();
+  if (!japanese) throw new Error('AI không dịch được câu này, vui lòng thử lại.');
+  return japanese;
+}
+
+// Reverse of translateSpeakingMessageText above: the learner writes/speaks in whatever language
+// the site is currently displayed in because they don't know how to say it in Japanese yet, and
+// this turns that into a natural Japanese line before it's sent as their conversational turn.
+// Same Gemini-then-Groq fallback shape as the rest of this file.
+async function translateToJapaneseText(text: string, fromLanguage: string): Promise<string> {
+  const languageName = SPEAKING_TRANSLATION_LANGUAGE_NAMES[fromLanguage] || 'Vietnamese';
+  const systemInstruction =
+    `Bạn dịch một câu ngắn từ ${languageName} sang tiếng Nhật tự nhiên, phù hợp với hội thoại đời ` +
+    'thường (không phải văn viết trang trọng, trừ khi câu gốc rõ ràng mang tính trang trọng). ' +
+    'Không thêm giải thích hay phiên âm. Luôn trả lời bằng JSON đúng định dạng sau, không thêm ' +
+    'chữ nào khác ngoài JSON: {"japanese": "..."}';
+  const prompt = `Dịch câu sau từ ${languageName} sang tiếng Nhật:\n"${text}"`;
+
+  try {
+    const result = await generateGeminiJson({ systemInstruction, prompt, temperature: 0.3, timeoutMs: 20_000 });
+    return extractJapanese(result.json);
+  } catch (geminiCause) {
+    console.error('translateToJapaneseText: Gemini call failed, falling back to Groq:', geminiCause);
+  }
+
+  try {
+    const result = await generateGroqJson({ systemInstruction, prompt, temperature: 0.3, timeoutMs: 20_000 });
+    return extractJapanese(result.json);
+  } catch (groqCause) {
+    console.error('translateToJapaneseText: Groq fallback also failed:', groqCause);
     const status = (groqCause as { status?: number })?.status;
     const friendly =
       status === 429

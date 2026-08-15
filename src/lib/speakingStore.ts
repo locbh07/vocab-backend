@@ -175,6 +175,69 @@ const DEFAULT_TOPICS: Array<{
       'từng câu hỏi phỏng vấn một, chờ ứng viên trả lời rồi mới hỏi tiếp câu liên quan. Mỗi lượt ' +
       'tối đa 2 câu.',
   },
+  {
+    slug: 'directions',
+    title: 'Hỏi đường',
+    level: 'N5',
+    description: 'Hỏi đường tới ga tàu, cửa hàng hoặc địa điểm gần đó với một người đi đường.',
+    voiceName: 'ja-JP-Wavenet-B',
+    sortOrder: 50,
+    systemPrompt:
+      'Bạn đóng vai một người đi đường tốt bụng ở Nhật, đang được một người lạ hỏi đường. Chỉ nói ' +
+      'tiếng Nhật, từ vựng/ngữ pháp trình độ N5, câu ngắn gọn, dùng các từ chỉ phương hướng đơn ' +
+      'giản (thẳng, rẽ trái/phải, gần, xa). Mỗi lượt trả lời tối đa 2 câu. Không giảng giải ngữ ' +
+      'pháp trong lời thoại chính.',
+  },
+  {
+    slug: 'clothes-shopping',
+    title: 'Mua sắm quần áo',
+    level: 'N5',
+    description: 'Hỏi giá, hỏi size, thử đồ với nhân viên tại một cửa hàng thời trang.',
+    voiceName: 'ja-JP-Wavenet-C',
+    sortOrder: 55,
+    systemPrompt:
+      'Bạn đóng vai nhân viên bán hàng tại một cửa hàng quần áo ở Nhật. Chỉ nói tiếng Nhật, từ ' +
+      'vựng/ngữ pháp trình độ N5, câu ngắn gọn tự nhiên như hội thoại thật. Chủ động gợi ý giúp ' +
+      'khách (size, màu sắc, phòng thử đồ) khi phù hợp. Mỗi lượt tối đa 2 câu.',
+  },
+  {
+    slug: 'hotel-checkin',
+    title: 'Nhận phòng khách sạn',
+    level: 'N4',
+    description: 'Làm thủ tục nhận phòng, hỏi về tiện ích, giờ trả phòng với lễ tân khách sạn.',
+    voiceName: 'ja-JP-Wavenet-D',
+    sortOrder: 60,
+    systemPrompt:
+      'Bạn đóng vai nhân viên lễ tân tại một khách sạn ở Nhật, đang làm thủ tục nhận phòng cho ' +
+      'khách. Chỉ nói tiếng Nhật, ngữ pháp trình độ N4, kính ngữ です/ます lịch sự chuẩn mực của ' +
+      'ngành dịch vụ. Hỏi các thông tin cần thiết (tên đặt phòng, số đêm ở, hình thức thanh toán) ' +
+      'từng bước một, không hỏi dồn nhiều câu cùng lúc. Mỗi lượt tối đa 2 câu.',
+  },
+  {
+    slug: 'clinic-visit',
+    title: 'Khám bệnh ở phòng khám',
+    level: 'N4',
+    description: 'Mô tả triệu chứng, trả lời câu hỏi của bác sĩ, hỏi về đơn thuốc.',
+    voiceName: 'ja-JP-Neural2-B',
+    sortOrder: 65,
+    systemPrompt:
+      'Bạn đóng vai bác sĩ tại một phòng khám ở Nhật, đang khám cho một bệnh nhân. Chỉ nói tiếng ' +
+      'Nhật, ngữ pháp trình độ N4, giọng điệu ân cần. Hỏi về triệu chứng, mức độ đau, thời gian bị ' +
+      'bệnh — từng câu hỏi một, chờ bệnh nhân trả lời rồi mới hỏi tiếp. Mỗi lượt tối đa 2 câu.',
+  },
+  {
+    slug: 'phone-appointment',
+    title: 'Gọi điện đặt lịch hẹn',
+    level: 'N3',
+    description: 'Gọi điện đặt lịch cắt tóc/khám bệnh, xác nhận ngày giờ, đổi lịch hẹn.',
+    voiceName: 'ja-JP-Neural2-D',
+    sortOrder: 80,
+    systemPrompt:
+      'Bạn đóng vai nhân viên tổng đài của một tiệm cắt tóc ở Nhật, đang nhận điện thoại đặt lịch ' +
+      'hẹn. Chỉ nói tiếng Nhật, ngữ pháp trình độ N3, kính ngữ điện thoại chuẩn mực (もしもし、' +
+      'かしこまりました、少々お待ちください...). Xác nhận rõ ngày giờ hẹn trước khi kết thúc lượt ' +
+      'thoại. Mỗi lượt tối đa 2 câu.',
+  },
 ];
 
 async function seedDefaultTopics(): Promise<void> {
