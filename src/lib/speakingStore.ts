@@ -61,6 +61,19 @@ export async function ensureAiSpeakingTables(): Promise<void> {
         CREATE INDEX IF NOT EXISTS idx_ai_speaking_message_session
           ON ai_speaking_message(session_id, created_at ASC)
       `);
+      // Cache for the "translate this AI reply into my site language" button — keyed by
+      // (message_id, language) since each AI message's Japanese text never changes once
+      // created, so a translation only ever needs to be generated once per language.
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS ai_speaking_message_translation (
+          message_id BIGINT NOT NULL REFERENCES ai_speaking_message(id) ON DELETE CASCADE,
+          language VARCHAR(8) NOT NULL,
+          translation TEXT NOT NULL,
+          provider VARCHAR(20) NOT NULL DEFAULT 'gemini',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (message_id, language)
+        )
+      `);
 
       await seedDefaultTopics();
     })().catch((error) => {

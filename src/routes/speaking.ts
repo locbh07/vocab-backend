@@ -198,6 +198,39 @@ export function createSpeakingRouter() {
     return res.json({ suggestion: result.suggestion, meaning: result.meaning });
   });
 
+  router.post('/ai/messages/:id/translate', async (req: Request, res: Response) => {
+    const user = await requireUser(req);
+    await ensureAiSpeakingTables();
+    const id = normalizeId(req.params.id);
+    if (!id) return res.status(400).json({ message: 'message id không hợp lệ.' });
+
+    const message = await prisma.aiSpeakingMessage.findFirst({
+      where: { id: BigInt(id), session: { is: { userId: BigInt(user.id) } } },
+    });
+    if (!message || !message.text) return res.status(404).json({ message: 'Không tìm thấy tin nhắn.' });
+
+    const language = resolveRequestLanguage(req);
+
+    const cached = await prisma.$queryRaw<Array<{ translation: string }>>`
+      SELECT translation FROM ai_speaking_message_translation
+      WHERE message_id = ${BigInt(id)} AND language = ${language}
+      LIMIT 1
+    `;
+    if (cached[0]?.translation) {
+      return res.json({ translation: cached[0].translation });
+    }
+
+    const { translation, provider } = await translateSpeakingMessageText(message.text, language);
+
+    await prisma.$executeRaw`
+      INSERT INTO ai_speaking_message_translation (message_id, language, translation, provider)
+      VALUES (${BigInt(id)}, ${language}, ${translation}, ${provider})
+      ON CONFLICT (message_id, language) DO UPDATE SET translation = EXCLUDED.translation, provider = EXCLUDED.provider
+    `;
+
+    return res.json({ translation });
+  });
+
   router.post('/ai/sessions/:id/end', async (req: Request, res: Response) => {
     const user = await requireUser(req);
     await ensureAiSpeakingTables();
@@ -490,6 +523,56 @@ LẦN TRƯỚC BẠN ĐÃ SAI: "meaning" bị viết bằng tiếng Trung hoặc
       status === 429
         ? 'AI đang tạm hết lượt dùng do quá tải, vui lòng thử lại sau ít phút.'
         : 'Không thể lấy gợi ý lúc này, vui lòng thử lại.';
+    const error = new Error(friendly) as Error & { status?: number };
+    error.status = status === 429 ? 429 : 502;
+    throw error;
+  }
+}
+
+// LANGUAGE_NAMES only covers translation *targets* away from Vietnamese source content (see
+// correctionLanguageName above) — here the source is always Japanese and the target can
+// legitimately be Vietnamese itself, so it needs its own entry.
+const SPEAKING_TRANSLATION_LANGUAGE_NAMES: Record<string, string> = { vi: 'Vietnamese', ...LANGUAGE_NAMES };
+
+function extractTranslation(json: unknown): string {
+  const parsed = json as { translation?: unknown };
+  const translation = String(parsed?.translation || '').trim();
+  if (!translation) throw new Error('AI không dịch được câu này, vui lòng thử lại.');
+  return translation;
+}
+
+// "Dịch nghĩa" button next to the listen button on an AI reply — translates that one Japanese
+// line into whatever language the site is currently displayed in. Same Gemini-then-Groq
+// fallback shape as the rest of this file, but simpler: no role/language-drift guard needed
+// since there's no example-sentence generation involved, just a direct translation.
+async function translateSpeakingMessageText(
+  japaneseText: string,
+  language: string,
+): Promise<{ translation: string; provider: string }> {
+  const languageName = SPEAKING_TRANSLATION_LANGUAGE_NAMES[language] || 'Vietnamese';
+  const systemInstruction =
+    `Bạn dịch một câu tiếng Nhật ngắn trong một cuộc hội thoại luyện nói sang ${languageName}. ` +
+    'Dịch tự nhiên, sát nghĩa, không thêm giải thích ngữ pháp hay chú thích. ' +
+    'Luôn trả lời bằng JSON đúng định dạng sau, không thêm chữ nào khác ngoài JSON: {"translation": "..."}';
+  const prompt = `Dịch câu tiếng Nhật sau sang ${languageName}:\n"${japaneseText}"`;
+
+  try {
+    const result = await generateGeminiJson({ systemInstruction, prompt, temperature: 0.3, timeoutMs: 20_000 });
+    return { translation: extractTranslation(result.json), provider: 'gemini' };
+  } catch (geminiCause) {
+    console.error('translateSpeakingMessageText: Gemini call failed, falling back to Groq:', geminiCause);
+  }
+
+  try {
+    const result = await generateGroqJson({ systemInstruction, prompt, temperature: 0.3, timeoutMs: 20_000 });
+    return { translation: extractTranslation(result.json), provider: 'groq' };
+  } catch (groqCause) {
+    console.error('translateSpeakingMessageText: Groq fallback also failed:', groqCause);
+    const status = (groqCause as { status?: number })?.status;
+    const friendly =
+      status === 429
+        ? 'AI đang tạm hết lượt dùng do quá tải, vui lòng thử lại sau ít phút.'
+        : 'Không thể dịch câu này lúc này, vui lòng thử lại.';
     const error = new Error(friendly) as Error & { status?: number };
     error.status = status === 429 ? 429 : 502;
     throw error;
