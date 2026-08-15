@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
 import { generateGeminiJson } from './gemini';
 
-const LANGUAGE_NAMES: Record<string, string> = {
+export const LANGUAGE_NAMES: Record<string, string> = {
   en: 'English',
   zh: 'Chinese (Simplified)',
   ko: 'Korean',

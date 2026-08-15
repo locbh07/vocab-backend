@@ -26,6 +26,7 @@ import { createBillingRouter, createStripeWebhookRouter } from './routes/billing
 import { createAdminManualPaymentRouter, createManualPaymentRouter } from './routes/manualPayments';
 import { createAdminAiReviewRouter } from './routes/adminAiReview';
 import { createBookRouter } from './routes/books';
+import { createSpeakingRouter } from './routes/speaking';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
@@ -249,6 +250,8 @@ app.use('/mailbox', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix
 app.use('/api/mailbox', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'api-mailbox' }), createMailboxRouter());
 app.use('/admin/mailbox', createAdminMailboxRouter());
 app.use('/api/admin/mailbox', createAdminMailboxRouter());
+app.use('/speaking', createSimpleRateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'speaking' }), createSpeakingRouter());
+app.use('/api/speaking', createSimpleRateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'api-speaking' }), createSpeakingRouter());
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;

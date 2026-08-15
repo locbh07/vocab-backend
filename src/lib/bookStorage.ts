@@ -15,7 +15,7 @@ const COVER_URL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 let cachedClient: S3Client | null = null;
 
-function getR2Client(): S3Client {
+export function getR2Client(): S3Client {
   if (cachedClient) return cachedClient;
 
   const accountId = process.env.R2_ACCOUNT_ID;

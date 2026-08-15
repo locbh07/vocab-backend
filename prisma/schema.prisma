@@ -603,6 +603,56 @@ model ListeningTranscriptLine {
   @@map("listening_transcript_line")
 }
 
+model AiSpeakingTopic {
+  id           BigInt   @id @default(autoincrement())
+  slug         String   @unique @db.VarChar(80)
+  title        String   @db.VarChar(200)
+  level        String   @db.VarChar(10)
+  description  String?  @db.Text
+  systemPrompt String   @map("system_prompt") @db.Text
+  voiceName    String?  @map("voice_name") @db.VarChar(50)
+  isActive     Boolean  @default(true) @map("is_active")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  sessions AiSpeakingSession[]
+
+  @@map("ai_speaking_topic")
+}
+
+model AiSpeakingSession {
+  id        BigInt    @id @default(autoincrement())
+  userId    BigInt    @map("user_id")
+  topicId   BigInt    @map("topic_id")
+  provider  String    @default("gemini") @db.VarChar(20)
+  model     String?   @db.VarChar(100)
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  turnCount Int       @default(0) @map("turn_count")
+
+  topic    AiSpeakingTopic     @relation(fields: [topicId], references: [id])
+  messages AiSpeakingMessage[]
+
+  @@index([userId, startedAt], map: "idx_ai_speaking_session_user")
+  @@map("ai_speaking_session")
+}
+
+model AiSpeakingMessage {
+  id         BigInt   @id @default(autoincrement())
+  sessionId  BigInt   @map("session_id")
+  sender     String   @db.VarChar(10)
+  text       String?  @db.Text
+  correction String?  @db.Text
+  audioKey   String?  @map("audio_key") @db.Text
+  karaoke    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  session AiSpeakingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt], map: "idx_ai_speaking_message_session")
+  @@map("ai_speaking_message")
+}
+
 model ListeningTranscriptTranslation {
   id          BigInt   @id @default(autoincrement())
   video_id    String   @db.VarChar(20)
