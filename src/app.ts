@@ -107,6 +107,11 @@ if (configuredCorsOrigin.length === 0) {
 }
 app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), createStripeWebhookRouter());
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), createStripeWebhookRouter());
+// Speech-to-text upload is a raw audio blob (webm/opus on most browsers, mp4/aac on Safari) —
+// `type: () => true` accepts whatever Content-Type the browser sends for it, since matching a
+// specific audio mimetype here would just have to be kept in sync with every browser's own
+// MediaRecorder output format. Scoped to this one path only; every other route still gets JSON.
+app.use(['/speaking/ai/transcribe', '/api/speaking/ai/transcribe'], express.raw({ type: () => true, limit: '8mb' }));
 app.use(express.json({ limit: '6mb' }));
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));

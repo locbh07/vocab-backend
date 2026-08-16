@@ -15,7 +15,7 @@ const DEFAULT_VOICE = 'ja-JP-Neural2-B';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
-type ServiceAccountCredentials = { client_email: string; private_key: string };
+type ServiceAccountCredentials = { client_email: string; private_key: string; project_id: string };
 
 let cachedCredentials: ServiceAccountCredentials | null = null;
 let cachedToken: { accessToken: string; expiresAt: number } | null = null;
@@ -37,19 +37,25 @@ function getCredentials(): ServiceAccountCredentials {
 
   const raw = Buffer.from(rawBase64, 'base64').toString('utf8');
   const parsed = JSON.parse(raw) as Partial<ServiceAccountCredentials>;
-  if (!parsed.client_email || !parsed.private_key) {
-    throw new Error('GOOGLE_TTS_CREDENTIALS_JSON is missing client_email or private_key');
+  if (!parsed.client_email || !parsed.private_key || !parsed.project_id) {
+    throw new Error('GOOGLE_TTS_CREDENTIALS_JSON is missing client_email, private_key, or project_id');
   }
 
-  cachedCredentials = { client_email: parsed.client_email, private_key: parsed.private_key };
+  cachedCredentials = { client_email: parsed.client_email, private_key: parsed.private_key, project_id: parsed.project_id };
   return cachedCredentials;
+}
+
+// Shared with googleStt.ts (Speech-to-Text needs the project id for its v2 REST endpoint URL).
+export function getGoogleProjectId(): string {
+  return getCredentials().project_id;
 }
 
 // Service-account JWT-bearer flow (RFC 7523) — signs a short-lived assertion with the service
 // account's private key and exchanges it for an access token, rather than pulling in the full
 // @google-cloud SDK for one endpoint. Cached in memory since tokens are valid ~1h and every
-// AI speaking turn would otherwise re-authenticate from scratch.
-async function getAccessToken(): Promise<string> {
+// AI speaking turn would otherwise re-authenticate from scratch. Exported for googleStt.ts to
+// reuse — both APIs share the same service account and 'cloud-platform' scope.
+export async function getAccessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.accessToken;
   }

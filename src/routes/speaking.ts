@@ -8,6 +8,7 @@ import { resolveRequestLanguage, LANGUAGE_NAMES } from '../lib/contentTranslatio
 import { synthesizeSpeechWithKaraoke, type KaraokeChunk } from '../lib/googleTts';
 import { speakingAudioKeyFor, putSpeakingAudio, createSpeakingAudioSignedUrl } from '../lib/speakingAudioStorage';
 import { tokenizeJapaneseText } from '../lib/japaneseReading';
+import { transcribeSpeech, speechLanguageCode } from '../lib/googleStt';
 
 const MAX_HISTORY_TURNS = 12;
 const DAILY_MESSAGE_LIMIT = 60;
@@ -245,6 +246,45 @@ export function createSpeakingRouter() {
     const language = resolveRequestLanguage(req);
     const japanese = await translateToJapaneseText(text, language);
     return res.json({ japanese });
+  });
+
+  // Push-to-talk recording upload: the browser records with MediaRecorder (whatever container it
+  // supports — webm/opus on Chrome/Firefox/Android, mp4/aac on Safari/iOS) and posts the raw
+  // bytes here (see the express.raw() middleware scoped to this exact path in app.ts, mounted
+  // ahead of the app-wide express.json()). This replaces the browser-native Web Speech API
+  // (webkitSpeechRecognition), which turned out too unreliable on iOS Safari — silently failing
+  // to (re-)engage the mic, or ending a session having heard nothing at all with no error — to
+  // ship as the only path. `?translate=1` means the learner is speaking in the site's display
+  // language rather than Japanese (mirrors the /translate-to-japanese route's use case).
+  router.post('/ai/transcribe', async (req: Request, res: Response) => {
+    await requireUser(req);
+    const audio = req.body;
+    if (!Buffer.isBuffer(audio) || audio.length === 0) {
+      return res.status(400).json({ message: 'Không có dữ liệu âm thanh.' });
+    }
+    // A near-instant tap (accidental, or cancelled almost immediately) produces a near-empty
+    // recording — not worth an API call, and Speech-to-Text would just return nothing anyway.
+    if (audio.length < 2000) {
+      return res.json({ text: '' });
+    }
+
+    const translate = req.query.translate === '1' || req.query.translate === 'true';
+    const languageCode = translate ? speechLanguageCode(resolveRequestLanguage(req)) : 'ja-JP';
+
+    try {
+      const text = await transcribeSpeech(audio, languageCode);
+      return res.json({ text });
+    } catch (cause) {
+      console.error('speech transcription failed:', cause);
+      const status = (cause as { status?: number })?.status;
+      const friendly =
+        status === 429
+          ? 'Đang quá tải, vui lòng thử lại sau ít phút.'
+          : 'Không nhận diện được giọng nói lúc này, vui lòng thử lại.';
+      const error = new Error(friendly) as Error & { status?: number };
+      error.status = status === 429 ? 429 : 502;
+      throw error;
+    }
   });
 
   router.post('/ai/sessions/:id/end', async (req: Request, res: Response) => {
