@@ -49,7 +49,10 @@ export async function transcribeSpeech(audioBuffer: Buffer, languageCode: string
           config: {
             autoDecodingConfig: {},
             languageCodes: [languageCode],
-            model: 'long',
+            // 'short' is tuned for brief, single-utterance audio (a few seconds) — matches this
+            // route's push-to-talk use case better than 'long', which targets continuous/longer
+            // recordings and can bias toward different word continuations on a short clip.
+            model: 'short',
           },
           content: audioBuffer.toString('base64'),
         }),
