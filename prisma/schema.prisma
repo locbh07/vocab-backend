@@ -626,6 +626,7 @@ model AiSpeakingSession {
   topicId   BigInt    @map("topic_id")
   provider  String    @default("gemini") @db.VarChar(20)
   model     String?   @db.VarChar(100)
+  voiceName String?   @map("voice_name") @db.VarChar(50)
   startedAt DateTime  @default(now()) @map("started_at")
   endedAt   DateTime? @map("ended_at")
   turnCount Int       @default(0) @map("turn_count")

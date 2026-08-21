@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireUser } from '../middleware/userGuard';
-import { ensureAiSpeakingTables } from '../lib/speakingStore';
+import { ensureAiSpeakingTables, SELECTABLE_VOICES } from '../lib/speakingStore';
 import { generateGeminiJson } from '../lib/gemini';
 import { generateGroqJson } from '../lib/groq';
 import { resolveRequestLanguage, LANGUAGE_NAMES } from '../lib/contentTranslation';
@@ -49,8 +49,14 @@ export function createSpeakingRouter() {
     });
     if (!topic) return res.status(404).json({ message: 'Không tìm thấy chủ đề luyện nói.' });
 
+    // Validated against a fixed whitelist rather than passed through as-is — this value flows
+    // straight into the Google TTS API call as the voice name, so an unvalidated value here
+    // would let a client request an arbitrary (or Chirp3-HD, which silently breaks karaoke) voice.
+    const requestedVoice = req.body?.voiceName;
+    const voiceName = SELECTABLE_VOICES.includes(requestedVoice) ? requestedVoice : null;
+
     const session = await prisma.aiSpeakingSession.create({
-      data: { userId: BigInt(user.id), topicId: topic.id },
+      data: { userId: BigInt(user.id), topicId: topic.id, voiceName },
     });
 
     const opening = await generateSpeakingTurn({
@@ -69,7 +75,7 @@ export function createSpeakingRouter() {
         data: { turnCount: { increment: 1 }, provider: opening.provider, model: opening.model },
       }),
     ]);
-    const { audioKey, karaoke } = await synthesizeAndStoreAudio(aiMessage.id, opening.reply, topic.voiceName);
+    const { audioKey, karaoke } = await synthesizeAndStoreAudio(aiMessage.id, opening.reply, voiceName || topic.voiceName);
     if (audioKey) {
       await prisma.aiSpeakingMessage.update({
         where: { id: aiMessage.id },
@@ -155,7 +161,7 @@ export function createSpeakingRouter() {
         data: { turnCount: { increment: 1 }, provider: turn.provider, model: turn.model },
       }),
     ]);
-    const { audioKey, karaoke } = await synthesizeAndStoreAudio(aiMessage.id, turn.reply, session.topic.voiceName);
+    const { audioKey, karaoke } = await synthesizeAndStoreAudio(aiMessage.id, turn.reply, session.voiceName || session.topic.voiceName);
     if (audioKey) {
       await prisma.aiSpeakingMessage.update({
         where: { id: aiMessage.id },

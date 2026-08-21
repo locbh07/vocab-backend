@@ -38,6 +38,12 @@ export async function ensureAiSpeakingTables(): Promise<void> {
         CREATE INDEX IF NOT EXISTS idx_ai_speaking_session_user
           ON ai_speaking_session(user_id, started_at DESC)
       `);
+      // Learner's chosen voice for this session, overriding the topic's default when set. Kept
+      // on the session (not the message) since the whole conversation should stay one consistent
+      // voice, not vary turn to turn.
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE ai_speaking_session ADD COLUMN IF NOT EXISTS voice_name VARCHAR(50) NULL
+      `);
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS ai_speaking_message (
           id BIGSERIAL PRIMARY KEY,
@@ -89,6 +95,17 @@ export async function ensureAiSpeakingTables(): Promise<void> {
 // helpful Japanese tutor" prompt drifts into long explanations and breaks the back-and-forth
 // feel a conversation practice session needs (see gemini_prompt_design_feedback memory: the
 // same lesson applied to the review prompt applies here).
+// Learner-selectable voice override (session-level, see the voice_name migration above). Same
+// Neural2/Wavenet-only constraint as the per-topic voices below — Chirp3-HD silently drops
+// karaoke timepoints. Mirrored on the frontend for display labels (no shared module boundary
+// between the two apps); keep both lists in sync if this ever changes.
+export const SELECTABLE_VOICES = [
+  'ja-JP-Neural2-B',
+  'ja-JP-Wavenet-A',
+  'ja-JP-Neural2-C',
+  'ja-JP-Neural2-D',
+] as const;
+
 // Neural2/Wavenet only — Chirp3-HD voices are newer/more natural but silently return zero SSML
 // mark timepoints (confirmed live: hasAudio=true, timepoints=[]), which would quietly disable
 // karaoke highlighting for that topic without any error. A different voice per topic is purely
