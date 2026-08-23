@@ -340,12 +340,25 @@ async function synthesizeAndStoreAudio(
     const words = tokens.map((t) => t.surface_form).filter(Boolean);
     if (words.length === 0) throw new Error('no tokens to synthesize');
 
-    const { audio, contentType, karaoke } = await synthesizeSpeechWithKaraoke(words, {
-      voiceName: voiceName || undefined,
-    });
-    const key = speakingAudioKeyFor(messageId);
-    await putSpeakingAudio(key, audio, contentType);
-    return { audioKey: key, karaoke };
+    // A message with no audio fails silently from the learner's point of view — the reply just
+    // shows up with no way to hear it, no error, nothing to retry — so a single transient network
+    // blip calling Google TTS (the same class of failure already seen on the STT side) shouldn't
+    // be allowed to cost the whole turn its audio. One retry after a short delay, then give up.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { audio, contentType, karaoke } = await synthesizeSpeechWithKaraoke(words, {
+          voiceName: voiceName || undefined,
+        });
+        const key = speakingAudioKeyFor(messageId);
+        await putSpeakingAudio(key, audio, contentType);
+        return { audioKey: key, karaoke };
+      } catch (cause) {
+        lastError = cause;
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+    }
+    throw lastError;
   } catch (cause) {
     console.error('synthesizeAndStoreAudio: TTS failed, message will have no audio:', cause);
     return { audioKey: null, karaoke: null };
