@@ -3,6 +3,9 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dateOnly } from '../lib/http';
 import { toFsrsCard, gradeReview, type SrsRating } from '../lib/srs';
+import { ensureGameProfile, ensureGameProfileTable } from '../lib/xp';
+import { computeUnifiedStreak } from '../lib/streak';
+import { ensureKanjiLearningTables } from './learning';
 
 type GameMode = 'matrix' | 'falling' | 'flappy' | 'runner';
 type Difficulty = 'easy' | 'normal' | 'hard' | 'expert';
@@ -144,7 +147,11 @@ export function createLearningGameRouter() {
     if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
 
     await ensureLearningGameTables();
-    const profile = await ensureGameProfile(userId);
+    await ensureKanjiLearningTables();
+    const [profile, streakSummary] = await Promise.all([
+      ensureGameProfile(userId),
+      computeUnifiedStreak(userId),
+    ]);
     const userBigId = BigInt(userId);
 
     const [weeklyRow] = await prisma.$queryRaw<Array<{ sessions: bigint; score_avg: number | null; accuracy_avg: number | null }>>`
@@ -177,8 +184,8 @@ export function createLearningGameRouter() {
     return res.json({
       xp: Number(profile.xp || 0),
       totalGames: Number(profile.total_games || 0),
-      currentStreak: Number(profile.current_streak || 0),
-      longestStreak: Number(profile.longest_streak || 0),
+      currentStreak: streakSummary.currentStreak,
+      longestStreak: streakSummary.longestStreak,
       lastPlayedDate: profile.last_played_date,
       weekly: {
         sessions: Number(weeklyRow?.sessions || 0n),
@@ -929,65 +936,10 @@ async function listWeakWords(userId: number, limit: number) {
     .sort((a, b) => (weakOrder.get(a.id) || 0) - (weakOrder.get(b.id) || 0));
 }
 
-async function ensureGameProfile(userId: number) {
-  const userBigId = BigInt(userId);
-  const [existing] = await prisma.$queryRaw<Array<{
-    user_id: bigint;
-    xp: number;
-    total_games: number;
-    current_streak: number;
-    longest_streak: number;
-    last_played_date: Date | null;
-  }>>`
-    SELECT user_id, xp, total_games, current_streak, longest_streak, last_played_date
-    FROM user_game_profile
-    WHERE user_id = ${userBigId}
-    LIMIT 1
-  `;
-
-  if (existing) return existing;
-
-  await prisma.$executeRawUnsafe(
-    `
-      INSERT INTO user_game_profile (user_id, xp, total_games, current_streak, longest_streak, last_played_date, created_at, updated_at)
-      VALUES ($1, 0, 0, 0, 0, NULL, NOW(), NOW())
-      ON CONFLICT (user_id) DO NOTHING
-    `,
-    userBigId,
-  );
-
-  const [created] = await prisma.$queryRaw<Array<{
-    user_id: bigint;
-    xp: number;
-    total_games: number;
-    current_streak: number;
-    longest_streak: number;
-    last_played_date: Date | null;
-  }>>`
-    SELECT user_id, xp, total_games, current_streak, longest_streak, last_played_date
-    FROM user_game_profile
-    WHERE user_id = ${userBigId}
-    LIMIT 1
-  `;
-
-  return created;
-}
-
 async function ensureLearningGameTables() {
   if (!ensureLearningGameTablesPromise) {
     ensureLearningGameTablesPromise = (async () => {
-      await prisma.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS user_game_profile (
-          user_id BIGINT PRIMARY KEY REFERENCES useraccount(id) ON DELETE CASCADE,
-          xp INTEGER NOT NULL DEFAULT 0,
-          total_games INTEGER NOT NULL DEFAULT 0,
-          current_streak INTEGER NOT NULL DEFAULT 0,
-          longest_streak INTEGER NOT NULL DEFAULT 0,
-          last_played_date DATE NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
+      await ensureGameProfileTable();
 
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS user_game_session (

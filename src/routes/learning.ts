@@ -6,6 +6,15 @@ import { dateOnly } from '../lib/http';
 import { resolveRequestLanguage, overlayVocabularyTranslations, overlayVocabularyMeanings } from '../lib/contentTranslation';
 import { toFsrsCard, gradeReview, buildPreviewResponse, type SrsRating } from '../lib/srs';
 import { BADGE_CATALOG, type BadgeCategory } from '../lib/badges';
+import { computeUnifiedStreak } from '../lib/streak';
+import { awardXp, getXp } from '../lib/xp';
+
+// Flat per-review XP, deliberately not scaled by rating (Again/Hard/Good/Easy) so
+// mis-rating for points isn't incentivized. Sized against the arcade scale: XP_BY_MODE
+// (learningGame.ts) is 12-18 per full session, with `correctCount * 2` as its
+// per-question baseline before speed/accuracy/mode bonuses -- 2 XP/review mirrors that
+// baseline component for the equivalent of one graded item.
+const FLAT_REVIEW_XP = 2;
 
 const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
 type JlptLevel = (typeof JLPT_LEVELS)[number];
@@ -586,6 +595,14 @@ export function createLearningRouter() {
       }),
     ]);
 
+    try {
+      await awardXp(userId, FLAT_REVIEW_XP);
+    } catch (error) {
+      // XP is additive and non-critical -- never fail an already-graded review
+      // because the shared ledger write hiccuped.
+      console.error('awardXp failed for review-result', { userId, error });
+    }
+
     return res.json('OK');
   });
 
@@ -966,6 +983,12 @@ export function createLearningRouter() {
 
     invalidateKanjiTodayCache(userId);
 
+    try {
+      await awardXp(userId, FLAT_REVIEW_XP);
+    } catch (error) {
+      console.error('awardXp failed for kanji/review-result', { userId, error });
+    }
+
     return res.json('OK');
   });
 
@@ -1235,8 +1258,7 @@ export function createLearningRouter() {
       kanjiMasteredRows,
       vocabReviews,
       kanjiReviewsRows,
-      vocabDayRows,
-      kanjiDayRows,
+      streakSummary,
       existingUnlocks,
     ] = await Promise.all([
       prisma.userVocabProgress.count({ where: { user_id: userBigId, is_mastered: 1 } }),
@@ -1248,28 +1270,11 @@ export function createLearningRouter() {
       prisma.$queryRaw<Array<{ total: bigint }>>`
         SELECT COUNT(*)::bigint AS total FROM user_kanji_review_log WHERE user_id = ${userBigId}
       `,
-      prisma.$queryRaw<Array<{ study_date: Date }>>`
-        SELECT DATE(review_time) AS study_date FROM user_review_log
-        WHERE user_id = ${userBigId} AND review_time >= NOW() - INTERVAL '60 days'
-        GROUP BY DATE(review_time)
-      `,
-      prisma.$queryRaw<Array<{ study_date: Date }>>`
-        SELECT DATE(review_time) AS study_date FROM user_kanji_review_log
-        WHERE user_id = ${userBigId} AND review_time >= NOW() - INTERVAL '60 days'
-        GROUP BY DATE(review_time)
-      `,
+      computeUnifiedStreak(userId),
       prisma.userBadgeUnlock.findMany({ where: { user_id: userBigId } }),
     ]);
 
-    const toDayCounts = (rows: Array<{ study_date: Date }>) =>
-      rows.reduce<Record<string, number>>((acc, row) => {
-        acc[formatLocalDateKey(row.study_date)] = 1;
-        return acc;
-      }, {});
-    const currentStreak = Math.max(
-      calculateCurrentStreakFromDayCounts(toDayCounts(vocabDayRows)),
-      calculateCurrentStreakFromDayCounts(toDayCounts(kanjiDayRows)),
-    );
+    const currentStreak = streakSummary.currentStreak;
     const kanjiMastered = Number(kanjiMasteredRows[0]?.total || 0n);
     const totalReviews = vocabReviews + Number(kanjiReviewsRows[0]?.total || 0n);
 
@@ -1307,6 +1312,24 @@ export function createLearningRouter() {
         unlocked: unlockedMap.has(b.key),
         unlockedAt: unlockedMap.get(b.key) ?? null,
       })),
+    });
+  });
+
+  router.get('/progress-summary', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+
+    const [streakSummary, xp] = await Promise.all([
+      computeUnifiedStreak(userId),
+      getXp(userId),
+    ]);
+
+    return res.json({
+      currentStreak: streakSummary.currentStreak,
+      longestStreak: streakSummary.longestStreak,
+      freezesAvailable: streakSummary.freezesAvailable,
+      xp,
     });
   });
 
@@ -1414,7 +1437,7 @@ type KanjiLearningItemRow = {
 
 let ensureKanjiLearningTablesPromise: Promise<void> | null = null;
 
-async function ensureKanjiLearningTables() {
+export async function ensureKanjiLearningTables() {
   if (!ensureKanjiLearningTablesPromise) {
     ensureKanjiLearningTablesPromise = (async () => {
       await prisma.$executeRawUnsafe(`

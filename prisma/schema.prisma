@@ -227,6 +227,16 @@ model UserBadgeUnlock {
   @@map("user_badge_unlock")
 }
 
+model UserStreakFreeze {
+  id          BigInt   @id @default(autoincrement())
+  user_id     BigInt   @map("user_id")
+  freeze_date DateTime @map("freeze_date")
+  created_at  DateTime @default(now()) @map("created_at")
+
+  @@unique([user_id, freeze_date])
+  @@map("user_streak_freeze")
+}
+
 model UserLearningPlan {
   id              BigInt    @id @default(autoincrement())
   user_id         BigInt    @map("user_id")
