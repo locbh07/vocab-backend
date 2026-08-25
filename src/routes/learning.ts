@@ -4,6 +4,8 @@ import path from 'path';
 import { prisma } from '../lib/prisma';
 import { dateOnly } from '../lib/http';
 import { resolveRequestLanguage, overlayVocabularyTranslations, overlayVocabularyMeanings } from '../lib/contentTranslation';
+import { toFsrsCard, gradeReview, buildPreviewResponse, type SrsRating } from '../lib/srs';
+import { BADGE_CATALOG, type BadgeCategory } from '../lib/badges';
 
 const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
 type JlptLevel = (typeof JLPT_LEVELS)[number];
@@ -507,10 +509,10 @@ export function createLearningRouter() {
   router.post('/review-result', async (req: Request, res: Response) => {
     const userId = Number(req.body?.userId);
     const vocabId = Number(req.body?.vocabId);
-    const correct = Boolean(req.body?.correct);
+    const rating = Number(req.body?.rating) as SrsRating;
     const mode = String(req.body?.mode || 'review');
-    if (!Number.isFinite(userId) || !Number.isFinite(vocabId)) {
-      return res.status(400).json({ message: 'Invalid userId or vocabId' });
+    if (!Number.isFinite(userId) || !Number.isFinite(vocabId) || ![1, 2, 3, 4].includes(rating)) {
+      return res.status(400).json({ message: 'Invalid userId, vocabId, or rating' });
     }
 
     const plan = await getActivePlan(userId);
@@ -518,57 +520,98 @@ export function createLearningRouter() {
       where: { user_id_vocab_id: { user_id: BigInt(userId), vocab_id: BigInt(vocabId) } },
     });
 
-    const intervals = [0, 1, 3, 7, 30, 90];
     const now = new Date();
     const firstSeen = current?.first_seen_date || dateOnly(now);
-    let stage = current?.stage ?? 0;
-    stage = correct ? Math.min(stage + 1, 5) : Math.max(stage - 1, 0);
+    const card = toFsrsCard(
+      {
+        stability: current?.stability,
+        difficulty: current?.difficulty,
+        reps: current?.reps,
+        lapses: current?.lapses,
+        state: current?.state,
+        dueAt: current?.next_review_date,
+        lastReviewedAt: current?.last_reviewed_at,
+      },
+      now,
+    );
+    const graded = gradeReview({ card, rating, now, previousStage: current?.stage ?? 0 });
 
-    const nextReview = new Date(now);
-    nextReview.setDate(nextReview.getDate() + intervals[stage]);
-
-    if (!current) {
-      await prisma.userVocabProgress.create({
-        data: {
+    await prisma.$transaction([
+      prisma.userVocabProgress.upsert({
+        where: { user_id_vocab_id: { user_id: BigInt(userId), vocab_id: BigInt(vocabId) } },
+        create: {
           user_id: BigInt(userId),
           vocab_id: BigInt(vocabId),
           plan_id: plan?.id || null,
-          stage,
-          next_review_date: nextReview,
-          last_reviewed_at: now,
+          stage: graded.legacyStage,
+          next_review_date: graded.fsrs.dueAt,
+          last_reviewed_at: graded.fsrs.lastReviewedAt,
           times_reviewed: 1,
-          last_result: correct ? 1 : 0,
-          is_mastered: stage >= 5 ? 1 : 0,
+          last_result: graded.legacyResult,
+          is_mastered: graded.legacyIsMastered ? 1 : 0,
           first_seen_date: firstSeen,
+          stability: graded.fsrs.stability,
+          difficulty: graded.fsrs.difficulty,
+          reps: graded.fsrs.reps,
+          lapses: graded.fsrs.lapses,
+          state: graded.fsrs.state,
+          last_rating: graded.lastRating,
         },
-      });
-    } else {
-      await prisma.userVocabProgress.update({
-        where: { id: current.id },
+        update: {
+          plan_id: current?.plan_id || plan?.id || null,
+          stage: graded.legacyStage,
+          next_review_date: graded.fsrs.dueAt,
+          last_reviewed_at: graded.fsrs.lastReviewedAt,
+          times_reviewed: (current?.times_reviewed || 0) + 1,
+          last_result: graded.legacyResult,
+          is_mastered: graded.legacyIsMastered ? 1 : (current?.is_mastered ?? 0),
+          first_seen_date: firstSeen,
+          stability: graded.fsrs.stability,
+          difficulty: graded.fsrs.difficulty,
+          reps: graded.fsrs.reps,
+          lapses: graded.fsrs.lapses,
+          state: graded.fsrs.state,
+          last_rating: graded.lastRating,
+        },
+      }),
+      prisma.userReviewLog.create({
         data: {
-          plan_id: current.plan_id || plan?.id || null,
-          stage,
-          next_review_date: nextReview,
-          last_reviewed_at: now,
-          times_reviewed: (current.times_reviewed || 0) + 1,
-          last_result: correct ? 1 : 0,
-          is_mastered: stage >= 5 ? 1 : current.is_mastered,
-          first_seen_date: firstSeen,
+          user_id: BigInt(userId),
+          vocab_id: BigInt(vocabId),
+          review_time: now,
+          result: graded.legacyResult,
+          rating: graded.lastRating,
+          mode,
         },
-      });
-    }
-
-    await prisma.userReviewLog.create({
-      data: {
-        user_id: BigInt(userId),
-        vocab_id: BigInt(vocabId),
-        review_time: now,
-        result: correct ? 1 : 0,
-        mode,
-      },
-    });
+      }),
+    ]);
 
     return res.json('OK');
+  });
+
+  router.get('/review-preview', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    const vocabId = Number(req.query.vocabId);
+    if (!Number.isFinite(userId) || !Number.isFinite(vocabId)) {
+      return res.status(400).json({ message: 'Invalid userId or vocabId' });
+    }
+    const current = await prisma.userVocabProgress.findUnique({
+      where: { user_id_vocab_id: { user_id: BigInt(userId), vocab_id: BigInt(vocabId) } },
+    });
+    const now = new Date();
+    const card = toFsrsCard(
+      {
+        stability: current?.stability,
+        difficulty: current?.difficulty,
+        reps: current?.reps,
+        lapses: current?.lapses,
+        state: current?.state,
+        dueAt: current?.next_review_date,
+        lastReviewedAt: current?.last_reviewed_at,
+      },
+      now,
+    );
+    return res.json(buildPreviewResponse(card, now));
   });
 
   router.post('/kanji/plan', async (req: Request, res: Response) => {
@@ -766,24 +809,38 @@ export function createLearningRouter() {
   router.post('/kanji/review-result', async (req: Request, res: Response) => {
     const userId = Number(req.body?.userId);
     const kanji = String(req.body?.kanji || '').trim();
-    const correct = Boolean(req.body?.correct);
+    const rating = Number(req.body?.rating) as SrsRating;
     const mode = String(req.body?.mode || 'review').trim() || 'review';
-    if (!Number.isFinite(userId) || !kanji) {
-      return res.status(400).json({ message: 'Invalid userId or kanji' });
+    if (!Number.isFinite(userId) || !kanji || ![1, 2, 3, 4].includes(rating)) {
+      return res.status(400).json({ message: 'Invalid userId, kanji, or rating' });
     }
     await ensureKanjiLearningTables();
     const plan = await getActiveKanjiPlan(userId);
 
-    const intervals = [0, 1, 3, 7, 14, 30];
     const now = new Date();
     const firstSeen = dateOnly(now);
 
     await prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRawUnsafe<
-        Array<{ id: bigint; stage: number | null; times_reviewed: number | null; is_mastered: number | null; plan_id: bigint | null; first_seen_date: Date | null }>
+        Array<{
+          id: bigint;
+          stage: number | null;
+          times_reviewed: number | null;
+          is_mastered: number | null;
+          plan_id: bigint | null;
+          first_seen_date: Date | null;
+          next_review_date: Date | null;
+          last_reviewed_at: Date | null;
+          stability: number | null;
+          difficulty: number | null;
+          reps: number | null;
+          lapses: number | null;
+          state: number | null;
+        }>
       >(
         `
-          SELECT id, stage, times_reviewed, is_mastered, plan_id, first_seen_date
+          SELECT id, stage, times_reviewed, is_mastered, plan_id, first_seen_date,
+                 next_review_date, last_reviewed_at, stability, difficulty, reps, lapses, state
           FROM user_kanji_progress
           WHERE user_id = $1
             AND kanji_char = $2
@@ -793,30 +850,45 @@ export function createLearningRouter() {
         kanji,
       );
       const current = rows[0] || null;
-      let stage = Number(current?.stage ?? 0);
-      stage = correct ? Math.min(stage + 1, 5) : Math.max(stage - 1, 0);
-
-      const nextReview = new Date(now);
-      nextReview.setDate(nextReview.getDate() + intervals[stage]);
+      const card = toFsrsCard(
+        {
+          stability: current?.stability,
+          difficulty: current?.difficulty,
+          reps: current?.reps,
+          lapses: current?.lapses,
+          state: current?.state,
+          dueAt: current?.next_review_date,
+          lastReviewedAt: current?.last_reviewed_at,
+        },
+        now,
+      );
+      const graded = gradeReview({ card, rating, now, previousStage: Number(current?.stage ?? 0) });
 
       if (!current) {
         await tx.$executeRawUnsafe(
           `
             INSERT INTO user_kanji_progress (
               user_id, kanji_char, plan_id, stage, next_review_date, last_reviewed_at,
-              times_reviewed, last_result, is_mastered, first_seen_date, created_at, updated_at
+              times_reviewed, last_result, is_mastered, first_seen_date,
+              stability, difficulty, reps, lapses, state, last_rating, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, NOW(), NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
           `,
           BigInt(userId),
           kanji,
           plan?.id ? BigInt(plan.id) : null,
-          stage,
-          nextReview,
-          now,
-          correct ? 1 : 0,
-          stage >= 5 ? 1 : 0,
+          graded.legacyStage,
+          graded.fsrs.dueAt,
+          graded.fsrs.lastReviewedAt,
+          graded.legacyResult,
+          graded.legacyIsMastered ? 1 : 0,
           firstSeen,
+          graded.fsrs.stability,
+          graded.fsrs.difficulty,
+          graded.fsrs.reps,
+          graded.fsrs.lapses,
+          graded.fsrs.state,
+          graded.lastRating,
         );
       } else {
         await tx.$executeRawUnsafe(
@@ -831,29 +903,42 @@ export function createLearningRouter() {
               last_result = $5,
               is_mastered = CASE WHEN $6 = 1 THEN 1 ELSE COALESCE(is_mastered, 0) END,
               first_seen_date = COALESCE(first_seen_date, $7),
+              stability = $8,
+              difficulty = $9,
+              reps = $10,
+              lapses = $11,
+              state = $12,
+              last_rating = $13,
               updated_at = NOW()
-            WHERE id = $8
+            WHERE id = $14
           `,
           plan?.id ? BigInt(plan.id) : null,
-          stage,
-          nextReview,
-          now,
-          correct ? 1 : 0,
-          stage >= 5 ? 1 : 0,
+          graded.legacyStage,
+          graded.fsrs.dueAt,
+          graded.fsrs.lastReviewedAt,
+          graded.legacyResult,
+          graded.legacyIsMastered ? 1 : 0,
           firstSeen,
+          graded.fsrs.stability,
+          graded.fsrs.difficulty,
+          graded.fsrs.reps,
+          graded.fsrs.lapses,
+          graded.fsrs.state,
+          graded.lastRating,
           current.id,
         );
       }
 
       await tx.$executeRawUnsafe(
         `
-          INSERT INTO user_kanji_review_log (user_id, kanji_char, review_time, result, mode)
-          VALUES ($1, $2, $3, $4, $5)
+          INSERT INTO user_kanji_review_log (user_id, kanji_char, review_time, result, rating, mode)
+          VALUES ($1, $2, $3, $4, $5, $6)
         `,
         BigInt(userId),
         kanji,
         now,
-        correct ? 1 : 0,
+        graded.legacyResult,
+        graded.lastRating,
         mode,
       );
 
@@ -870,7 +955,7 @@ export function createLearningRouter() {
               AND plan_id = $4
               AND kanji_char = $5
           `,
-          correct ? 1 : 0,
+          graded.legacyResult,
           now,
           BigInt(userId),
           BigInt(plan.id),
@@ -882,6 +967,46 @@ export function createLearningRouter() {
     invalidateKanjiTodayCache(userId);
 
     return res.json('OK');
+  });
+
+  router.get('/kanji/review-preview', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    const kanji = String(req.query.kanji || '').trim();
+    if (!Number.isFinite(userId) || !kanji) {
+      return res.status(400).json({ message: 'Invalid userId or kanji' });
+    }
+    await ensureKanjiLearningTables();
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        stability: number | null;
+        difficulty: number | null;
+        reps: number | null;
+        lapses: number | null;
+        state: number | null;
+        next_review_date: Date | null;
+        last_reviewed_at: Date | null;
+      }>
+    >(
+      `SELECT stability, difficulty, reps, lapses, state, next_review_date, last_reviewed_at
+       FROM user_kanji_progress WHERE user_id = $1 AND kanji_char = $2 LIMIT 1`,
+      BigInt(userId),
+      kanji,
+    );
+    const current = rows[0] || null;
+    const now = new Date();
+    const card = toFsrsCard(
+      {
+        stability: current?.stability,
+        difficulty: current?.difficulty,
+        reps: current?.reps,
+        lapses: current?.lapses,
+        state: current?.state,
+        dueAt: current?.next_review_date,
+        lastReviewedAt: current?.last_reviewed_at,
+      },
+      now,
+    );
+    return res.json(buildPreviewResponse(card, now));
   });
 
   router.get('/kanji/dashboard', async (req: Request, res: Response) => {
@@ -932,18 +1057,7 @@ export function createLearningRouter() {
     const longestStreak = calculateLongestStreakFromKeys(
       streakRows.map((row) => formatLocalDateKey(row.study_date)),
     );
-
-    let streak = 0;
-    let cursor = dateOnly(new Date());
-    while (true) {
-      const key = formatLocalDateKey(cursor);
-      if (recentStudyDays[key] && recentStudyDays[key] > 0) {
-        streak += 1;
-        cursor = dateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000));
-      } else {
-        break;
-      }
-    }
+    const streak = calculateCurrentStreakFromDayCounts(recentStudyDays);
 
     // Dùng CURRENT_DATE thay vì Date tính theo giờ local server — tránh lệch múi giờ
     // giữa server và DB khiến todayNewKanji đếm sai (xem ghi chú tương tự ở /dashboard).
@@ -1023,18 +1137,7 @@ export function createLearningRouter() {
     const longestStreak = calculateLongestStreakFromKeys(
       streakRows.map((row) => formatLocalDateKey(row.study_date)),
     );
-
-    let streak = 0;
-    let cursor = dateOnly(new Date());
-    while (true) {
-      const key = formatLocalDateKey(cursor);
-      if (recentStudyDays[key] && recentStudyDays[key] > 0) {
-        streak += 1;
-        cursor = dateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000));
-      } else {
-        break;
-      }
-    }
+    const streak = calculateCurrentStreakFromDayCounts(recentStudyDays);
 
     // Dùng CURRENT_DATE (ngày theo timezone của DB) thay vì truyền Date đã tính theo giờ
     // local của server Node — nếu không, lệch múi giờ giữa server và DB khiến "hôm nay"
@@ -1070,7 +1173,7 @@ export function createLearningRouter() {
     });
   });
 
-  router.get('/streak-leaderboard', async (req: Request, res: Response) => {
+  router.get('/activity-leaderboard', async (req: Request, res: Response) => {
     const requestedLimit = Number(req.query.limit);
     const limit = Number.isFinite(requestedLimit)
       ? Math.max(1, Math.min(20, Math.floor(requestedLimit)))
@@ -1078,67 +1181,29 @@ export function createLearningRouter() {
 
     await ensureKanjiLearningTables();
 
+    // Rolling trailing-7-day activity count (not calendar week) so the board never
+    // resets to empty and stays achievable for new users, unlike an all-time streak.
     const vocabRows = await prisma.$queryRaw<
-      Array<{ user_id: bigint; full_name: string | null; longest_streak: bigint }>
+      Array<{ user_id: bigint; full_name: string | null; weekly_reviews: bigint }>
     >`
-      WITH daily AS (
-        SELECT user_id, DATE(review_time) AS study_date
-        FROM user_review_log
-        GROUP BY user_id, DATE(review_time)
-      ),
-      grouped AS (
-        SELECT
-          user_id,
-          study_date,
-          study_date - (ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY study_date)::int) AS streak_group
-        FROM daily
-      ),
-      streaks AS (
-        SELECT user_id, COUNT(*)::bigint AS streak_len
-        FROM grouped
-        GROUP BY user_id, streak_group
-      ),
-      best AS (
-        SELECT user_id, MAX(streak_len)::bigint AS longest_streak
-        FROM streaks
-        GROUP BY user_id
-      )
-      SELECT b.user_id, u.fullname AS full_name, b.longest_streak
-      FROM best b
-      JOIN useraccount u ON u.id = b.user_id
-      ORDER BY b.longest_streak DESC, u.fullname ASC
+      SELECT r.user_id, u.fullname AS full_name, COUNT(*)::bigint AS weekly_reviews
+      FROM user_review_log r
+      JOIN useraccount u ON u.id = r.user_id
+      WHERE r.review_time >= NOW() - INTERVAL '7 days'
+      GROUP BY r.user_id, u.fullname
+      ORDER BY weekly_reviews DESC, u.fullname ASC
       LIMIT ${limit}
     `;
 
     const kanjiRows = await prisma.$queryRaw<
-      Array<{ user_id: bigint; full_name: string | null; longest_streak: bigint }>
+      Array<{ user_id: bigint; full_name: string | null; weekly_reviews: bigint }>
     >`
-      WITH daily AS (
-        SELECT user_id, DATE(review_time) AS study_date
-        FROM user_kanji_review_log
-        GROUP BY user_id, DATE(review_time)
-      ),
-      grouped AS (
-        SELECT
-          user_id,
-          study_date,
-          study_date - (ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY study_date)::int) AS streak_group
-        FROM daily
-      ),
-      streaks AS (
-        SELECT user_id, COUNT(*)::bigint AS streak_len
-        FROM grouped
-        GROUP BY user_id, streak_group
-      ),
-      best AS (
-        SELECT user_id, MAX(streak_len)::bigint AS longest_streak
-        FROM streaks
-        GROUP BY user_id
-      )
-      SELECT b.user_id, u.fullname AS full_name, b.longest_streak
-      FROM best b
-      JOIN useraccount u ON u.id = b.user_id
-      ORDER BY b.longest_streak DESC, u.fullname ASC
+      SELECT r.user_id, u.fullname AS full_name, COUNT(*)::bigint AS weekly_reviews
+      FROM user_kanji_review_log r
+      JOIN useraccount u ON u.id = r.user_id
+      WHERE r.review_time >= NOW() - INTERVAL '7 days'
+      GROUP BY r.user_id, u.fullname
+      ORDER BY weekly_reviews DESC, u.fullname ASC
       LIMIT ${limit}
     `;
 
@@ -1148,18 +1213,122 @@ export function createLearningRouter() {
         rank: index + 1,
         userId: Number(row.user_id),
         fullName: String(row.full_name || `User ${row.user_id.toString()}`),
-        longestStreak: Number(row.longest_streak || 0n),
+        weeklyReviews: Number(row.weekly_reviews || 0n),
       })),
       kanji: kanjiRows.map((row, index) => ({
         rank: index + 1,
         userId: Number(row.user_id),
         fullName: String(row.full_name || `User ${row.user_id.toString()}`),
-        longestStreak: Number(row.longest_streak || 0n),
+        weeklyReviews: Number(row.weekly_reviews || 0n),
+      })),
+    });
+  });
+
+  router.get('/badges', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+    const userBigId = BigInt(userId);
+
+    const [
+      vocabMastered,
+      kanjiMasteredRows,
+      vocabReviews,
+      kanjiReviewsRows,
+      vocabDayRows,
+      kanjiDayRows,
+      existingUnlocks,
+    ] = await Promise.all([
+      prisma.userVocabProgress.count({ where: { user_id: userBigId, is_mastered: 1 } }),
+      prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*)::bigint AS total FROM user_kanji_progress
+        WHERE user_id = ${userBigId} AND is_mastered = 1
+      `,
+      prisma.userReviewLog.count({ where: { user_id: userBigId } }),
+      prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*)::bigint AS total FROM user_kanji_review_log WHERE user_id = ${userBigId}
+      `,
+      prisma.$queryRaw<Array<{ study_date: Date }>>`
+        SELECT DATE(review_time) AS study_date FROM user_review_log
+        WHERE user_id = ${userBigId} AND review_time >= NOW() - INTERVAL '60 days'
+        GROUP BY DATE(review_time)
+      `,
+      prisma.$queryRaw<Array<{ study_date: Date }>>`
+        SELECT DATE(review_time) AS study_date FROM user_kanji_review_log
+        WHERE user_id = ${userBigId} AND review_time >= NOW() - INTERVAL '60 days'
+        GROUP BY DATE(review_time)
+      `,
+      prisma.userBadgeUnlock.findMany({ where: { user_id: userBigId } }),
+    ]);
+
+    const toDayCounts = (rows: Array<{ study_date: Date }>) =>
+      rows.reduce<Record<string, number>>((acc, row) => {
+        acc[formatLocalDateKey(row.study_date)] = 1;
+        return acc;
+      }, {});
+    const currentStreak = Math.max(
+      calculateCurrentStreakFromDayCounts(toDayCounts(vocabDayRows)),
+      calculateCurrentStreakFromDayCounts(toDayCounts(kanjiDayRows)),
+    );
+    const kanjiMastered = Number(kanjiMasteredRows[0]?.total || 0n);
+    const totalReviews = vocabReviews + Number(kanjiReviewsRows[0]?.total || 0n);
+
+    const currentValueByCategory: Record<BadgeCategory, number> = {
+      streak: currentStreak,
+      vocab_mastery: vocabMastered,
+      kanji_mastery: kanjiMastered,
+      volume: totalReviews,
+    };
+
+    const unlockedKeys = new Set(existingUnlocks.map((u) => u.badge_key));
+    const newlyMet = BADGE_CATALOG.filter(
+      (b) => !unlockedKeys.has(b.key) && currentValueByCategory[b.category] >= b.threshold,
+    );
+
+    if (newlyMet.length > 0) {
+      await prisma.userBadgeUnlock.createMany({
+        data: newlyMet.map((b) => ({ user_id: userBigId, badge_key: b.key })),
+        skipDuplicates: true,
+      });
+    }
+
+    const finalUnlocks =
+      newlyMet.length > 0
+        ? await prisma.userBadgeUnlock.findMany({ where: { user_id: userBigId } })
+        : existingUnlocks;
+    const unlockedMap = new Map(finalUnlocks.map((u) => [u.badge_key, u.unlocked_at]));
+
+    return res.json({
+      badges: BADGE_CATALOG.map((b) => ({
+        key: b.key,
+        category: b.category,
+        threshold: b.threshold,
+        progress: currentValueByCategory[b.category],
+        unlocked: unlockedMap.has(b.key),
+        unlockedAt: unlockedMap.get(b.key) ?? null,
       })),
     });
   });
 
   return router;
+}
+
+function calculateCurrentStreakFromDayCounts(
+  dayCounts: Record<string, number>,
+  today: Date = new Date(),
+): number {
+  let streak = 0;
+  let cursor = dateOnly(today);
+  while (true) {
+    const key = formatLocalDateKey(cursor);
+    if (dayCounts[key] && dayCounts[key] > 0) {
+      streak += 1;
+      cursor = dateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000));
+    } else {
+      break;
+    }
+  }
+  return streak;
 }
 
 function calculateLongestStreakFromKeys(keys: string[]): number {
@@ -1298,6 +1467,30 @@ async function ensureKanjiLearningTables() {
         ON user_kanji_progress(user_id, first_seen_date);
       `);
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS stability DOUBLE PRECISION;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS difficulty DOUBLE PRECISION;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS reps INT NOT NULL DEFAULT 0;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS lapses INT NOT NULL DEFAULT 0;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS state INT NOT NULL DEFAULT 0;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS last_rating INT;
+      `);
+      await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS user_kanji_review_log (
           id BIGSERIAL PRIMARY KEY,
           user_id BIGINT NOT NULL,
@@ -1306,6 +1499,10 @@ async function ensureKanjiLearningTables() {
           result INT NOT NULL,
           mode VARCHAR(20) NOT NULL
         );
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_review_log
+        ADD COLUMN IF NOT EXISTS rating INT;
       `);
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS idx_user_kanji_review_log_user_time

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dateOnly } from '../lib/http';
+import { toFsrsCard, gradeReview, type SrsRating } from '../lib/srs';
 
 type GameMode = 'matrix' | 'falling' | 'flappy' | 'runner';
 type Difficulty = 'easy' | 'normal' | 'hard' | 'expert';
@@ -72,7 +73,6 @@ const ALLOWED_QUESTION_TYPES: QuestionType[] = ['kanji_to_vi', 'vi_to_kanji', 'k
 const ALLOWED_TRACKS: VocabTrack[] = ['core', 'book', 'today'];
 const DEFAULT_BOARD_SIZE = 16;
 const MAX_DECK_SIZE = 36;
-const REVIEW_INTERVALS = [0, 1, 3, 7, 30, 90];
 const XP_BY_MODE: Record<GameMode, number> = {
   matrix: 12,
   falling: 14,
@@ -469,7 +469,7 @@ async function submitGameSession(input: SessionSubmitPayload) {
     }),
   );
 
-  // SRS update: answer đúng tăng stage, sai giảm stage và dời lịch ôn theo REVIEW_INTERVALS.
+  // SRS update: delegates to src/lib/srs.ts (FSRS), same engine the review endpoints use.
   for (const item of input.items) {
     await applyLearningReview({
       userId: input.userId,
@@ -807,11 +807,24 @@ async function applyLearningReview(args: {
     },
   });
 
-  const baseStage = existing?.stage ?? 0;
-  const nextStage = args.correct ? Math.min(baseStage + 1, 5) : Math.max(baseStage - 1, 0);
-  const nextReview = new Date(args.at);
-  nextReview.setDate(nextReview.getDate() + REVIEW_INTERVALS[nextStage]);
   const firstSeen = existing?.first_seen_date || dateOnly(args.at);
+  // Arcade mini-games only ever report a binary right/wrong per question -- map that onto
+  // the closest FSRS ratings rather than inventing Hard/Easy granularity the games have no
+  // UI for. Grading itself is delegated to src/lib/srs.ts, same as the two HTTP endpoints.
+  const rating: SrsRating = args.correct ? 3 : 1; // Good : Again
+  const card = toFsrsCard(
+    {
+      stability: existing?.stability,
+      difficulty: existing?.difficulty,
+      reps: existing?.reps,
+      lapses: existing?.lapses,
+      state: existing?.state,
+      dueAt: existing?.next_review_date,
+      lastReviewedAt: existing?.last_reviewed_at,
+    },
+    args.at,
+  );
+  const graded = gradeReview({ card, rating, now: args.at, previousStage: existing?.stage ?? 0 });
 
   if (!existing) {
     await prisma.userVocabProgress.create({
@@ -819,13 +832,19 @@ async function applyLearningReview(args: {
         user_id: args.userBigId,
         vocab_id: BigInt(args.vocabId),
         plan_id: args.planId,
-        stage: nextStage,
-        next_review_date: nextReview,
-        last_reviewed_at: args.at,
+        stage: graded.legacyStage,
+        next_review_date: graded.fsrs.dueAt,
+        last_reviewed_at: graded.fsrs.lastReviewedAt,
         times_reviewed: 1,
-        last_result: args.correct ? 1 : 0,
-        is_mastered: nextStage >= 5 ? 1 : 0,
+        last_result: graded.legacyResult,
+        is_mastered: graded.legacyIsMastered ? 1 : 0,
         first_seen_date: firstSeen,
+        stability: graded.fsrs.stability,
+        difficulty: graded.fsrs.difficulty,
+        reps: graded.fsrs.reps,
+        lapses: graded.fsrs.lapses,
+        state: graded.fsrs.state,
+        last_rating: graded.lastRating,
       },
     });
   } else {
@@ -833,13 +852,19 @@ async function applyLearningReview(args: {
       where: { id: existing.id },
       data: {
         plan_id: existing.plan_id || args.planId,
-        stage: nextStage,
-        next_review_date: nextReview,
-        last_reviewed_at: args.at,
+        stage: graded.legacyStage,
+        next_review_date: graded.fsrs.dueAt,
+        last_reviewed_at: graded.fsrs.lastReviewedAt,
         times_reviewed: (existing.times_reviewed || 0) + 1,
-        last_result: args.correct ? 1 : 0,
-        is_mastered: nextStage >= 5 ? 1 : existing.is_mastered,
+        last_result: graded.legacyResult,
+        is_mastered: graded.legacyIsMastered ? 1 : existing.is_mastered,
         first_seen_date: firstSeen,
+        stability: graded.fsrs.stability,
+        difficulty: graded.fsrs.difficulty,
+        reps: graded.fsrs.reps,
+        lapses: graded.fsrs.lapses,
+        state: graded.fsrs.state,
+        last_rating: graded.lastRating,
       },
     });
   }
@@ -849,7 +874,8 @@ async function applyLearningReview(args: {
       user_id: args.userBigId,
       vocab_id: BigInt(args.vocabId),
       review_time: args.at,
-      result: args.correct ? 1 : 0,
+      result: graded.legacyResult,
+      rating: graded.lastRating,
       mode: args.mode,
     },
   });

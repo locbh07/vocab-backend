@@ -1,0 +1,15 @@
+ALTER TABLE user_vocab_progress
+  ADD COLUMN IF NOT EXISTS stability DOUBLE PRECISION;
+ALTER TABLE user_vocab_progress
+  ADD COLUMN IF NOT EXISTS difficulty DOUBLE PRECISION;
+ALTER TABLE user_vocab_progress
+  ADD COLUMN IF NOT EXISTS reps INT NOT NULL DEFAULT 0;
+ALTER TABLE user_vocab_progress
+  ADD COLUMN IF NOT EXISTS lapses INT NOT NULL DEFAULT 0;
+ALTER TABLE user_vocab_progress
+  ADD COLUMN IF NOT EXISTS state INT NOT NULL DEFAULT 0;
+ALTER TABLE user_vocab_progress
+  ADD COLUMN IF NOT EXISTS last_rating INT;
+
+ALTER TABLE user_review_log
+  ADD COLUMN IF NOT EXISTS rating INT;

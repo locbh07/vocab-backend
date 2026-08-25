@@ -217,6 +217,16 @@ model UserExamCode {
   @@map("user_exam_code")
 }
 
+model UserBadgeUnlock {
+  id          BigInt   @id @default(autoincrement())
+  user_id     BigInt   @map("user_id")
+  badge_key   String   @map("badge_key") @db.VarChar(50)
+  unlocked_at DateTime @default(now()) @map("unlocked_at")
+
+  @@unique([user_id, badge_key])
+  @@map("user_badge_unlock")
+}
+
 model UserLearningPlan {
   id              BigInt    @id @default(autoincrement())
   user_id         BigInt    @map("user_id")
@@ -246,6 +256,7 @@ model UserReviewLog {
   review_time DateTime @map("review_time")
   result      Int      @map("result")
   mode        String   @map("mode") @db.VarChar(20)
+  rating      Int?
 
   user UserAccount @relation(fields: [user_id], references: [id])
 
@@ -313,6 +324,12 @@ model UserVocabProgress {
   created_at       DateTime  @default(now()) @map("created_at")
   updated_at       DateTime  @default(now()) @map("updated_at")
   first_seen_date  DateTime?
+  stability        Float?
+  difficulty       Float?
+  reps             Int       @default(0)
+  lapses           Int       @default(0)
+  state            Int       @default(0)
+  last_rating      Int?
 
   user       UserAccount       @relation(fields: [user_id], references: [id])
   vocabulary Vocabulary        @relation(fields: [vocab_id], references: [id])
