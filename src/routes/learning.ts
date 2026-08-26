@@ -1333,6 +1333,131 @@ export function createLearningRouter() {
     });
   });
 
+  router.get('/stats-summary', async (req: Request, res: Response) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    await ensureKanjiLearningTables();
+    const userBigId = BigInt(userId);
+
+    const requestedDays = Number(req.query.days);
+    const days = Number.isFinite(requestedDays)
+      ? Math.max(1, Math.min(90, Math.floor(requestedDays)))
+      : 30;
+
+    // Both queries build their own continuous date series for the same window --
+    // vocabTrendRows is used as the canonical, already-ordered x-axis, and kanji counts
+    // are looked up by date key. A day with zero reviews yields total=0/correct=0 here;
+    // the response mapping below turns that into accuracy:null (not 0%) so a line chart
+    // shows a gap instead of a misleading "0% correct" on days nothing happened.
+    const [vocabTrendRows, kanjiTrendRows] = await Promise.all([
+      prisma.$queryRaw<Array<{ study_date: Date; correct: bigint; total: bigint }>>`
+        WITH days AS (
+          SELECT generate_series(
+            CURRENT_DATE - (INTERVAL '1 day' * ${days - 1}),
+            CURRENT_DATE,
+            INTERVAL '1 day'
+          )::date AS day
+        )
+        SELECT
+          days.day AS study_date,
+          COALESCE(SUM(r.result), 0)::bigint AS correct,
+          COUNT(r.id)::bigint AS total
+        FROM days
+        LEFT JOIN user_review_log r
+          ON r.user_id = ${userBigId} AND DATE(r.review_time) = days.day
+        GROUP BY days.day
+        ORDER BY days.day ASC
+      `,
+      prisma.$queryRaw<Array<{ study_date: Date; correct: bigint; total: bigint }>>`
+        WITH days AS (
+          SELECT generate_series(
+            CURRENT_DATE - (INTERVAL '1 day' * ${days - 1}),
+            CURRENT_DATE,
+            INTERVAL '1 day'
+          )::date AS day
+        )
+        SELECT
+          days.day AS study_date,
+          COALESCE(SUM(r.result), 0)::bigint AS correct,
+          COUNT(r.id)::bigint AS total
+        FROM days
+        LEFT JOIN user_kanji_review_log r
+          ON r.user_id = ${userBigId} AND DATE(r.review_time) = days.day
+        GROUP BY days.day
+        ORDER BY days.day ASC
+      `,
+    ]);
+
+    const kanjiByDate = new Map(kanjiTrendRows.map((row) => [formatLocalDateKey(row.study_date), row]));
+
+    const accuracyTrend = vocabTrendRows.map((vocabRow) => {
+      const date = formatLocalDateKey(vocabRow.study_date);
+      const kanjiRow = kanjiByDate.get(date);
+      const vocabTotal = Number(vocabRow.total || 0n);
+      const vocabCorrect = Number(vocabRow.correct || 0n);
+      const kanjiTotal = Number(kanjiRow?.total || 0n);
+      const kanjiCorrect = Number(kanjiRow?.correct || 0n);
+      return {
+        date,
+        vocabTotal,
+        vocabCorrect,
+        vocabAccuracy: vocabTotal > 0 ? Math.round((vocabCorrect * 100) / vocabTotal) : null,
+        kanjiTotal,
+        kanjiCorrect,
+        kanjiAccuracy: kanjiTotal > 0 ? Math.round((kanjiCorrect * 100) / kanjiTotal) : null,
+      };
+    });
+
+    // Default/core scope only -- v1 exposes no scope query params, matching /dashboard's
+    // behavior when called with no params.
+    const vocabWhere = buildVocabularyScopeWhere(buildScopeFromQuery({} as Request['query']));
+
+    const [vocabCatalogTotal, vocabStageRows, kanjiCatalogTotal, kanjiStageRows] = await Promise.all([
+      prisma.vocabulary.count({ where: vocabWhere as any }),
+      prisma.$queryRaw<Array<{ learned: bigint; mastered: bigint; learning: bigint; familiar: bigint }>>`
+        SELECT
+          COUNT(*)::bigint AS learned,
+          COUNT(*) FILTER (WHERE is_mastered = 1)::bigint AS mastered,
+          COUNT(*) FILTER (WHERE is_mastered = 0 AND stage <= 1)::bigint AS learning,
+          COUNT(*) FILTER (WHERE is_mastered = 0 AND stage BETWEEN 2 AND 4)::bigint AS familiar
+        FROM user_vocab_progress
+        WHERE user_id = ${userBigId}
+      `,
+      countKanjiByJlptLevel('ALL'),
+      prisma.$queryRaw<Array<{ learned: bigint; mastered: bigint; learning: bigint; familiar: bigint }>>`
+        SELECT
+          COUNT(*)::bigint AS learned,
+          COUNT(*) FILTER (WHERE is_mastered = 1)::bigint AS mastered,
+          COUNT(*) FILTER (WHERE is_mastered = 0 AND stage <= 1)::bigint AS learning,
+          COUNT(*) FILTER (WHERE is_mastered = 0 AND stage BETWEEN 2 AND 4)::bigint AS familiar
+        FROM user_kanji_progress
+        WHERE user_id = ${userBigId}
+      `,
+    ]);
+
+    const vocabLearned = Number(vocabStageRows[0]?.learned || 0n);
+    const kanjiLearned = Number(kanjiStageRows[0]?.learned || 0n);
+
+    return res.json({
+      days,
+      accuracyTrend,
+      stageDistribution: {
+        vocab: {
+          new: Math.max(vocabCatalogTotal - vocabLearned, 0),
+          learning: Number(vocabStageRows[0]?.learning || 0n),
+          familiar: Number(vocabStageRows[0]?.familiar || 0n),
+          mastered: Number(vocabStageRows[0]?.mastered || 0n),
+        },
+        kanji: {
+          new: Math.max(kanjiCatalogTotal - kanjiLearned, 0),
+          learning: Number(kanjiStageRows[0]?.learning || 0n),
+          familiar: Number(kanjiStageRows[0]?.familiar || 0n),
+          mastered: Number(kanjiStageRows[0]?.mastered || 0n),
+        },
+      },
+    });
+  });
+
   return router;
 }
 
