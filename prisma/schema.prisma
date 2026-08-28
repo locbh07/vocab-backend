@@ -340,6 +340,7 @@ model UserVocabProgress {
   lapses           Int       @default(0)
   state            Int       @default(0)
   last_rating      Int?
+  self_marked_known Boolean  @default(false)
 
   user       UserAccount       @relation(fields: [user_id], references: [id])
   vocabulary Vocabulary        @relation(fields: [vocab_id], references: [id])

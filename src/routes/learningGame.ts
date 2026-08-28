@@ -6,6 +6,7 @@ import { toFsrsCard, gradeReview, type SrsRating } from '../lib/srs';
 import { ensureGameProfile, ensureGameProfileTable } from '../lib/xp';
 import { computeUnifiedStreak } from '../lib/streak';
 import { ensureKanjiLearningTables } from './learning';
+import { requireUser } from '../middleware/userGuard';
 
 type GameMode = 'matrix' | 'falling' | 'flappy' | 'runner';
 type Difficulty = 'easy' | 'normal' | 'hard' | 'expert';
@@ -123,8 +124,8 @@ export function createLearningGameRouter() {
   const router = Router();
 
   router.get('/modes', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
 
     await ensureLearningGameTables();
     const profile = await ensureGameProfile(userId);
@@ -143,8 +144,8 @@ export function createLearningGameRouter() {
   });
 
   router.get('/profile', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
 
     await ensureLearningGameTables();
     await ensureKanjiLearningTables();
@@ -205,15 +206,17 @@ export function createLearningGameRouter() {
   });
 
   router.get('/weak-words', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const limit = Math.max(1, Math.min(Number(req.query.limit || 20), 100));
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
     return res.json({ items: await listWeakWords(userId, limit) });
   });
 
   router.post('/deck', async (req: Request, res: Response) => {
+    const identity = await requireUser(req);
     const payload = validateDeckRequest(req.body);
     if (!payload.ok) return res.status(400).json({ message: payload.message });
+    payload.value.userId = identity.id;
 
     try {
       const deckPayload = await generateDeckPayload(payload.value);
@@ -226,8 +229,10 @@ export function createLearningGameRouter() {
   });
 
   router.post('/session/submit', async (req: Request, res: Response) => {
+    const identity = await requireUser(req);
     const payload = validateSessionSubmitRequest(req.body);
     if (!payload.ok) return res.status(400).json({ message: payload.message });
+    payload.value.userId = identity.id;
 
     const result = await submitGameSession(payload.value);
     return res.json(result);

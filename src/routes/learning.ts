@@ -8,6 +8,7 @@ import { toFsrsCard, gradeReview, buildPreviewResponse, type SrsRating } from '.
 import { BADGE_CATALOG, type BadgeCategory } from '../lib/badges';
 import { computeUnifiedStreak } from '../lib/streak';
 import { awardXp, getXp } from '../lib/xp';
+import { requireUser } from '../middleware/userGuard';
 
 // Flat per-review XP, deliberately not scaled by rating (Again/Hard/Good/Easy) so
 // mis-rating for points isn't incentivized. Sized against the arcade scale: XP_BY_MODE
@@ -155,11 +156,12 @@ export function createLearningRouter() {
   const router = Router();
 
   router.post('/plan', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const targetMonths = Number(req.query.targetMonths);
     const scope = buildScopeFromQuery(req.query);
-    if (!Number.isFinite(userId) || !Number.isFinite(targetMonths) || targetMonths <= 0) {
-      return res.status(400).json({ message: 'Invalid userId or targetMonths' });
+    if (!Number.isFinite(targetMonths) || targetMonths <= 0) {
+      return res.status(400).json({ message: 'Invalid targetMonths' });
     }
 
     if (scope.track === 'book' && !scope.sourceBook) {
@@ -199,16 +201,17 @@ export function createLearningRouter() {
   });
 
   router.get('/activePlan', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     return res.json(await getActivePlan(userId));
   });
 
   router.put('/plan/daily-limit', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const dailyLimit = Number(req.body?.dailyLimit);
-    if (!Number.isFinite(userId) || !Number.isFinite(dailyLimit) || dailyLimit <= 0) {
-      return res.status(400).json({ message: 'Invalid userId or dailyLimit' });
+    if (!Number.isFinite(dailyLimit) || dailyLimit <= 0) {
+      return res.status(400).json({ message: 'Invalid dailyLimit' });
     }
 
     const plan = await getActivePlan(userId);
@@ -223,8 +226,8 @@ export function createLearningRouter() {
   });
 
   router.get('/new-words', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const language = resolveRequestLanguage(req);
     const plan = await getActivePlan(userId);
     if (!plan?.daily_new_words || plan.daily_new_words <= 0) return res.json([]);
@@ -303,8 +306,8 @@ export function createLearningRouter() {
   });
 
   router.get('/reviews', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const language = resolveRequestLanguage(req);
     // Keep date filtering in SQL to match Java logic exactly and avoid timezone shifts.
     const dueRows = await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
@@ -323,8 +326,8 @@ export function createLearningRouter() {
   });
 
   router.get('/today', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const language = resolveRequestLanguage(req);
     const endDate = req.query.endDate ? new Date(String(req.query.endDate)) : dateOnly(new Date());
     const startDate = req.query.startDate
@@ -379,8 +382,8 @@ export function createLearningRouter() {
   });
 
   router.get('/quiz/plan', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const language = resolveRequestLanguage(req);
     const batchSize = 5;
     const learned = await prisma.userVocabProgress.count({ where: { user_id: BigInt(userId) } });
@@ -438,10 +441,11 @@ export function createLearningRouter() {
   });
 
   router.post('/quiz/session/start', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const sessionIndex = Number(req.body?.sessionIndex);
-    if (!Number.isFinite(userId) || !Number.isFinite(sessionIndex)) {
-      return res.status(400).json({ message: 'Invalid userId or sessionIndex' });
+    if (!Number.isFinite(sessionIndex)) {
+      return res.status(400).json({ message: 'Invalid sessionIndex' });
     }
     const language = resolveRequestLanguage(req);
     const batchSize = 5;
@@ -516,12 +520,13 @@ export function createLearningRouter() {
   });
 
   router.post('/review-result', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const vocabId = Number(req.body?.vocabId);
     const rating = Number(req.body?.rating) as SrsRating;
     const mode = String(req.body?.mode || 'review');
-    if (!Number.isFinite(userId) || !Number.isFinite(vocabId) || ![1, 2, 3, 4].includes(rating)) {
-      return res.status(400).json({ message: 'Invalid userId, vocabId, or rating' });
+    if (!Number.isFinite(vocabId) || ![1, 2, 3, 4].includes(rating)) {
+      return res.status(400).json({ message: 'Invalid vocabId or rating' });
     }
 
     const plan = await getActivePlan(userId);
@@ -607,10 +612,11 @@ export function createLearningRouter() {
   });
 
   router.get('/review-preview', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const vocabId = Number(req.query.vocabId);
-    if (!Number.isFinite(userId) || !Number.isFinite(vocabId)) {
-      return res.status(400).json({ message: 'Invalid userId or vocabId' });
+    if (!Number.isFinite(vocabId)) {
+      return res.status(400).json({ message: 'Invalid vocabId' });
     }
     const current = await prisma.userVocabProgress.findUnique({
       where: { user_id_vocab_id: { user_id: BigInt(userId), vocab_id: BigInt(vocabId) } },
@@ -632,11 +638,12 @@ export function createLearningRouter() {
   });
 
   router.post('/kanji/plan', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId ?? req.body?.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const targetMonths = Number(req.query.targetMonths ?? req.body?.targetMonths ?? 6);
     const jlptLevel = normalizeJlptLevel(req.query.jlptLevel ?? req.body?.jlptLevel ?? 'ALL');
-    if (!Number.isFinite(userId) || !Number.isFinite(targetMonths) || targetMonths <= 0) {
-      return res.status(400).json({ message: 'Invalid userId or targetMonths' });
+    if (!Number.isFinite(targetMonths) || targetMonths <= 0) {
+      return res.status(400).json({ message: 'Invalid targetMonths' });
     }
     await ensureKanjiLearningTables();
 
@@ -686,17 +693,18 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/activePlan', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
     return res.json(await getActiveKanjiPlan(userId));
   });
 
   router.put('/kanji/plan/daily-limit', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const dailyLimit = Number(req.body?.dailyLimit);
-    if (!Number.isFinite(userId) || !Number.isFinite(dailyLimit) || dailyLimit <= 0) {
-      return res.status(400).json({ message: 'Invalid userId or dailyLimit' });
+    if (!Number.isFinite(dailyLimit) || dailyLimit <= 0) {
+      return res.status(400).json({ message: 'Invalid dailyLimit' });
     }
 
     await ensureKanjiLearningTables();
@@ -733,8 +741,8 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/new', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
     const plan = await getActiveKanjiPlan(userId);
     if (!plan?.dailyNewKanji || plan.dailyNewKanji <= 0) return res.json([]);
@@ -744,8 +752,8 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/reviews', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
 
     const rows = await listDueKanjiRows(userId);
@@ -753,8 +761,8 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/progress-map', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const chars = String(req.query.chars || '')
       .split(',')
       .map((c) => c.trim())
@@ -786,8 +794,8 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/today', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
 
     const cached = readKanjiTodayCache(userId);
@@ -824,12 +832,13 @@ export function createLearningRouter() {
   });
 
   router.post('/kanji/review-result', async (req: Request, res: Response) => {
-    const userId = Number(req.body?.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const kanji = String(req.body?.kanji || '').trim();
     const rating = Number(req.body?.rating) as SrsRating;
     const mode = String(req.body?.mode || 'review').trim() || 'review';
-    if (!Number.isFinite(userId) || !kanji || ![1, 2, 3, 4].includes(rating)) {
-      return res.status(400).json({ message: 'Invalid userId, kanji, or rating' });
+    if (!kanji || ![1, 2, 3, 4].includes(rating)) {
+      return res.status(400).json({ message: 'Invalid kanji or rating' });
     }
     await ensureKanjiLearningTables();
     const plan = await getActiveKanjiPlan(userId);
@@ -993,10 +1002,11 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/review-preview', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const kanji = String(req.query.kanji || '').trim();
-    if (!Number.isFinite(userId) || !kanji) {
-      return res.status(400).json({ message: 'Invalid userId or kanji' });
+    if (!kanji) {
+      return res.status(400).json({ message: 'Invalid kanji' });
     }
     await ensureKanjiLearningTables();
     const rows = await prisma.$queryRawUnsafe<
@@ -1033,8 +1043,8 @@ export function createLearningRouter() {
   });
 
   router.get('/kanji/dashboard', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
     const userBigId = BigInt(userId);
 
@@ -1118,9 +1128,9 @@ export function createLearningRouter() {
   });
 
   router.get('/dashboard', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
+    const identity = await requireUser(req);
+    const userId = identity.id;
     const scope = buildScopeFromQuery(req.query);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
     const userBigId = BigInt(userId);
 
     const vocabWhere = buildVocabularyScopeWhere(scope);
@@ -1248,8 +1258,8 @@ export function createLearningRouter() {
   });
 
   router.get('/badges', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
     const userBigId = BigInt(userId);
 
@@ -1316,8 +1326,8 @@ export function createLearningRouter() {
   });
 
   router.get('/progress-summary', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
 
     const [streakSummary, xp] = await Promise.all([
@@ -1334,8 +1344,8 @@ export function createLearningRouter() {
   });
 
   router.get('/stats-summary', async (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ message: 'Invalid userId' });
+    const identity = await requireUser(req);
+    const userId = identity.id;
     await ensureKanjiLearningTables();
     const userBigId = BigInt(userId);
 
@@ -1455,6 +1465,121 @@ export function createLearningRouter() {
           mastered: Number(kanjiStageRows[0]?.mastered || 0n),
         },
       },
+    });
+  });
+
+  router.post('/vocab/mark-known', async (req: Request, res: Response) => {
+    const identity = await requireUser(req);
+    const userId = identity.id;
+    const vocabId = Number(req.body?.vocabId);
+    const known = req.body?.known !== false;
+    if (!Number.isInteger(vocabId) || vocabId <= 0) {
+      return res.status(400).json({ message: 'Invalid vocabId' });
+    }
+
+    if (known) {
+      const vocabExists = await prisma.vocabulary.findUnique({ where: { id: BigInt(vocabId) }, select: { id: true } });
+      if (!vocabExists) {
+        return res.status(404).json({ message: 'Vocabulary not found' });
+      }
+      await prisma.userVocabProgress.upsert({
+        where: { user_id_vocab_id: { user_id: BigInt(userId), vocab_id: BigInt(vocabId) } },
+        create: {
+          user_id: BigInt(userId),
+          vocab_id: BigInt(vocabId),
+          stage: 5,
+          is_mastered: 1,
+          self_marked_known: true,
+          first_seen_date: new Date(),
+        },
+        update: {
+          is_mastered: 1,
+          self_marked_known: true,
+          next_review_date: null,
+        },
+      });
+    } else {
+      await prisma.userVocabProgress.updateMany({
+        where: { user_id: BigInt(userId), vocab_id: BigInt(vocabId), self_marked_known: true },
+        data: { is_mastered: 0, self_marked_known: false, next_review_date: new Date() },
+      });
+    }
+
+    return res.json({ vocabId, known });
+  });
+
+  router.post('/kanji/mark-known', async (req: Request, res: Response) => {
+    const identity = await requireUser(req);
+    const userId = identity.id;
+    const kanji = String(req.body?.kanji || '').trim();
+    const known = req.body?.known !== false;
+    const isSingleCjkChar = [...kanji].length === 1 && /^[㐀-鿿\u{20000}-\u{2FFFF}]$/u.test(kanji);
+    if (!isSingleCjkChar) {
+      return res.status(400).json({ message: 'Invalid kanji' });
+    }
+    await ensureKanjiLearningTables();
+
+    if (known) {
+      await prisma.$executeRawUnsafe(
+        `
+          INSERT INTO user_kanji_progress (user_id, kanji_char, stage, is_mastered, self_marked_known, first_seen_date)
+          VALUES ($1, $2, 5, 1, TRUE, NOW())
+          ON CONFLICT (user_id, kanji_char) DO UPDATE
+          SET is_mastered = 1, self_marked_known = TRUE, next_review_date = NULL, updated_at = NOW()
+        `,
+        BigInt(userId),
+        kanji,
+      );
+    } else {
+      await prisma.$executeRawUnsafe(
+        `
+          UPDATE user_kanji_progress
+          SET is_mastered = 0, self_marked_known = FALSE, next_review_date = NOW(), updated_at = NOW()
+          WHERE user_id = $1 AND kanji_char = $2 AND self_marked_known = TRUE
+        `,
+        BigInt(userId),
+        kanji,
+      );
+    }
+
+    return res.json({ kanji, known });
+  });
+
+  router.get('/word-bank', async (req: Request, res: Response) => {
+    const identity = await requireUser(req);
+    const userId = identity.id;
+    await ensureKanjiLearningTables();
+    const language = resolveRequestLanguage(req);
+    const userBigId = BigInt(userId);
+
+    const [vocabRows, kanjiRows] = await Promise.all([
+      prisma.userVocabProgress.findMany({
+        where: { user_id: userBigId, self_marked_known: true },
+        include: { vocabulary: true },
+        orderBy: { updated_at: 'desc' },
+      }),
+      prisma.$queryRaw<Array<{ kanji_char: string; updated_at: Date }>>`
+        SELECT kanji_char, updated_at
+        FROM user_kanji_progress
+        WHERE user_id = ${userBigId} AND self_marked_known = TRUE
+        ORDER BY updated_at DESC
+      `,
+    ]);
+
+    const translatedVocab = await overlayVocabularyTranslations(
+      vocabRows.map((row) => row.vocabulary),
+      language,
+    );
+
+    return res.json({
+      vocab: translatedVocab.map((word: any, idx) => ({
+        ...word,
+        markedAt: vocabRows[idx]?.updated_at ?? null,
+      })),
+      kanji: kanjiRows.map((row) => ({
+        kanji: row.kanji_char,
+        markedAt: row.updated_at,
+      })),
     });
   });
 
@@ -1637,6 +1762,10 @@ export async function ensureKanjiLearningTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE user_kanji_progress
         ADD COLUMN IF NOT EXISTS last_rating INT;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS self_marked_known BOOLEAN NOT NULL DEFAULT FALSE;
       `);
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS user_kanji_review_log (
