@@ -209,23 +209,25 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Không biet thi noi không biet, không du doan qua muc tu dữ liệu.',
 ].join(' ');
 
-async function callLlmForExplanationJson(args: {
-  provider: ExplanationProvider;
+async function callGeminiForExplanation(args: {
   systemInstruction: string;
   prompt: string;
 }): Promise<{ rawContent: string; model: string }> {
-  if (args.provider === 'gemini') {
-    const model = process.env.GEMINI_EXAM_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-    const result = await generateGeminiJson({
-      systemInstruction: args.systemInstruction,
-      prompt: args.prompt,
-      model,
-      temperature: 0.2,
-      timeoutMs: OPENAI_TIMEOUT_MS,
-    });
-    return { rawContent: result.rawText, model: result.model };
-  }
+  const model = process.env.GEMINI_EXAM_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const result = await generateGeminiJson({
+    systemInstruction: args.systemInstruction,
+    prompt: args.prompt,
+    model,
+    temperature: 0.2,
+    timeoutMs: OPENAI_TIMEOUT_MS,
+  });
+  return { rawContent: result.rawText, model: result.model };
+}
 
+async function callOpenAIForExplanation(args: {
+  systemInstruction: string;
+  prompt: string;
+}): Promise<{ rawContent: string; model: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     const err = new Error('OPENAI_API_KEY is not configured') as Error & { status?: number };
@@ -266,6 +268,33 @@ async function callLlmForExplanationJson(args: {
     throw err;
   }
   return { rawContent, model };
+}
+
+async function callLlmForExplanationJson(args: {
+  provider: ExplanationProvider;
+  systemInstruction: string;
+  prompt: string;
+}): Promise<{ rawContent: string; model: string }> {
+  if (args.provider === 'openai') {
+    return callOpenAIForExplanation(args);
+  }
+
+  // Default path is Gemini, with an automatic OpenAI fallback on any failure -- same shape
+  // as speaking.ts's Gemini-then-Groq fallback. Exam-explanation had no fallback at all
+  // before this, so a Gemini quota outage (a real, recurring issue for this project) simply
+  // hung the whole feature with no way to recover short of a manual provider override.
+  try {
+    return await callGeminiForExplanation(args);
+  } catch (geminiCause) {
+    console.error('callLlmForExplanationJson: Gemini call failed, falling back to OpenAI:', geminiCause);
+    if (!process.env.OPENAI_API_KEY) throw geminiCause;
+    try {
+      return await callOpenAIForExplanation(args);
+    } catch (openaiCause) {
+      console.error('callLlmForExplanationJson: OpenAI fallback also failed:', openaiCause);
+      throw openaiCause;
+    }
+  }
 }
 
 export async function generateExamQuestionExplanation(
