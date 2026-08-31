@@ -103,11 +103,12 @@ export function createAuthRouter() {
       }
 
       const authUserId = created.user.id;
+      const passwordhash = await bcrypt.hash(password, 10);
       const { error: insertError, data: inserted } = await admin
         .from('useraccount')
         .insert({
           username,
-          passwordhash: 'supabase',
+          passwordhash,
           fullname: fullName,
           email,
           role: 'USER',
@@ -215,22 +216,45 @@ export function createAuthRouter() {
       }
 
       let session = null;
+      let isMatch = false;
+      // Accounts created before this fix have the literal string 'supabase' stored as their
+      // passwordhash (no real hash was kept), so they must still go through Supabase's own
+      // signInWithPassword - which blocks unconfirmed emails. Accounts created after this fix get
+      // a real bcrypt hash and are checked locally so login no longer depends on email confirmation
+      // (only trial activation still checks emailVerifiedAt, see billing.ts).
+      const hasLocalHash = typeof profile.passwordhash === 'string' && /^\$2[aby]\$/.test(profile.passwordhash);
 
-      if (profile.auth_user_id) {
-        // Account was registered through Supabase Auth (post-migration) - verify via Supabase.
+      if (hasLocalHash) {
+        isMatch = await bcrypt.compare(password, profile.passwordhash);
+        if (isMatch && profile.auth_user_id) {
+          const anon = getSupabaseAnon();
+          const { data: signInData } = await anon.auth
+            .signInWithPassword({ email: profile.email, password })
+            .catch(() => ({ data: null }));
+          session = signInData?.session || null;
+        }
+      } else if (profile.auth_user_id) {
         const anon = getSupabaseAnon();
-        const { data: signInData, error: signInError } = await anon.auth.signInWithPassword({ email: profile.email, password });
-        if (signInError || !signInData?.user) {
-          return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
+        let { data: signInData, error: signInError } = await anon.auth.signInWithPassword({ email: profile.email, password });
+
+        // Accounts created before this fix have no local hash to fall back on, so they still
+        // depend on Supabase's own confirmed-email gate - which silently locks out anyone who
+        // never clicked the confirmation link, even with the correct password. Confirming email
+        // doesn't require knowing the password, so if that's the only thing blocking sign-in,
+        // auto-confirm and retry once instead of leaving the user stuck with no way to know why.
+        if (signInError && isUnconfirmedEmailError(signInError)) {
+          await admin.auth.admin.updateUserById(profile.auth_user_id, { email_confirm: true }).catch(() => {});
+          ({ data: signInData, error: signInError } = await anon.auth.signInWithPassword({ email: profile.email, password }));
         }
-        session = signInData.session;
-      } else {
-        // Legacy account predating the Supabase Auth migration - no linked Supabase identity exists,
-        // so fall back to the local bcrypt hash exactly like the pre-migration login flow did.
-        const isMatch = profile.passwordhash ? await bcrypt.compare(password, profile.passwordhash) : false;
-        if (!isMatch) {
-          return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
+
+        if (!signInError && signInData?.user) {
+          isMatch = true;
+          session = signInData.session;
         }
+      }
+
+      if (!isMatch) {
+        return res.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Sai tài khoản hoặc mật khẩu.' });
       }
 
       return res.json({
@@ -457,6 +481,13 @@ export function createAuthRouter() {
 
 function isSupabaseConfigured() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+function isUnconfirmedEmailError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  if (error.code === 'email_not_confirmed') return true;
+  const message = String(error.message || '').toLowerCase();
+  return message.includes('not confirmed') || message.includes('confirm your email');
 }
 
 function normalizeJlptLevel(value: unknown): string | null {
