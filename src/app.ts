@@ -27,6 +27,7 @@ import { createAdminManualPaymentRouter, createManualPaymentRouter } from './rou
 import { createAdminAiReviewRouter } from './routes/adminAiReview';
 import { createBookRouter } from './routes/books';
 import { createSpeakingRouter } from './routes/speaking';
+import { createSpeakingLiveRouter } from './routes/speakingLive';
 import { jsonSafe } from './lib/jsonSafe';
 import { createSimpleRateLimit } from './middleware/simpleRateLimit';
 import { createApiShield } from './middleware/apiShield';
@@ -257,6 +258,19 @@ app.use('/admin/mailbox', createAdminMailboxRouter());
 app.use('/api/admin/mailbox', createAdminMailboxRouter());
 app.use('/speaking', createSimpleRateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'speaking' }), createSpeakingRouter());
 app.use('/api/speaking', createSimpleRateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'api-speaking' }), createSpeakingRouter());
+// Tighter limit than the general speaking routes above — every call here mints a real,
+// billed OpenAI Realtime session, and the route is already gated to admin/whitelisted users
+// (see speakingLive.ts), so this only needs to guard against a buggy client looping, not abuse.
+app.use(
+  '/speaking/live',
+  createSimpleRateLimit({ windowMs: 60_000, max: 10, keyPrefix: 'speaking-live' }),
+  createSpeakingLiveRouter(),
+);
+app.use(
+  '/api/speaking/live',
+  createSimpleRateLimit({ windowMs: 60_000, max: 10, keyPrefix: 'api-speaking-live' }),
+  createSpeakingLiveRouter(),
+);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = (err as { status?: number })?.status || 500;

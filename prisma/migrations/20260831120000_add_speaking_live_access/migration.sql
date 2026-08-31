@@ -1,0 +1,2 @@
+ALTER TABLE useraccount
+ADD COLUMN IF NOT EXISTS speaking_live_enabled BOOLEAN NOT NULL DEFAULT FALSE;

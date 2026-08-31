@@ -100,6 +100,7 @@ export function createAdminUsersRouter() {
     if (body.email !== undefined) data.email = body.email;
     if (body.role !== undefined) data.role = body.role;
     if (body.examEnabled !== undefined) data.exam_enabled = Boolean(body.examEnabled);
+    if (body.speakingLiveEnabled !== undefined) data.speaking_live_enabled = Boolean(body.speakingLiveEnabled);
     if (body.examCode !== undefined) data.exam_code = body.examCode;
     if (body.plan !== undefined) {
       const plan = normalizeUserPlan(body.plan);
@@ -284,6 +285,7 @@ function sanitizeUser(
   role: string;
   createdat: Date;
   exam_enabled: boolean;
+  speakingLiveEnabled: boolean;
   exam_code: string | null;
   level: string | null;
   googleId: string | null;
@@ -310,6 +312,7 @@ function sanitizeUser(
     role: user.role,
     createdAt: user.createdat,
     examEnabled: user.exam_enabled,
+    speakingLiveEnabled: Boolean(user.speakingLiveEnabled),
     examCode: user.exam_code,
     hasExamCode,
     level: user.level,

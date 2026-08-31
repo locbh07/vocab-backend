@@ -181,6 +181,7 @@ model UserAccount {
   role                  String    @db.VarChar(20)
   createdat             DateTime  @default(now()) @map("createdat")
   exam_enabled          Boolean   @default(false) @map("exam_enabled")
+  speakingLiveEnabled   Boolean   @default(false) @map("speaking_live_enabled")
   exam_code             String?   @map("exam_code")
   level                 String?   @db.VarChar(10)
   googleId              String?   @unique @map("google_id") @db.VarChar(255)

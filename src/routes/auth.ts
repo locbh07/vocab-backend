@@ -116,7 +116,7 @@ export function createAuthRouter() {
           auth_user_id: authUserId,
           level,
         })
-        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at')
+        .select('id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at, speaking_live_enabled')
         .maybeSingle();
 
       if (insertError) {
@@ -156,6 +156,7 @@ export function createAuthRouter() {
               email: inserted.email,
               role: inserted.role,
               examEnabled: inserted.exam_enabled,
+              speakingLiveEnabled: inserted.speaking_live_enabled,
               examCode: inserted.exam_code,
               level: inserted.level,
               googleId: inserted.google_id,
@@ -205,7 +206,7 @@ export function createAuthRouter() {
 
       const admin = getSupabaseAdmin();
       const profileColumns =
-        'id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at, auth_user_id, passwordhash';
+        'id, username, fullname, email, role, exam_enabled, exam_code, level, google_id, plan, premium_valid_until, premium_trial_started_at, email_verified_at, auth_user_id, passwordhash, speaking_live_enabled';
 
       const { data: profile } = identifier.includes('@')
         ? await admin.from('useraccount').select(profileColumns).eq('email', identifier).maybeSingle()
@@ -267,6 +268,7 @@ export function createAuthRouter() {
           email: profile.email,
           role: profile.role,
           examEnabled: profile.exam_enabled,
+          speakingLiveEnabled: profile.speaking_live_enabled,
           examCode: profile.exam_code,
           level: profile.level,
           googleId: profile.google_id,
@@ -541,6 +543,7 @@ function sanitizeUser(user: {
   email: string;
   role: string;
   exam_enabled: boolean;
+  speakingLiveEnabled?: boolean;
   exam_code: string | null;
   level: string | null;
   googleId: string | null;
@@ -557,6 +560,7 @@ function sanitizeUser(user: {
     email: user.email,
     role: user.role,
     examEnabled: user.exam_enabled,
+    speakingLiveEnabled: Boolean(user.speakingLiveEnabled),
     examCode: user.exam_code,
     level: user.level,
     googleId: user.googleId,

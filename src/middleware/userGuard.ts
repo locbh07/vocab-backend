@@ -13,6 +13,7 @@ export type UserIdentity = {
   googleId: string | null;
   emailVerifiedAt: Date | null;
   authUserId: string | null;
+  speakingLiveEnabled: boolean;
 };
 
 export async function requireUser(req: Request): Promise<UserIdentity> {
@@ -39,6 +40,7 @@ export async function requireUser(req: Request): Promise<UserIdentity> {
       googleId: true,
       emailVerifiedAt: true,
       authUserId: true,
+      speakingLiveEnabled: true,
     },
   });
 
@@ -59,5 +61,6 @@ export async function requireUser(req: Request): Promise<UserIdentity> {
     googleId: user.googleId,
     emailVerifiedAt: user.emailVerifiedAt,
     authUserId: user.authUserId,
+    speakingLiveEnabled: user.speakingLiveEnabled,
   };
 }
