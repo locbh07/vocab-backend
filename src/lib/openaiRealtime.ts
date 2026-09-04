@@ -11,7 +11,26 @@
 // pattern points at the mini model's instruction-following/judgment capacity itself, not the
 // prompt wording, so switched to the flagship model (~$0.06-0.11/min) as the next real lever.
 const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
-const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+// Admin-only override list for the setup screen's "advanced" model picker (SpeakingLiveTeacherPage.jsx)
+// — lets an admin A/B the cost/quality tradeoff live without an env var + redeploy. Confirmed real
+// model ids + pricing (per million audio tokens) as of 2026-09: gpt-realtime $32/$64, gpt-realtime-mini
+// $10/$20, gpt-realtime-2.1 $32/$64, gpt-realtime-2.1-mini $10/$20 (mini tier, but with GPT-5-class
+// reasoning — untested here on the correction-script instruction-following bug that ruled out plain
+// gpt-realtime-mini, see the comment above).
+export const ALLOWED_REALTIME_MODELS = [
+  'gpt-realtime',
+  'gpt-realtime-mini',
+  'gpt-realtime-2.1',
+  'gpt-realtime-2.1-mini',
+] as const;
+// 'marin' is OpenAI's newer, female-leaning voice, released alongside 'cedar' (male) as their own
+// recommended-for-best-quality pair — replaces the older 'alloy' default, which read Vietnamese
+// with a noticeably foreign (Japanese-ish) accent since it wasn't tuned for tonal languages. Works
+// with the current REALTIME_MODEL ('gpt-realtime') without needing a model upgrade. Matches the
+// teacher persona (Cô Mai) being female. Not yet verified live for Vietnamese accent quality — OpenAI
+// doesn't publish per-language accent comparisons, so this is the best available default, not a
+// confirmed fix; listen on a real call and swap via OPENAI_REALTIME_VOICE if it's still not natural.
+const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
 
 export type RealtimeClientSecret = {
   value: string;
@@ -23,6 +42,7 @@ export async function mintRealtimeClientSecret(args: {
   instructions: string;
   speed: number;
   userId: number;
+  model?: string;
 }): Promise<RealtimeClientSecret> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -32,6 +52,13 @@ export async function mintRealtimeClientSecret(args: {
   }
 
   const speed = Math.min(1.5, Math.max(0.25, args.speed || 1));
+  // Only an explicitly allow-listed override is honored — anything else (unset, typo, non-admin
+  // tampering with the request body) silently falls back to the env-configured default rather than
+  // forwarding an arbitrary string to OpenAI.
+  const model =
+    args.model && (ALLOWED_REALTIME_MODELS as readonly string[]).includes(args.model)
+      ? args.model
+      : REALTIME_MODEL;
 
   const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
     method: 'POST',
@@ -45,7 +72,7 @@ export async function mintRealtimeClientSecret(args: {
     body: JSON.stringify({
       session: {
         type: 'realtime',
-        model: REALTIME_MODEL,
+        model,
         instructions: args.instructions,
         audio: {
           input: {
@@ -107,5 +134,5 @@ export async function mintRealtimeClientSecret(args: {
     throw err;
   }
 
-  return { value: data.value, expiresAt: data.expires_at || 0, model: REALTIME_MODEL };
+  return { value: data.value, expiresAt: data.expires_at || 0, model };
 }

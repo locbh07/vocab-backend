@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireUser } from '../middleware/userGuard';
-import { mintRealtimeClientSecret } from '../lib/openaiRealtime';
+import { mintRealtimeClientSecret, ALLOWED_REALTIME_MODELS } from '../lib/openaiRealtime';
 
 const TEACHER_NAME = 'Cô Mai';
 
@@ -126,10 +126,21 @@ export function createSpeakingLiveRouter() {
 
     const instructions = buildLiveTeacherInstructions({ level, topicLabel });
 
+    // Model override is an admin-only debug/cost-comparison knob (the setup screen's "advanced"
+    // section is only rendered for ADMIN — see SpeakingLiveTeacherPage.jsx) — re-checked here too so
+    // a non-admin can't just replay the request body to pick a cheaper/untested model for
+    // themselves. mintRealtimeClientSecret independently allow-lists the value regardless.
+    const requestedModel = typeof req.body?.model === 'string' ? req.body.model : undefined;
+    const model =
+      user.role === 'ADMIN' && requestedModel && (ALLOWED_REALTIME_MODELS as readonly string[]).includes(requestedModel)
+        ? requestedModel
+        : undefined;
+
     const secret = await mintRealtimeClientSecret({
       instructions,
       speed: Number.isFinite(speed) ? speed : 1,
       userId: user.id,
+      model,
     });
 
     return res.json({
