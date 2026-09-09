@@ -1,8 +1,26 @@
 import { Router, Request, Response } from 'express';
 import { requireUser } from '../middleware/userGuard';
 import { mintRealtimeClientSecret, ALLOWED_REALTIME_MODELS } from '../lib/openaiRealtime';
+import { mintGeminiLiveToken, ALLOWED_GEMINI_LIVE_MODELS } from '../lib/geminiLive';
 
-const TEACHER_NAME = 'Cô Mai';
+// A teacher is a name and a voice bound together, because that is how a learner experiences it —
+// picking "Cô Linh" should sound like a different person, not just relabel the same voice. Each
+// entry therefore carries a voice for BOTH providers, so switching provider (a cost decision, made
+// elsewhere) never silently changes who the learner thinks they are talking to.
+// Voice ids verified live 2026-09-09: the Gemini names against the Live API (each produces audibly
+// different audio for the same sentence), the OpenAI names by minting a session with each.
+const TEACHERS = {
+  mai: { name: 'Cô Mai', geminiVoice: 'Kore', openaiVoice: 'marin' },
+  linh: { name: 'Cô Linh', geminiVoice: 'Leda', openaiVoice: 'coral' },
+  lan: { name: 'Cô Lan', geminiVoice: 'Aoede', openaiVoice: 'sage' },
+  thu: { name: 'Cô Thu', geminiVoice: 'Zephyr', openaiVoice: 'shimmer' },
+} as const;
+
+export type LiveTeacherId = keyof typeof TEACHERS;
+
+function normalizeTeacher(value: unknown): LiveTeacherId {
+  return typeof value === 'string' && value in TEACHERS ? (value as LiveTeacherId) : 'mai';
+}
 
 // Two orthogonal knobs per level, kept separate on purpose:
 // - guidance: HOW MUCH Vietnamese support / sentence complexity is appropriate for the JAPANESE
@@ -26,31 +44,65 @@ const LEVELS = {
     label: 'Trẻ em',
     guidance: `TRẺ EM mới bắt đầu học tiếng Nhật. Dùng từ vựng cực kỳ đơn giản, câu tiếng Nhật RẤT ngắn (2-4 từ), giọng vui vẻ. Luôn kèm nghĩa tiếng Việt. Không sửa lỗi ngữ pháp phức tạp, chỉ khen ngợi và làm mẫu lại.`,
     metaLanguage: `Dùng 100% TIẾNG VIỆT để khen ngợi, hướng dẫn, hỏi han, chuyển ý — chỉ dùng tiếng Nhật cho đúng câu/từ đang dạy.`,
+    conversationGuidance: `Trẻ em mới học. Câu tiếng Nhật cực ngắn (2-4 từ), từ vựng đơn giản, giọng vui vẻ và nhiều khích lệ. Hỏi những chuyện cụ thể, gần gũi (đồ ăn, con vật, trò chơi), tránh câu hỏi trừu tượng.`,
   },
   basic: {
     label: 'Cơ bản',
     guidance: `CHƯA nói được câu hoàn chỉnh, cần hỗ trợ tiếng Việt nhiều. Câu tiếng Nhật ngắn, đơn giản, luôn kèm nghĩa tiếng Việt.`,
     metaLanguage: `Dùng chủ yếu TIẾNG VIỆT để khen ngợi, hướng dẫn, hỏi han, chuyển ý. Có thể chêm vài từ tiếng Nhật cực ngắn quen thuộc (chào hỏi, khen như "Jouzu desu ne!") nhưng phần nội dung điều phối chính vẫn là tiếng Việt để học viên chắc chắn hiểu.`,
+    conversationGuidance: `Chưa nói được câu dài. Câu tiếng Nhật ngắn, cấu trúc đơn giản, nói chậm rãi. Kiên nhẫn chờ họ tìm từ, đừng vội nói chen vào khi họ đang ngập ngừng.`,
   },
   intermediate: {
     label: 'Trung cấp',
     guidance: `Nói được trong các tình huống quen thuộc. Tốc độ gần tự nhiên, câu dài vừa phải. Chỉ dùng tiếng Việt khi thật sự cần giải thích. PHONG CÁCH SỬA LỖI: ưu tiên "sửa ẩn" (recasting) — với lỗi ngữ pháp nhỏ không cản trở việc hiểu ý, đừng dừng hội thoại lại để bắt nói theo; thay vào đó lồng câu đã sửa một cách tự nhiên vào chính câu trả lời của bạn (để học viên tự nhận ra), rồi tiếp tục hội thoại luôn. Chỉ dùng cách hỏi "thử lại không" (ở nhánh (b)/(c) bên dưới) khi lỗi đủ nghiêm trọng để cản trở việc hiểu ý.`,
     metaLanguage: `Dùng TIẾNG NHẬT là chính để khen ngợi, hướng dẫn, hỏi "thử lại không", chuyển sang ý mới (ví dụ: 「いいですね!」「もう一度言ってみますか?」「じゃあ、今度は…」). Chỉ chuyển sang tiếng Việt khi cần giải thích một điểm ngữ pháp/từ vựng khó, hoặc khi cảm thấy học viên không theo kịp.`,
+    conversationGuidance: `Nói được trong các tình huống quen thuộc. Tốc độ gần tự nhiên, câu dài vừa phải, có thể hỏi sâu hơn một chút về lý do, cảm nghĩ chứ không chỉ hỏi sự việc.`,
   },
   advanced: {
     label: 'Nâng cao',
     guidance: `Nói khá trôi chảy, muốn luyện phản xạ tự nhiên. Hầu như chỉ dùng tiếng Nhật ở tốc độ tự nhiên, câu hỏi sâu hơn. Chỉ chêm tiếng Việt rất ngắn gọn khi thật sự cần. PHONG CÁCH SỬA LỖI: gần như luôn "sửa ẩn" (recasting) — lồng câu đúng một cách tự nhiên vào phản hồi của bạn rồi tiếp tục hội thoại như người bản xứ thật sự trò chuyện, hiếm khi dừng lại giảng giải hay bắt nói theo.`,
     metaLanguage: `Dùng gần như 100% TIẾNG NHẬT cho MỌI lời điều phối — khen ngợi, hỏi "thử lại không", chuyển ý mới — y như hai người Nhật đang trò chuyện thật, không phải giáo viên đang giảng bài. CHỈ chuyển sang tiếng Việt khi chính học viên chủ động hỏi bằng tiếng Việt (ví dụ hỏi nghĩa một từ).`,
+    conversationGuidance: `Khá trôi chảy. Nói ở tốc độ tự nhiên như đang nói với một người Nhật khác, hỏi sâu, được dùng thành ngữ và cách nói đời thường, được phép bất đồng ý kiến hoặc trêu đùa nhẹ như bạn bè thật.`,
   },
 } as const;
 
 export type LiveTeacherLevel = keyof typeof LEVELS;
 
+// Two genuinely different products sharing one voice pipeline, not two tones of the same thing:
+// - 'practice' is a drill. The learner is here to be corrected, so the model runs a fixed
+//   correction protocol and the prompt is deliberately rigid (see buildPracticeInstructions).
+// - 'conversation' is a chat. The learner is here to build fluency, so correction is mostly
+//   suppressed and the model is given principles instead of a script.
+// They were split because one prompt trying to do both is what forced the drill script to be so
+// rigid that it couldn't hold a natural conversation: every turn had to end on a brand-new
+// question, the teacher could never have an opinion, and any Vietnamese from the learner was
+// treated as a vocabulary failure to repair. Those are structural to the drill's job, not bugs —
+// which is exactly why conversation needed its own prompt rather than a softer version of this one.
+export type LiveTeacherMode = 'practice' | 'conversation';
+
 function normalizeLevel(value: unknown): LiveTeacherLevel {
   return typeof value === 'string' && value in LEVELS ? (value as LiveTeacherLevel) : 'basic';
 }
 
-function buildLiveTeacherInstructions(args: { level: LiveTeacherLevel; topicLabel: string }): string {
+function normalizeMode(value: unknown): LiveTeacherMode {
+  return value === 'conversation' ? 'conversation' : 'practice';
+}
+
+function buildLiveTeacherInstructions(args: {
+  level: LiveTeacherLevel;
+  topicLabel: string;
+  mode: LiveTeacherMode;
+  teacherName: string;
+}): string {
+  return args.mode === 'conversation' ? buildConversationInstructions(args) : buildPracticeInstructions(args);
+}
+
+function buildPracticeInstructions(args: {
+  level: LiveTeacherLevel;
+  topicLabel: string;
+  teacherName: string;
+}): string {
+  const TEACHER_NAME = args.teacherName;
   const level = LEVELS[args.level];
   const topic = args.topicLabel.trim() || 'trò chuyện tự do, chủ đề đời sống hàng ngày';
 
@@ -107,6 +159,64 @@ QUY TẮC CÂU MẪU TIẾNG NHẬT (áp dụng ở BƯỚC 2 và lượt đầu
   - ĐÚNG: nói câu tiếng Nhật thật trước — 「日本に行きたいです」— rồi nói nghĩa tiếng Việt như một câu RIÊNG BIỆT ngay sau: "nghĩa là Tôi muốn đi Nhật Bản".`;
 }
 
+// Principles, not a script — the opposite approach to buildPracticeInstructions above, and
+// deliberately so. The drill script is rigid because a small/fast realtime model can't reliably
+// make judgment calls about WHEN to correct; this prompt sidesteps that problem instead of fighting
+// it, by removing almost all correction from the conversation in the first place. That also makes
+// this the EASIER job of the two for a cheap model: chatting is something LLMs do natively, whereas
+// running a branching correction protocol is what gpt-realtime-mini was confirmed to fail at.
+// Roughly half the length of the drill prompt, which also means less context re-processed per turn.
+function buildConversationInstructions(args: {
+  level: LiveTeacherLevel;
+  topicLabel: string;
+  teacherName: string;
+}): string {
+  const TEACHER_NAME = args.teacherName;
+  const level = LEVELS[args.level];
+  const topic = args.topicLabel.trim() || 'chuyện đời sống hàng ngày, không cố định chủ đề';
+
+  return `Bạn là ${TEACHER_NAME}, người Nhật, đã sống ở Việt Nam nhiều năm nên nói tiếng Việt rất tốt. Bạn đang GỌI ĐIỆN THOẠI trò chuyện với một người bạn Việt Nam đang học tiếng Nhật.
+
+Đây là một CUỘC TRÒ CHUYỆN THẬT — không phải giờ kiểm tra, cũng không phải bài luyện tập. Mục tiêu là hai người nói chuyện với nhau cho vui và cho hiểu nhau hơn. Việc học xảy ra tự nhiên trong lúc trò chuyện, KHÔNG phải bằng cách dừng lại sửa từng câu.
+
+NGƯỜI BẠN ĐANG NÓI CHUYỆN: trình độ ${level.label} — ${level.conversationGuidance}
+
+NGÔN NGỮ BẠN DÙNG: ${level.metaLanguage}
+
+MỞ ĐẦU TỪ CHỦ ĐỀ: ${topic}. Nhưng nếu câu chuyện tự nhiên trôi sang hướng khác thì cứ đi theo — đừng kéo ngược về chủ đề ban đầu.
+
+ĐÂY LÀ GIỌNG NÓI THỜI GIAN THỰC: mỗi lượt chỉ 1-2 câu ngắn như nói điện thoại thật, không đọc đoạn văn dài.
+
+LƯỢT ĐẦU TIÊN (chỉ một lần, ngay khi cuộc gọi bắt đầu): chào hỏi tự nhiên như gọi cho người quen, rồi dẫn vào chủ đề bằng một câu hỏi THẬT — hỏi vì bạn muốn biết, không phải để kiểm tra. TUYỆT ĐỐI KHÔNG đưa câu mẫu để họ lặp lại.
+
+BẠN LÀ MỘT CON NGƯỜI CÓ ĐỜI SỐNG RIÊNG
+Bạn không phải cái máy chấm điểm. Bạn có quê quán, món ăn yêu thích, kỷ niệm, quan điểm riêng. Khi được hỏi thì trả lời thật; thấy chuyện thú vị thì tự kể chuyện của mình; ngạc nhiên thì thể hiện ra. Trò chuyện hai chiều nghĩa là bạn cũng chia sẻ về mình, không chỉ đặt câu hỏi.
+
+CÁCH TRÒ CHUYỆN
+1. PHẢN ỨNG TRƯỚC, MỌI THỨ KHÁC TÍNH SAU. Nghe xong, việc đầu tiên luôn là phản ứng với NỘI DUNG họ vừa nói, như một người bạn thật — không phải đánh giá cách họ nói.
+2. ĐÀO SÂU, ĐỪNG NHẢY CHỦ ĐỀ. Khi họ nói điều gì thú vị, hãy hỏi tiếp về CHÍNH điều đó. Lượt nào cũng nhảy sang chủ đề mới là dấu hiệu rõ nhất của một cái máy. Chỉ đổi chủ đề khi mạch chuyện đã cạn tự nhiên.
+3. ĐỘ DÀI THAY ĐỔI. Có lúc chỉ cần "Ồ, thật hả?" hoặc 「へえ、いいですね」. Có lúc kể một câu ngắn về mình. Đừng lượt nào cũng cùng một khuôn mẫu.
+4. KHÔNG PHẢI LƯỢT NÀO CŨNG CẦN KẾT THÚC BẰNG CÂU HỎI. Đôi khi chỉ đáp lại rồi để họ nói tiếp cũng là một lượt tốt.
+
+VỀ VIỆC SỬA LỖI — ĐÂY LÀ ĐIỂM KHÁC BIỆT LỚN NHẤT SO VỚI GIỜ LUYỆN TẬP
+- MẶC ĐỊNH LÀ KHÔNG SỬA. Nếu bạn hiểu được ý họ thì cuộc trò chuyện đã thành công. Người bản xứ nói chuyện với người nước ngoài không dừng lại sửa từng câu.
+- Cách sửa DUY NHẤT nên dùng là "SỬA ẨN": lồng câu đúng vào chính câu trả lời của bạn một cách tự nhiên rồi đi tiếp luôn, không nhắc gì đến chuyện vừa sửa.
+  Ví dụ: họ nói 「私は昨日映画を見ます」→ bạn đáp 「へえ、昨日映画を見たんですね！何の映画ですか？」rồi tiếp tục câu chuyện.
+- CHỈ dừng lại giải thích khi họ CHỦ ĐỘNG hỏi, hoặc khi lỗi khiến bạn thật sự không hiểu nổi ý họ.
+- TUYỆT ĐỐI KHÔNG: bắt lặp lại câu, chấm điểm, khen kiểu "giỏi lắm, câu đó đúng rồi", hay liệt kê lỗi. Những thứ đó thuộc về giờ luyện tập, không thuộc về cuộc trò chuyện này.
+
+VỀ VIỆC DÙNG HAI THỨ TIẾNG
+Cả hai người đều nói được cả tiếng Nhật lẫn tiếng Việt, nên chuyển qua lại giữa hai thứ tiếng là chuyện BÌNH THƯỜNG, không phải lỗi cần chữa.
+- Khi họ chêm tiếng Việt, ĐỪNG mặc định là họ bí từ. Có thể họ đang nhấn mạnh, đang đùa, hay chỉ đang nói cho nhanh. Cứ đáp lại NỘI DUNG một cách bình thường.
+- Chỉ khi họ RÕ RÀNG đang bí (ngập ngừng tìm từ, hỏi "nói sao ta", "tiếng Nhật là gì") thì mới đưa từ/câu tiếng Nhật cho họ — đưa nhẹ nhàng giữa dòng chuyện rồi đi tiếp, đừng biến nó thành bài giảng.
+
+RÀO CHẮN BẮT BUỘC (tự nhiên đến mấy cũng không được vi phạm)
+1. Mọi câu tiếng Nhật bạn nói phải là tiếng Nhật THẬT. TUYỆT ĐỐI không đọc phiên âm romaji thay cho tiếng Nhật, không ghép từ tiếng Việt vào cấu trúc tiếng Nhật (kiểu "Nhật Bản ni ikitai desu").
+2. Nếu câu nghe được KHÔNG khớp ngữ cảnh đang nói (nghe lạc đề hoàn toàn, hoặc khác hẳn điều bạn vừa hỏi) thì gần như chắc chắn bạn nghe nhầm. Hãy hỏi lại ("Xin lỗi, cô nghe chưa rõ" hoặc 「ごめん、もう一回言って？」) rồi CHỜ. TUYỆT ĐỐI không tự đoán ra một ý nghĩa nào đó rồi nói tiếp như thật.
+3. Không bao giờ nói tiếng Trung. Chỉ tiếng Nhật và tiếng Việt.
+4. Không nhắc đến việc bạn là AI hay mô hình ngôn ngữ. Bạn là ${TEACHER_NAME}.`;
+}
+
 export function createSpeakingLiveRouter() {
   const router = Router();
 
@@ -121,18 +231,50 @@ export function createSpeakingLiveRouter() {
     }
 
     const level = normalizeLevel(req.body?.level);
+    const mode = normalizeMode(req.body?.mode);
+    const teacher = TEACHERS[normalizeTeacher(req.body?.teacher)];
     const topicLabel = String(req.body?.topicLabel || '').slice(0, 200);
     const speed = Number(req.body?.speed);
 
-    const instructions = buildLiveTeacherInstructions({ level, topicLabel });
+    const instructions = buildLiveTeacherInstructions({ level, topicLabel, mode, teacherName: teacher.name });
 
-    // Model override is an admin-only debug/cost-comparison knob (the setup screen's "advanced"
-    // section is only rendered for ADMIN — see SpeakingLiveTeacherPage.jsx) — re-checked here too so
-    // a non-admin can't just replay the request body to pick a cheaper/untested model for
-    // themselves. mintRealtimeClientSecret independently allow-lists the value regardless.
+    // Gemini is the default provider as of 2026-09-09 — its protocol path was verified end to end
+    // (token mint, setup message, manual activityStart/activityEnd turn cycle) against both
+    // allow-listed models, and it is the cheaper of the two. OpenAI stays one click away.
+    // Provider + model are still an admin-only knob (the setup screen's "advanced" section renders
+    // for ADMIN only — see SpeakingLiveTeacherPage.jsx), re-checked here so a non-admin can't
+    // replay the request body to select a pricier model for themselves. Non-admins always get the
+    // default provider and that provider's default model.
+    const isAdmin = user.role === 'ADMIN';
+    const requestedProvider = req.body?.provider === 'openai' ? 'openai' : 'gemini';
+    const provider = isAdmin ? requestedProvider : 'gemini';
     const requestedModel = typeof req.body?.model === 'string' ? req.body.model : undefined;
+
+    if (provider === 'gemini') {
+      const model =
+        requestedModel && (ALLOWED_GEMINI_LIVE_MODELS as readonly string[]).includes(requestedModel)
+          ? requestedModel
+          : undefined;
+      const secret = await mintGeminiLiveToken({ model, voice: teacher.geminiVoice });
+      return res.json({
+        provider: 'gemini',
+        mode,
+        clientSecret: secret.value,
+        expiresAt: secret.expiresAt,
+        model: secret.model,
+        // Gemini's voice is chosen in the client's own WebSocket setup message (the ephemeral token
+        // can't pin it — see geminiLive.ts), so it has to travel to the browser rather than being
+        // applied server-side the way OpenAI's voice is.
+        voice: secret.voice,
+        teacherName: teacher.name,
+        // Returned so the frontend can send it as the WebSocket setup message's systemInstruction
+        // — not secret, just the persona prompt (same reasoning as the OpenAI branch below).
+        instructions,
+      });
+    }
+
     const model =
-      user.role === 'ADMIN' && requestedModel && (ALLOWED_REALTIME_MODELS as readonly string[]).includes(requestedModel)
+      isAdmin && requestedModel && (ALLOWED_REALTIME_MODELS as readonly string[]).includes(requestedModel)
         ? requestedModel
         : undefined;
 
@@ -141,13 +283,19 @@ export function createSpeakingLiveRouter() {
       speed: Number.isFinite(speed) ? speed : 1,
       userId: user.id,
       model,
+      voice: teacher.openaiVoice,
     });
 
     return res.json({
+      provider: 'openai',
+      // Echoed back so the client knows which prompt is actually running — the repeat-loop backstop
+      // in SpeakingLiveTeacherPage.jsx is drill-specific and must stay off in conversation mode,
+      // where the teacher quoting Japanese in 「」 is normal speech rather than a repeat request.
+      mode,
       clientSecret: secret.value,
       expiresAt: secret.expiresAt,
       model: secret.model,
-      teacherName: TEACHER_NAME,
+      teacherName: teacher.name,
       // Returned so the frontend can re-send it (with a one-off addendum appended) as a
       // response.create instructions override when it detects the model repeating the same
       // correction target — see SpeakingLiveTeacherPage.jsx. Not secret, just the persona prompt.

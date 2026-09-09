@@ -10,7 +10,17 @@
 // (looping the same repeat-drill forever, then flagging an already-correct repeat as wrong). That
 // pattern points at the mini model's instruction-following/judgment capacity itself, not the
 // prompt wording, so switched to the flagship model (~$0.06-0.11/min) as the next real lever.
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+//
+// Reverted back to plain 'gpt-realtime-mini' on 2026-09-09, on an explicit cost-first call from
+// the product owner after seeing real per-session cost from live testing — knowingly re-accepting
+// the instruction-following risk described above rather than re-attempting another prompt fix
+// (already tried five times and ruled out). 'gpt-realtime-2.1-mini' was briefly the default here
+// instead (same cheapest price tier, newer reasoning, might not repeat the bug) but was rejected
+// in favour of the model whose failure mode is actually KNOWN — an untested model at the same
+// price buys nothing if it fails in some new unmeasured way. If the repeat-loop/false-correction
+// failure resurfaces, bump this default up (or let the admin picker switch to flagship for a
+// session), don't reach for another prompt-wording pass.
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-mini';
 // Admin-only override list for the setup screen's "advanced" model picker (SpeakingLiveTeacherPage.jsx)
 // — lets an admin A/B the cost/quality tradeoff live without an env var + redeploy. Confirmed real
 // model ids + pricing (per million audio tokens) as of 2026-09: gpt-realtime $32/$64, gpt-realtime-mini
@@ -43,6 +53,7 @@ export async function mintRealtimeClientSecret(args: {
   speed: number;
   userId: number;
   model?: string;
+  voice?: string;
 }): Promise<RealtimeClientSecret> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -111,7 +122,10 @@ export async function mintRealtimeClientSecret(args: {
             noise_reduction: { type: 'near_field' },
           },
           output: {
-            voice: REALTIME_VOICE,
+            // Per-teacher now (see TEACHERS in speakingLive.ts) — the env var is only the fallback
+            // for a caller that doesn't name one. All ids in that table were verified live by
+            // minting a session with each on 2026-09-09.
+            voice: args.voice || REALTIME_VOICE,
             speed,
           },
         },

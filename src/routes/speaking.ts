@@ -281,7 +281,16 @@ export function createSpeakingRouter() {
       const text = await transcribeSpeech(audio, languageCode);
       return res.json({ text });
     } catch (cause) {
-      console.error('speech transcription failed:', cause);
+      // Content-Type + size + leading magic bytes are logged because the failure this most often
+      // hides is a container/codec mismatch, not an outage: Google answers a rejected container
+      // with a generic "not a supported encoding" 400 that says nothing about what it actually got.
+      // Without these three fields, diagnosing it means guessing at which browser recorded it.
+      console.error('speech transcription failed:', {
+        contentType: req.headers['content-type'],
+        bytes: audio.length,
+        head: audio.subarray(0, 16).toString('hex'),
+        cause,
+      });
       const status = (cause as { status?: number })?.status;
       const friendly =
         status === 429
