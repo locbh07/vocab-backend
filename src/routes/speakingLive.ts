@@ -252,7 +252,7 @@ export function createSpeakingLiveRouter() {
 
     if (provider === 'gemini') {
       const model =
-        requestedModel && (ALLOWED_GEMINI_LIVE_MODELS as readonly string[]).includes(requestedModel)
+        isAdmin && requestedModel && (ALLOWED_GEMINI_LIVE_MODELS as readonly string[]).includes(requestedModel)
           ? requestedModel
           : undefined;
       const secret = await mintGeminiLiveToken({ model, voice: teacher.geminiVoice });

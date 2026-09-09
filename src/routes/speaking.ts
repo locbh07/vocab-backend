@@ -15,6 +15,8 @@ const DAILY_MESSAGE_LIMIT = 60;
 
 export function createSpeakingRouter() {
   const router = Router();
+  // Coalesce retries from multiple tabs while the same missing recording is generated.
+  const pendingAudio = new Map<number, Promise<{ audioKey: string | null; karaoke: KaraokeChunk[] | null }>>();
 
   router.get('/ai/topics', async (_req: Request, res: Response) => {
     await ensureAiSpeakingTables();
@@ -238,6 +240,44 @@ export function createSpeakingRouter() {
     return res.json({ translation });
   });
 
+  router.post('/ai/messages/:id/audio', async (req: Request, res: Response) => {
+    const user = await requireUser(req);
+    const id = normalizeId(req.params.id);
+    if (!id) return res.status(400).json({ message: 'message id không hợp lệ.' });
+
+    const message = await prisma.aiSpeakingMessage.findFirst({
+      where: { id: BigInt(id), sender: 'AI', session: { is: { userId: BigInt(user.id) } } },
+      include: { session: { include: { topic: true } } },
+    });
+    if (!message?.text) return res.status(404).json({ message: 'Không tìm thấy câu trả lời.' });
+
+    // Existing recordings only need a fresh signed URL. Missing ones can be repaired after
+    // credentials, quota, or storage recover, without creating another conversation turn.
+    if (message.audioKey) return res.json({ message: await toMessageResponse(message) });
+    let pending = pendingAudio.get(id);
+    if (!pending) {
+      pending = (async () => {
+        const result = await synthesizeAndStoreAudio(
+          message.id, message.text!, message.session.voiceName || message.session.topic.voiceName,
+        );
+        if (result.audioKey) {
+          await prisma.aiSpeakingMessage.update({
+            where: { id: message.id },
+            data: { audioKey: result.audioKey, karaoke: result.karaoke ?? undefined },
+          });
+        }
+        return result;
+      })();
+      pendingAudio.set(id, pending);
+      void pending.finally(() => pendingAudio.delete(id)).catch(() => {});
+    }
+    const audio = await pending;
+    if (!audio.audioKey) {
+      return res.status(503).json({ message: 'Chưa tạo được âm thanh lúc này. Bạn có thể bấm Nghe để thử lại.' });
+    }
+    return res.json({ message: await toMessageResponse({ ...message, ...audio }) });
+  });
+
   // Reverse direction of the route above: the learner doesn't know how to say something in
   // Japanese, so they speak/type it in whatever language the site is currently displayed in and
   // this turns it into Japanese *before* it becomes their conversational turn — no session/message
@@ -295,9 +335,11 @@ export function createSpeakingRouter() {
       const friendly =
         status === 429
           ? 'Đang quá tải, vui lòng thử lại sau ít phút.'
-          : 'Không nhận diện được giọng nói lúc này, vui lòng thử lại.';
+          : status === 503
+            ? 'Dịch vụ nhận diện giọng nói chưa sẵn sàng. Vui lòng thử lại sau hoặc chuyển sang gõ chữ.'
+            : 'Dịch vụ nhận diện giọng nói đang gặp lỗi. Vui lòng thử lại hoặc chuyển sang gõ chữ.';
       const error = new Error(friendly) as Error & { status?: number };
-      error.status = status === 429 ? 429 : 502;
+      error.status = status === 429 ? 429 : status === 503 ? 503 : 502;
       throw error;
     }
   });

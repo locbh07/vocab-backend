@@ -1,0 +1,23 @@
+﻿const { test, after } = require('node:test');
+const assert = require('node:assert/strict');
+require('ts-node/register/transpile-only');require('express-async-errors');
+const express=require('express');
+const {prisma}=require('../src/lib/prisma');
+require('../src/middleware/userGuard').requireUser=async()=>({id:7});
+require('../src/lib/japaneseReading').tokenizeJapaneseText=async()=>[{surface_form:'こんにちは'}];
+let synthesized=0,fail=false,updates=0;
+require('../src/lib/googleTts').synthesizeSpeechWithKaraoke=async()=>{synthesized++;if(fail)throw new Error('Unavailable');await new Promise(r=>setTimeout(r,20));return {audio:Buffer.from('test'),contentType:'audio/mpeg',karaoke:[{text:'こんにちは',startTime:0}]}};
+const storage=require('../src/lib/speakingAudioStorage');
+storage.putSpeakingAudio=async()=>{};storage.createSpeakingAudioSignedUrl=async key=>'https://audio.example/'+key;
+let storedKey=null,missing=false;
+prisma.aiSpeakingMessage.findFirst=async args=>{assert.equal(args.where.session.is.userId,7n);assert.equal(args.where.sender,'AI');return missing?null:{id:166n,text:'こんにちは',sender:'AI',audioKey:storedKey,karaoke:null,correction:null,createdAt:new Date(),session:{voiceName:null,topic:{voiceName:null}}}};
+prisma.aiSpeakingMessage.update=async({data})=>{updates++;storedKey=data.audioKey;return data};
+const app=express();app.use(express.json());app.use(require('../src/routes/speaking').createSpeakingRouter());app.use((e,req,res,next)=>res.status(e.status||500).json({message:e.message}));
+const server=app.listen(0,'127.0.0.1');
+after(()=>new Promise(r=>server.close(r)));
+async function post(id='166'){if(!server.listening)await new Promise(r=>server.once('listening',r));return fetch(`http://127.0.0.1:${server.address().port}/ai/messages/${id}/audio`,{method:'POST'})}
+test('repairs missing speech and returns playable URL and timing data',async()=>{const r=await post();assert.equal(r.status,200);const d=await r.json();assert.ok(d.message.audioUrl);assert.equal(d.message.karaoke[0].startTime,0);assert.equal(updates,1)});
+test('refreshing existing audio does not synthesize or update again',async()=>{const calls=synthesized;const r=await post();assert.equal(r.status,200);assert.equal(synthesized,calls);assert.equal(updates,1)});
+test('simultaneous repair requests generate only one audio file',async()=>{storedKey=null;const before=synthesized;const replies=await Promise.all([post(),post()]);assert.ok(replies.every(r=>r.status===200));assert.equal(synthesized,before+1)});
+test('invalid IDs and messages outside the owner scope are rejected',async()=>{assert.equal((await post('bad')).status,400);missing=true;assert.equal((await post()).status,404);missing=false});
+test('unavailable speech can be retried after service recovery',async()=>{storedKey=null;fail=true;const log=console.error;console.error=()=>{};try{assert.equal((await post()).status,503)}finally{console.error=log}fail=false;assert.equal((await post()).status,200)});
