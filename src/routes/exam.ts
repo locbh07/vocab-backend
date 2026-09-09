@@ -12,9 +12,17 @@ import {
 } from '../lib/examExplanation';
 import { describeJlptQuestionType, inferJlptQuestionMeta, JlptQuestionType } from '../lib/jlptQuestionType';
 import { getOrCreateQuestionReadingCache, QuestionReadingCache } from '../lib/examReadingCache';
+import {
+  consumeNonAdminPassageVocabQuota,
+  generatePassageVocab,
+  getCachedPassageVocab,
+  savePassageVocab,
+} from '../lib/examPassageVocab';
+import { toReadingHiragana, toRubyHtml } from '../lib/japaneseReading';
 import { getExamQuestionMeta, upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
 import { hasActivePremium } from '../lib/contentAccess';
 import { requireAdmin } from '../middleware/adminGuard';
+import { buildPracticeCatalog } from '../lib/examPractice';
 
 // Bumped: switched default explanation provider from OpenAI to Gemini (better accuracy in
 // testing, e.g. correct sentence-order fragment reassembly + meanings) and fixed a bug where
@@ -177,6 +185,23 @@ export function createExamRouter() {
       });
     } catch (error) {
       return res.status((error as { status?: number }).status || 403).json({ message: (error as Error).message });
+    }
+  });
+
+  router.get('/practice/:level', async (req: Request, res: Response) => {
+    const level = String(req.params.level).toUpperCase();
+    if (!FREE_EXAM_LEVELS.includes(level)) return res.status(400).json({ message: 'Invalid level' });
+    try {
+      const access = await resolveExamListAccess(Number(req.query.userId), String(req.query.code || ''), level);
+      const allowedIds = access.fullAccess ? null : await getLimitedExamIds(level);
+      const rows = await prisma.jlptExam.findMany({
+        where: { level, ...(allowedIds ? { exam_id: { in: allowedIds } } : {}) },
+        select: { level: true, exam_id: true, part: true, json_data: true },
+        orderBy: [{ exam_id: 'desc' }, { part: 'asc' }],
+      });
+      return res.json({ level, groups: buildPracticeCatalog(rows), fullAccess: access.fullAccess });
+    } catch (error) {
+      return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
     }
   });
 
@@ -688,38 +713,13 @@ export function createExamRouter() {
         return res.status(403).json({ message: 'Only admin can refresh explanation' });
       }
 
-      const contextEntries: Array<{ context: QuestionContext; readingCache: QuestionReadingCache }> = [];
-      for (const questionIndex of questionIndexes) {
-        const context = await loadQuestionContext(body.level, body.examId, part, sectionIndex, questionIndex);
-        const readingCache = await getOrCreateQuestionReadingCache({
-          level: body.level,
-          examId: body.examId,
-          part,
-          sectionIndex,
-          questionIndex,
-          questionText: context.questionText,
-          options: context.options,
-          passageText: context.passageText,
-          questionWordReadings: context.questionWordReadings,
-        });
-        contextEntries.push({ context, readingCache });
-      }
-      const contexts = contextEntries.map((item) => item.context);
-      const passageText = pickPrimaryPassageText(contexts);
-      const blankLabels = contexts.map((item) => item.questionLabel).filter((value) => value.length > 0);
-      const groupHash = createHash('sha256')
-        .update(
-          stableSerialize({
-            level: body.level,
-            examId: body.examId,
-            part,
-            sectionIndex,
-            questionIndexes,
-            passageText,
-            contexts,
-          }),
-        )
-        .digest('hex');
+      const { contexts, passageText, readingSeed, blankLabels, groupHash } = await loadPassageGroup({
+        level: body.level,
+        examId: body.examId,
+        part,
+        sectionIndex,
+        questionIndexes,
+      });
 
       const hasManualExplanation = Object.prototype.hasOwnProperty.call(body, 'manualExplanation');
       if (hasManualExplanation) {
@@ -752,7 +752,7 @@ export function createExamRouter() {
         return res.json({
           source: 'admin-manual',
           promptVersion: EXPLANATION_PROMPT_VERSION,
-          explanation: merged,
+          explanation: await hydratePassageExplanationWithReadingSeed(merged, readingSeed),
           model: 'admin-manual',
         });
       }
@@ -769,7 +769,7 @@ export function createExamRouter() {
           return res.json({
             source: 'cache',
             promptVersion: EXPLANATION_PROMPT_VERSION,
-            explanation: cached.explanation,
+            explanation: await hydratePassageExplanationWithReadingSeed(cached.explanation, readingSeed),
             model: cached.sourceModel,
           });
         }
@@ -796,7 +796,7 @@ export function createExamRouter() {
             return res.json({
               source: 'cache',
               promptVersion: EXPLANATION_PROMPT_VERSION,
-              explanation: cached.explanation,
+              explanation: await hydratePassageExplanationWithReadingSeed(cached.explanation, readingSeed),
               model: cached.sourceModel,
             });
           }
@@ -805,8 +805,6 @@ export function createExamRouter() {
           });
         }
       }
-
-      const readingSeed = buildPassageReadingSeed(contextEntries, passageText);
 
       const generated = await generatePassageExplanation({
         level: body.level,
@@ -842,9 +840,107 @@ export function createExamRouter() {
       return res.json({
         source: 'openai',
         promptVersion: EXPLANATION_PROMPT_VERSION,
-        explanation: generated.explanation,
+        explanation: await hydratePassageExplanationWithReadingSeed(generated.explanation, readingSeed),
         model: generated.model,
       });
+    } catch (error) {
+      return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
+    }
+  });
+
+  // Per-sentence kanji glossary for a reading passage, served separately from the explanation on
+  // purpose: the explanation is usually a cache hit and should render immediately, while a missing
+  // glossary costs a model call. Splitting them keeps opening the modal fast, and lets glossaries
+  // be backfilled behind explanations that were generated before this existed.
+  router.post('/passage-vocab', async (req: Request, res: Response) => {
+    const body = req.body as ExplainPassageRequest;
+    if (
+      !body?.userId ||
+      !body?.level ||
+      !body?.examId ||
+      !Number.isInteger(Number(body.part)) ||
+      !Number.isInteger(Number(body.sectionIndex)) ||
+      !Array.isArray(body.questionIndexes) ||
+      body.questionIndexes.length === 0
+    ) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const part = Number(body.part);
+    const sectionIndex = Number(body.sectionIndex);
+    const forceRefresh = Boolean(body.forceRefresh);
+    const questionIndexes = Array.from(
+      new Set(
+        body.questionIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0),
+      ),
+    ).sort((a, b) => a - b);
+
+    if (![1, 2].includes(part)) {
+      return res.status(400).json({ message: 'Invalid part' });
+    }
+    if (sectionIndex < 0 || questionIndexes.length === 0) {
+      return res.status(400).json({ message: 'Invalid sectionIndex/questionIndexes' });
+    }
+
+    try {
+      await requireExamAccess(body.userId, body.code || '', body.level, body.examId);
+      await ensureQuestionExplanationTable();
+      const user = await prisma.userAccount.findUnique({
+        where: { id: BigInt(body.userId) },
+        select: { role: true },
+      });
+      const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN';
+      if (forceRefresh && !isAdmin) {
+        return res.status(403).json({ message: 'Only admin can refresh vocab' });
+      }
+
+      const { groupHash } = await loadPassageGroup({
+        level: body.level,
+        examId: body.examId,
+        part,
+        sectionIndex,
+        questionIndexes,
+      });
+      const vocabKey = { level: body.level, examId: body.examId, part, sectionIndex, groupHash };
+
+      if (!forceRefresh) {
+        const cached = await getCachedPassageVocab(vocabKey);
+        if (cached) {
+          return res.json({ source: 'cache', vocab: cached });
+        }
+      }
+
+      // The glossary is rendered against the sentence rows the explanation produced, so it is
+      // keyed to that same split. Without an explanation there is nothing to attach it to.
+      const cachedExplanation = await findCachedPassageExplanation({
+        level: body.level,
+        examId: body.examId,
+        part,
+        sectionIndex,
+        groupHash,
+      });
+      const sentences = (cachedExplanation?.explanation.sentence_readings || [])
+        .map((item) => String(item?.sentence_ja || ''))
+        .filter((item) => item.trim().length > 0);
+      if (!sentences.length) {
+        return res.json({ source: 'none', vocab: null });
+      }
+
+      if (!isAdmin) {
+        const canGenerate = await consumeNonAdminPassageVocabQuota({ ...vocabKey, userId: body.userId });
+        if (!canGenerate) {
+          return res.status(429).json({
+            message: 'Ban da dung luot tao bang tu vung cho doan nay. Vui long lien he admin neu can lam moi.',
+          });
+        }
+      }
+
+      const generated = await generatePassageVocab({ level: body.level, sentences });
+      await savePassageVocab({ ...vocabKey, vocab: generated.vocab, sourceModel: generated.model });
+
+      return res.json({ source: 'gemini', vocab: generated.vocab, model: generated.model });
     } catch (error) {
       return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
     }
@@ -2168,6 +2264,51 @@ function pickPrimaryPassageText(contexts: QuestionContext[]): string {
   return byLength[0];
 }
 
+async function loadPassageGroup(args: {
+  level: string;
+  examId: string;
+  part: number;
+  sectionIndex: number;
+  questionIndexes: number[];
+}) {
+  const contextEntries: Array<{ context: QuestionContext; readingCache: QuestionReadingCache }> = [];
+  for (const questionIndex of args.questionIndexes) {
+    const context = await loadQuestionContext(args.level, args.examId, args.part, args.sectionIndex, questionIndex);
+    const readingCache = await getOrCreateQuestionReadingCache({
+      level: args.level,
+      examId: args.examId,
+      part: args.part,
+      sectionIndex: args.sectionIndex,
+      questionIndex,
+      questionText: context.questionText,
+      options: context.options,
+      passageText: context.passageText,
+      questionWordReadings: context.questionWordReadings,
+    });
+    contextEntries.push({ context, readingCache });
+  }
+
+  const contexts = contextEntries.map((item) => item.context);
+  const passageText = pickPrimaryPassageText(contexts);
+  const readingSeed = buildPassageReadingSeed(contextEntries, passageText);
+  const blankLabels = contexts.map((item) => item.questionLabel).filter((value) => value.length > 0);
+  const groupHash = createHash('sha256')
+    .update(
+      stableSerialize({
+        level: args.level,
+        examId: args.examId,
+        part: args.part,
+        sectionIndex: args.sectionIndex,
+        questionIndexes: args.questionIndexes,
+        passageText,
+        contexts,
+      }),
+    )
+    .digest('hex');
+
+  return { contextEntries, contexts, passageText, readingSeed, blankLabels, groupHash };
+}
+
 function buildPassageReadingSeed(
   entries: Array<{ context: QuestionContext; readingCache: QuestionReadingCache }>,
   passageText: string,
@@ -2292,6 +2433,88 @@ function hydrateQuestionExplanationWithReadingCache(
     options_with_reading,
     sentence_order_solution,
   };
+}
+
+// Question explanations keep their furigana in jlpt_exam_reading_cache and get it re-attached on
+// every read (see hydrateQuestionExplanationWithReadingCache), but passage explanations were
+// storing ruby straight into explanation_json - so a tokenizer fix could never reach a passage
+// that had already been generated. This does the same re-attach for passages, letting a
+// dictionary correction land on existing rows without regenerating anything.
+async function hydratePassageExplanationWithReadingSeed(
+  explanation: PassageExplanation,
+  seed: ReturnType<typeof buildPassageReadingSeed>,
+): Promise<PassageExplanation> {
+  const seededSentences = new Map(
+    (seed.sentenceReadings || []).map((item) => [normalizePassageSentenceKey(item.sentence_ja || ''), item]),
+  );
+
+  const sentence_readings = await Promise.all(
+    (Array.isArray(explanation.sentence_readings) ? explanation.sentence_readings : []).map(async (item) => {
+      const sentenceJa = String(item?.sentence_ja || '');
+      const seeded = seededSentences.get(normalizePassageSentenceKey(sentenceJa));
+      if (seeded) {
+        return {
+          ...item,
+          sentence_ruby_html: seeded.sentence_ruby_html || item.sentence_ruby_html || '',
+          reading_hira: seeded.reading_hira || item.reading_hira || '',
+        };
+      }
+      // The model sometimes splits or merges sentences differently from the tokenizer, so a few
+      // rows have no seeded match. Re-derive those instead of leaving stale ruby behind.
+      if (!sentenceJa) return item;
+      return {
+        ...item,
+        sentence_ruby_html: await toRubyHtml(sentenceJa),
+        reading_hira: await toReadingHiragana(sentenceJa),
+      };
+    }),
+  );
+
+  const questions = await Promise.all(
+    (Array.isArray(explanation.questions) ? explanation.questions : []).map(async (question) => {
+      const label = String(question?.question_label || '');
+      const optionRubyHtmls = seed.questionOptionRubyHtmls[label] || {};
+      const optionReadings = seed.questionOptionReadings[label] || {};
+      const sentenceWithAnswer = String(question?.sentence_with_answer || '');
+
+      const option_details = (Array.isArray(question.option_details) ? question.option_details : []).map((option) => {
+        const key = String(option?.option || '');
+        return {
+          ...option,
+          text_ruby_html: optionRubyHtmls[key] || option.text_ruby_html || '',
+          reading_hira: optionReadings[key] || option.reading_hira || '',
+        };
+      });
+
+      return {
+        ...question,
+        sentence_with_blank_ruby_html:
+          seed.questionBlankRubyHtmls[label] || question.sentence_with_blank_ruby_html || '',
+        sentence_with_blank_reading_hira:
+          seed.questionBlankReadings[label] || question.sentence_with_blank_reading_hira || '',
+        // The answer-filled sentence is not part of the reading seed, so it is derived here.
+        sentence_with_answer_ruby_html: sentenceWithAnswer
+          ? await toRubyHtml(sentenceWithAnswer)
+          : question.sentence_with_answer_ruby_html || '',
+        sentence_with_answer_reading_hira: sentenceWithAnswer
+          ? await toReadingHiragana(sentenceWithAnswer)
+          : question.sentence_with_answer_reading_hira || '',
+        option_details,
+      };
+    }),
+  );
+
+  return {
+    ...explanation,
+    passage_ruby_html: seed.passageRubyHtml || explanation.passage_ruby_html || '',
+    passage_reading_hira: seed.passageReadingHira || explanation.passage_reading_hira || '',
+    sentence_readings,
+    questions,
+  };
+}
+
+function normalizePassageSentenceKey(input: string): string {
+  return String(input || '').replace(/\s+/g, '').trim();
 }
 
 function parseQuestionExplanationPatch(value: unknown): Partial<ExamQuestionExplanation> {

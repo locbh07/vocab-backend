@@ -1,5 +1,5 @@
 import { prisma } from './prisma';
-import { toReadingHiragana, toRubyHtml } from './japaneseReading';
+import { READING_ENGINE_VERSION, toReadingHiragana, toRubyHtml } from './japaneseReading';
 
 export type ReadingSentence = {
   sentence_ja: string;
@@ -18,6 +18,9 @@ export type QuestionReadingCache = {
   passage_ruby_html: string;
   passage_reading_hira: string;
   sentence_readings: ReadingSentence[];
+  // Version of the tokenizer's dictionary-fix table this row was built with. Rows built by an
+  // older version are rebuilt on read - see isCacheReusable.
+  reading_engine_version: number;
 };
 
 type CacheKey = {
@@ -319,6 +322,7 @@ async function buildQuestionReadingCache(args: {
     passage_ruby_html,
     passage_reading_hira,
     sentence_readings,
+    reading_engine_version: READING_ENGINE_VERSION,
   };
 }
 
@@ -403,7 +407,15 @@ function normalizeReadingCache(value: unknown): QuestionReadingCache {
     passage_ruby_html: toText((row as Record<string, unknown>).passage_ruby_html) || '',
     passage_reading_hira: toText((row as Record<string, unknown>).passage_reading_hira) || '',
     sentence_readings,
+    // Rows written before this field existed read back as 0, which is never the current
+    // version, so they rebuild on first access.
+    reading_engine_version: parseVersion((row as Record<string, unknown>).reading_engine_version),
   };
+}
+
+function parseVersion(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 
 function isCacheReusable(
@@ -411,6 +423,10 @@ function isCacheReusable(
   args: Pick<GetOrCreateArgs, 'questionText' | 'options' | 'passageText'>,
   resolvedQuestionWordReadings: Record<string, string>,
 ): boolean {
+  // A row built before the current dictionary-fix table has stale furigana (e.g. 日本 as
+  // ニッポン). Rebuilding only re-runs kuromoji, so invalidating here is free and never touches
+  // a generated explanation.
+  if (Number(cached.reading_engine_version || 0) !== READING_ENGINE_VERSION) return false;
   if (cached.question_text_ja !== String(args.questionText || '')) return false;
   if (cached.passage_text !== String(args.passageText || '')) return false;
   const cachedOverrides = normalizeSurfaceReadingMap(cached.question_word_readings);

@@ -24,6 +24,31 @@ type ReadingConvertOptions = {
 
 let tokenizerPromise: Promise<KuromojiTokenizer> | null = null;
 
+// kuromoji ships IPADIC, whose canonical reading for a handful of very common surfaces is not
+// the one used in ordinary modern Japanese - 日本 is listed as ニッポン, so every JLPT text that
+// mentions Japan came out with the wrong furigana. These are dictionary defects rather than
+// context-dependent choices, so they are corrected for every caller here instead of being
+// patched per question in examReadingCache.
+//
+// Keys must be surfaces kuromoji emits as a SINGLE token: a key like 一人 never matches,
+// because the tokenizer splits it into 一 + 人. Multi-token surfaces need phrase-level
+// matching, which this map deliberately does not attempt.
+const DICTIONARY_READING_FIXES: Record<string, string> = {
+  日本: 'にほん',
+  日本人: 'にほんじん',
+  日本一: 'にほんいち',
+  東日本: 'ひがしにほん',
+  // Judgement calls: the other reading exists (たいせい / みょうごにち) but is rare enough in
+  // JLPT material that forcing the common one is a net win.
+  大勢: 'おおぜい',
+  明後日: 'あさって',
+};
+
+// Bump whenever DICTIONARY_READING_FIXES changes. jlpt_exam_reading_cache stores this value and
+// rebuilds any row that predates the current version - a rebuild only re-runs the tokenizer, so
+// it costs nothing beyond CPU and never re-generates an explanation.
+export const READING_ENGINE_VERSION = 2;
+
 export async function toReadingHiragana(text: string, options?: ReadingConvertOptions): Promise<string> {
   const normalized = String(text || '');
   if (!normalized.trim()) return '';
@@ -117,12 +142,14 @@ function escapeHtml(input: string) {
 }
 
 function normalizeSurfaceReadings(value: Record<string, string> | undefined): Record<string, string> {
-  if (!value || typeof value !== 'object') return {};
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = { ...DICTIONARY_READING_FIXES };
+  if (!value || typeof value !== 'object') return out;
   for (const [surface, reading] of Object.entries(value)) {
     const s = String(surface || '').trim();
     const r = String(reading || '').trim();
     if (!s || !r) continue;
+    // Caller-supplied overrides (manual reading_overrides, per-question inference) win over the
+    // dictionary fixes, so a question that really does need ニッポン can still say so.
     out[s] = r;
   }
   return out;

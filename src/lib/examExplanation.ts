@@ -20,6 +20,10 @@ type OptionAnalysis = {
   meaning_vi: string;
   verdict: 'correct' | 'wrong';
   reason_vi: string;
+  // For 用法 and kanji questions: what the wrong option would actually have to be. Telling a
+  // learner that 方針 is wrong in "台風の方針" is half an answer; the useful half is 進路.
+  // Empty for question types where "the correct version of this option" is not a meaningful idea.
+  corrected_ja?: string;
 };
 
 type GrammarPoint = {
@@ -365,6 +369,17 @@ export async function generatePassageExplanation(
 function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: PrecomputedReadings) {
   const isSentenceOrder = payload.questionType === 'sentence_order';
   const isReadingContent = payload.questionType === 'reading_content';
+  // Kanji reading/writing questions are decided by sound alone, so the explanation that helps is a
+  // demonstration of the reading rule - not a five-step procedure that reads the same every time.
+  const isKanjiSoundQuestion =
+    payload.questionType === 'vocab_kanji_reading' || payload.questionType === 'vocab_kanji_writing';
+  // Types where "the wrong option would be correct if the sentence used X instead" is meaningful.
+  const wantsCorrectedForm =
+    isKanjiSoundQuestion ||
+    payload.questionType === 'vocab_usage' ||
+    payload.questionType === 'vocab_context' ||
+    payload.questionType === 'vocab_paraphrase' ||
+    payload.questionType === 'vocab_word_formation';
   const optionsText = Object.entries(payload.options)
     .map(([key, text]) => `${key}. ${text}`)
     .join('\n');
@@ -402,11 +417,11 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
     'Bat buoc thuc hien:',
     '1) Cho cau tieng Nhat goc va cach doc hiragana cua cau.',
     '2) Doi voi moi đáp án, cho text tieng Nhat + cach doc + nghia Viet.',
-    '3) Liet ke tu kho (kanji) trong cau va giai thich vi sao quan trong.',
+    '3) Liet ke MOI tu co kanji trong cau (không chi rieng tu kho), kem cach doc va nghia Viet.',
+
     isSentenceOrder
       ? '4) Day la dang ghep cau: KHONG co lựa chọn nao "sai" ve noi dung - ca 4 manh deu duoc dùng trong cau hoan chỉnh, chỉ khac vi tri. Trong option_analysis, verdict="correct" CHỈ danh cho đúng 1 manh nam o vi tri ★, cac manh con lai verdict="wrong" nhung dieu do CHỈ co nghia "khong nam o vi tri ★", KHONG PHAI manh do sai/khong hop ly/khong phu hop ngu canh. reason_vi cho MOI lựa chọn (ke ca verdict wrong) BAT BUOC mo ta dung vai tro hoac y nghia cua manh do trong cau hoan chỉnh; TUYET DOI KHONG duoc viet reason_vi kieu "khong phu hop voi ngu canh" hay "sai" cho cac manh khong o vi tri ★.'
       : '4) Phan tich dung/sai tung đáp án, neu nguoi hoc de bi nham thi noi ro bay.',
-    `5) Viet chiến lược lam bai theo loai câu hỏi nay: ${payload.typeStrategyVi || partSpecificInstruction(payload.part)}`,
     '6) Kiem tra tinh nhat quan: đáp án danh dau correct phai trung đáp án dung de bai.',
     '7) Uu tien dung cach doc tokenizer da cho; neu không phu hop moi tu dieu chinh rat ngan gon.',
     '8) Neu la cau điền chỗ trống, phai dua tren câu chứa o trong va mach van ban, không được dich ro ro tung lựa chọn mot cach may moc.',
@@ -415,6 +430,15 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
       : '9) Neu không phai dang sap xep, de null cho sentence_order_solution.',
     '10) Mỗi reason_vi phải bám đúng chính lựa chọn đang phân tích; không duoc dùng 1 ly do mau cho nhieu dap an.',
     '11) Khong gan ep ly do theo chu de "cong viec" neu cau lua chon do khong co ngu canh cong viec.',
+    isKanjiSoundQuestion
+      ? '12) reasoning_steps_vi: de MANG RONG. Dang câu hỏi nay quyet dinh bang am doc, cac buoc kieu "xac dinh - nho lai - doi chieu - loai tru" lap lai y het nhau o moi cau nen không co gia tri.'
+      : '12) reasoning_steps_vi: CHI dien khi câu hỏi that su can suy luan nhieu buoc (ngu phap, doc hieu, suy luan ngu canh) va moi buoc phai noi dieu rieng cua CHINH cau nay. Neu chi la thao tac chung chung thi de mang rong.',
+    wantsCorrectedForm
+      ? '13) corrected_ja: voi MOI đáp án SAI, cho biet dang dung tuong ung. Dang chon cach doc/cach viet: ghi tu that su co cach doc do (vi du "そうごう" thuc ra la tu 総合). Dang cach dung/ngu canh: viet lai ca cau cho dung (vi du "台風の方針" -> "台風の進路"). Neu that su không co dang dung tuong ung thi de chuoi rong.'
+      : '13) corrected_ja: de chuoi rong cho tat ca đáp án.',
+    isKanjiSoundQuestion
+      ? '14) Voi tung kanji trong tu duoc hoi: cho am Han-Viet, va CHUNG MINH cach doc bang it nhat 2 tu ghep khac cung dung kanji do (vi du 要 doc よう trong 重要, 必要). BAT BUOC: moi tu ghep dan ra PHAI THUC SU chua dung kanji dang noi - kiem tra lai truoc khi viet, không được dan tu không chua kanji do. Neu co tu dong am khac kanji de nham thi phai canh bao ro (vi du やぶれる: 敗れる thua vs 破れる rach).'
+      : '',
     '',
     'Trả về JSON dung cac key sau, không them key khac:',
     '{',
@@ -431,21 +455,18 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
     '  "key_point_vi": "string",',
     '  "reasoning_steps_vi": ["string"],',
     '  "option_analysis": [',
-    '    { "option": "1|2|3|4", "meaning_vi": "string", "verdict": "correct|wrong", "reason_vi": "string" }',
+    '    { "option": "1|2|3|4", "meaning_vi": "string", "verdict": "correct|wrong", "reason_vi": "string", "corrected_ja": "string" }',
     '  ],',
     '  "options_with_reading": [',
     '    { "option": "1|2|3|4", "text_ja": "string", "reading_hira": "string", "meaning_vi": "string" }',
     '  ],',
     '  "key_vocab": [',
-    '    { "surface": "string", "reading_hira": "string", "meaning_vi": "string", "why_important": "string" }',
+    '    { "surface": "string", "reading_hira": "string", "meaning_vi": "string" }',
     '  ],',
     '  "grammar_points": [',
     '    { "point": "string", "note_vi": "string" }',
     '  ],',
-    '  "trap_patterns_vi": ["string"],',
-    '  "part_strategy_vi": "string",',
-    '  "quick_tip_vi": "string",',
-    '  "final_conclusion_vi": "string"',
+    '  "trap_patterns_vi": ["string"]',
     '}',
   ].join('\n');
 }
@@ -601,6 +622,7 @@ function normalizeExplanation(
       meaning_vi: text(item.meaning_vi) || '',
       verdict,
       reason_vi: text(item.reason_vi) || '',
+      corrected_ja: text(item.corrected_ja) || '',
     });
   }
 
@@ -611,6 +633,7 @@ function normalizeExplanation(
         meaning_vi: '',
         verdict: option === payload.correctAnswer ? 'correct' : 'wrong',
         reason_vi: '',
+        corrected_ja: '',
       });
     }
   }
@@ -633,9 +656,19 @@ function normalizeExplanation(
         item.option === payload.correctAnswer
           ? `Mảnh "${label}" đứng ở vị trí ★ theo đáp án của đề.`
           : `Mảnh "${label}" vẫn được dùng trong câu hoàn chỉnh, nhưng ở một vị trí khác, không phải vị trí ★.`;
+      item.corrected_ja = '';
     }
   }
   const alignedOptionAnalysis = alignExamOptionReasonsWithOptionContext(optionAnalysis, payload);
+
+  // Asking the model to leave reasoning_steps_vi empty for kanji reading/writing questions was not
+  // enough - it kept returning the same "identify - recall - compare - eliminate" procedure, which
+  // is identical on every such question and pushes the actual answer further down the page. These
+  // questions are settled by the reading itself, which option_analysis already explains.
+  const reasoningSteps =
+    payload.questionType === 'vocab_kanji_reading' || payload.questionType === 'vocab_kanji_writing'
+      ? []
+      : asStringArray(value.reasoning_steps_vi);
 
   const questionJaFallback = payload.questionWithBlank || payload.questionText || '';
   const forceOriginalQuestionText =
@@ -653,7 +686,7 @@ function normalizeExplanation(
     question_translation_vi: text(value.question_translation_vi) || '',
     sentence_order_solution: asSentenceOrderSolution(value.sentence_order_solution, payload),
     key_point_vi: text(value.key_point_vi) || '',
-    reasoning_steps_vi: asStringArray(value.reasoning_steps_vi),
+    reasoning_steps_vi: reasoningSteps,
     option_analysis: alignedOptionAnalysis,
     options_with_reading: asOptionWithReading(
       value.options_with_reading,
@@ -665,6 +698,9 @@ function normalizeExplanation(
     grammar_points: asGrammarPoints(value.grammar_points),
     trap_patterns_vi: asStringArray(value.trap_patterns_vi),
     part_strategy_vi: text(value.part_strategy_vi) || payload.typeStrategyVi || '',
+    // The prompt no longer asks for this: the tip it produced was generic study advice that read
+    // the same on every question. The field stays so explanations cached before this change keep
+    // rendering theirs - new ones simply come back empty and the UI hides the section.
     quick_tip_vi: text(value.quick_tip_vi) || '',
     final_conclusion_vi: alignedFinalConclusion,
   };
