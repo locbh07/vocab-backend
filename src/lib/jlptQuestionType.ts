@@ -1,3 +1,5 @@
+import { practiceMondaiNumber } from './examPractice';
+
 export type JlptQuestionType =
   | 'vocab_kanji_reading'
   | 'vocab_kanji_writing'
@@ -107,15 +109,21 @@ export function inferJlptQuestionMeta(input: InferInput): JlptQuestionMeta {
 
   let questionType: JlptQuestionType = 'unknown';
 
-  if (containsStar(section) || containsStar(question)) {
-    questionType = 'sentence_order';
-  } else if (input.part === 3 || hasAny(section, ['聴解', '聞く', '音声', '会話'])) {
+  if (input.part === 3) {
     questionType = 'listening';
+  } else if (containsStar(section) || containsStar(question)) {
+    questionType = 'sentence_order';
   } else {
     const heuristic = inferByHeuristic(input, section, question);
     questionType = inferByN2Mondai({ level, mondaiNumber, fallback: heuristic });
     if (questionType === heuristic) {
       questionType = inferByN1Mondai({ level, mondaiNumber, fallback: heuristic });
+    }
+    if (['N3', 'N4', 'N5'].includes(level) && mondaiNumber) {
+      const types: JlptQuestionType[] = input.part === 1
+        ? ['vocab_kanji_reading', 'vocab_kanji_writing', 'vocab_context', 'vocab_paraphrase', 'vocab_usage']
+        : ['grammar_choice', 'sentence_order', 'reading_cloze', 'reading_content', 'reading_content', 'reading_content', 'reading_content'];
+      questionType = types[mondaiNumber - 1] || heuristic;
     }
   }
 
@@ -185,16 +193,13 @@ function inferByHeuristic(
   question: string,
 ): JlptQuestionType {
   if (input.isClozeQuestion && input.hasPassage) return 'reading_cloze';
-  if (input.hasPassage || hasAny(section, ['読んで', '文章', '本文'])) return 'reading_content';
+  if (hasAny(section, ['文章全体', '文章ぜんたい'])) return 'reading_cloze';
   if (hasAny(section, ['読み方', '読む']) || hasAny(question, ['読み方'])) return 'vocab_kanji_reading';
-  if (hasAny(section, ['文法', '表現', '使い方'])) return 'grammar_choice';
-  if (hasAny(section, ['意味', '近い', '言葉'])) return 'vocab_paraphrase';
-
-  const avgLength =
-    input.optionTexts.length > 0
-      ? input.optionTexts.reduce((sum, item) => sum + String(item || '').trim().length, 0) / input.optionTexts.length
-      : 0;
-  if (avgLength > 0 && avgLength <= 8 && input.optionTexts.length >= 3) return 'sentence_order';
+  if (hasAny(section, ['漢字', 'かんじ', '書き方'])) return 'vocab_kanji_writing';
+  if (hasAny(section, ['使い方', 'つかいかた'])) return 'vocab_usage';
+  if (hasAny(section, ['近い', 'ちかい'])) return 'vocab_paraphrase';
+  if (input.hasPassage || hasAny(section, ['読んで', '文章', '本文'])) return 'reading_content';
+  if (hasAny(section, ['文法', '表現'])) return 'grammar_choice';
 
   return input.part === 3 ? 'listening' : 'unknown';
 }
@@ -217,13 +222,6 @@ function detectMondaiNumber(input: {
   });
   if (fromSectionPattern) return fromSectionPattern;
 
-  const fromQuestionRange = inferMondaiFromQuestionRange({
-    level: input.level,
-    part: input.part,
-    questionLabel: input.questionLabel,
-  });
-  if (fromQuestionRange) return fromQuestionRange;
-
   const fromQuestionText = parseMondaiFromTitle(toAsciiDigits(String(input.questionText || '')));
   if (fromQuestionText) return fromQuestionText;
 
@@ -231,10 +229,7 @@ function detectMondaiNumber(input: {
 }
 
 function parseMondaiFromTitle(sectionTitle: string): number | null {
-  const match = sectionTitle.match(/問題\s*([0-9]+)/);
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
+  return practiceMondaiNumber(sectionTitle);
 }
 
 function inferMondaiFromSectionPattern(args: {
@@ -261,62 +256,6 @@ function inferMondaiFromSectionPattern(args: {
   if (sectionTitle.includes('★に入る')) return 8;
   if (sectionTitle.includes('次の文の（　）')) return 7;
   return null;
-}
-
-function inferMondaiFromQuestionRange(input: { level: string; part: number; questionLabel: string }): number | null {
-  const level = String(input.level || '').toUpperCase();
-  const n = parseQuestionNumber(input.questionLabel);
-  if (n === null) return null;
-
-  if (level === 'N2') {
-    if (input.part === 1) {
-      if (n >= 1 && n <= 5) return 1;
-      if (n >= 6 && n <= 10) return 2;
-      if (n >= 11 && n <= 13) return 3;
-      if (n >= 14 && n <= 20) return 4;
-      if (n >= 21 && n <= 25) return 5;
-      if (n >= 26 && n <= 30) return 6;
-    }
-    if (input.part === 2) {
-      if (n >= 31 && n <= 42) return 7;
-      if (n >= 43 && n <= 47) return 8;
-      if (n >= 48 && n <= 51) return 9;
-      if (n >= 52 && n <= 56) return 10;
-      if (n >= 57 && n <= 64) return 11;
-      if (n >= 65 && n <= 66) return 12;
-      if (n >= 67 && n <= 69) return 13;
-      if (n >= 70 && n <= 71) return 14;
-    }
-  }
-
-  if (level === 'N1') {
-    if (input.part === 1) {
-      if (n >= 1 && n <= 6) return 1;
-      if (n >= 7 && n <= 13) return 2;
-      if (n >= 14 && n <= 19) return 3;
-      if (n >= 20 && n <= 25) return 4;
-    }
-    if (input.part === 2) {
-      if (n >= 26 && n <= 35) return 5;
-      if (n >= 36 && n <= 40) return 6;
-      if (n >= 41 && n <= 44) return 7;
-      if (n >= 45 && n <= 48) return 8;
-      if (n >= 49 && n <= 56) return 9;
-      if (n >= 57 && n <= 59) return 10;
-      if (n >= 60 && n <= 61) return 11;
-      if (n >= 62 && n <= 64) return 12;
-      if (n >= 65 && n <= 66) return 13;
-    }
-  }
-
-  return null;
-}
-
-function parseQuestionNumber(questionLabel: string): number | null {
-  const m = toAsciiDigits(String(questionLabel || '')).match(/\d+/);
-  if (!m) return null;
-  const n = Number(m[0]);
-  return Number.isFinite(n) ? n : null;
 }
 
 function containsStar(text: string): boolean {

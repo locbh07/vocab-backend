@@ -161,7 +161,7 @@ function buildPassageVocabPrompt(level: string, sentences: string[]): string {
     '1) Voi MOI cau, liet ke tat ca tu co chua kanji xuat hien trong cau do.',
     '2) Ngoai ra bo sung tu katakana quan trong hoac cum thanh ngu/ngu phap dang chu y neu co.',
     '3) surface BAT BUOC la chuoi xuat hien nguyen van trong cau, không được viet lai hay chia lai.',
-    '4) Voi dong tu/tinh tu da chia, lay phan than tu co kanji lam surface (vi du cau co "苦しんだ" thi surface la "苦しん" hoac "苦しむ" - uu tien chuoi co that trong cau).',
+    '4) Với động từ/tính từ đã chia, surface giữ nguyên cả đuôi chia xuất hiện trong câu (苦しんだ), reading_hira đọc đúng cả từ (くるしんだ). Không cắt thân từ hoặc thay bằng dạng từ điển không có trong câu.',
     '5) reading_hira phai la cach doc DUNG NGU CANH cua cau, viet bang hiragana.',
     '   Vi du: 日本 trong van ban thuong doc la "にほん" chu không phai "にっぽん".',
     '6) meaning_vi ngan gon (1 dong), dung nghia theo ngu canh cau do.',

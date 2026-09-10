@@ -1,6 +1,7 @@
-﻿import type { JlptQuestionType } from './jlptQuestionType';
+import type { JlptQuestionType } from './jlptQuestionType';
 import { toReadingHiragana, toRubyHtml } from './japaneseReading';
 import { generateGeminiJson } from './gemini';
+import { EXPLANATION_FORMAT_RULES, questionTeachingRules, normalizeEvidence, isValidStarOrder, assertStarQuestionSource, assertExplanationSource, isPassageFootnote, type ExplanationEvidence } from './examExplanationStandards';
 
 export type ExplanationProvider = 'openai' | 'gemini';
 
@@ -24,6 +25,7 @@ type OptionAnalysis = {
   // learner that 方針 is wrong in "台風の方針" is half an answer; the useful half is 進路.
   // Empty for question types where "the correct version of this option" is not a meaningful idea.
   corrected_ja?: string;
+  trap_vi?: string;
 };
 
 type GrammarPoint = {
@@ -49,12 +51,14 @@ type PassageOptionWithReading = {
 
 type KeyVocab = {
   surface: string;
+  dictionary_form?: string;
   reading_hira: string;
   meaning_vi: string;
   why_important: string;
 };
 
 type PassageQuestionPayload = {
+  displayLabel?: string;
   questionLabel: string;
   questionWithBlank: string;
   questionWithAnswer: string;
@@ -63,6 +67,8 @@ type PassageQuestionPayload = {
 };
 
 type PassageSentenceReading = {
+  vocab?: KeyVocab[];
+  evidence_for?: string[];
   sentence_ja: string;
   sentence_ruby_html: string;
   reading_hira: string;
@@ -70,6 +76,7 @@ type PassageSentenceReading = {
 };
 
 type SentenceOrderSolution = {
+  fragment_reasons?: Array<{ option: string; reason_vi: string }>;
   ordered_options: string[];
   ordered_sentence_ja: string;
   ordered_sentence_ruby_html: string;
@@ -94,6 +101,7 @@ export type PassageExplanationPayload = {
 };
 
 export type PassageQuestionExplanation = {
+  display_question_label?: string;
   question_label: string;
   sentence_with_blank: string;
   sentence_with_blank_ruby_html: string;
@@ -105,6 +113,7 @@ export type PassageQuestionExplanation = {
   option_details: PassageOptionWithReading[];
   option_analysis: OptionAnalysis[];
   reasoning_vi: string;
+  evidence?: ExplanationEvidence[];
 };
 
 export type PassageExplanation = {
@@ -123,6 +132,9 @@ export type PassageExplanation = {
 };
 
 export type ExamQuestionExplanation = {
+  completed_sentence_ja?: string;
+  completed_sentence_translation_vi?: string;
+  evidence?: ExplanationEvidence[];
   question_ja: string;
   question_ruby_html: string;
   question_reading_hira: string;
@@ -305,6 +317,9 @@ export async function generateExamQuestionExplanation(
   payload: ExamQuestionPayload,
   provider: ExplanationProvider = 'gemini',
 ): Promise<{ explanation: ExamQuestionExplanation; model: string }> {
+  assertExplanationSource([payload.questionText, payload.passageText, ...Object.values(payload.options)].join('\n'));
+  if (payload.questionType === 'sentence_order') assertStarQuestionSource(payload.questionWithBlank || payload.questionText);
+  if (['reading_content', 'reading_cloze', 'listening'].includes(payload.questionType)) assertExplanationSource(payload.passageText, true);
   const precomputedReadings =
     payload.precomputedReadings && payload.precomputedReadings.questionReadingHira
       ? {
@@ -329,6 +344,7 @@ export async function generateExamQuestionExplanation(
     explanation: normalized,
     precomputedReadings,
   });
+  validateQuestionExplanation(completed, payload);
   return {
     explanation: completed,
     model,
@@ -345,6 +361,8 @@ export async function generatePassageExplanation(
   payload: PassageExplanationPayload,
   provider: ExplanationProvider = 'gemini',
 ): Promise<{ explanation: PassageExplanation; model: string }> {
+  assertExplanationSource(payload.passageText, true);
+  assertExplanationSource(payload.questions.map(q => [q.questionWithBlank, ...Object.values(q.options)].join('\n')).join('\n'));
   const precomputed = await buildPassagePrecomputedReadings(payload, payload.precomputedReadings);
   const prompt = buildPassagePrompt(payload, precomputed);
   const { rawContent, model } = await callLlmForExplanationJson({
@@ -360,13 +378,14 @@ export async function generatePassageExplanation(
     payload,
     explanation: normalized,
   });
+  validatePassageExplanation(completed);
   return {
     explanation: completed,
     model,
   };
 }
 
-function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: PrecomputedReadings) {
+export function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: PrecomputedReadings) {
   const isSentenceOrder = payload.questionType === 'sentence_order';
   const isReadingContent = payload.questionType === 'reading_content';
   // Kanji reading/writing questions are decided by sound alone, so the explanation that helps is a
@@ -414,10 +433,14 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
       ? `Thu tu chuan tham khao tu de: ${(payload.sentenceOrderExpectedOrder || []).join('-')}`
       : '',
     '',
+    EXPLANATION_FORMAT_RULES,
+    questionTeachingRules(payload.questionType),
+    'completed_sentence_ja: câu hoàn chỉnh đã điền đáp án cho ngữ pháp/ngữ cảnh/cấu tạo từ; các dạng khác để trống. completed_sentence_translation_vi dịch câu hoàn chỉnh đó.',
+    'key_point_vi: căn cứ quyết định đáp án trong 1–3 câu. evidence: trích nguyên văn từ bài đọc/lời thoại và giải thích quan hệ với đáp án; không có nguồn thì để [].',
     'Bat buoc thuc hien:',
     '1) Cho cau tieng Nhat goc va cach doc hiragana cua cau.',
     '2) Doi voi moi đáp án, cho text tieng Nhat + cach doc + nghia Viet.',
-    '3) Liet ke MOI tu co kanji trong cau (không chi rieng tu kho), kem cach doc va nghia Viet.',
+    '3) key_vocab: các từ Kanji và từ/cụm quan trọng trong câu theo quy tắc định dạng ở trên.',
 
     isSentenceOrder
       ? '4) Day la dang ghep cau: KHONG co lựa chọn nao "sai" ve noi dung - ca 4 manh deu duoc dùng trong cau hoan chỉnh, chỉ khac vi tri. Trong option_analysis, verdict="correct" CHỈ danh cho đúng 1 manh nam o vi tri ★, cac manh con lai verdict="wrong" nhung dieu do CHỈ co nghia "khong nam o vi tri ★", KHONG PHAI manh do sai/khong hop ly/khong phu hop ngu canh. reason_vi cho MOI lựa chọn (ke ca verdict wrong) BAT BUOC mo ta dung vai tro hoac y nghia cua manh do trong cau hoan chỉnh; TUYET DOI KHONG duoc viet reason_vi kieu "khong phu hop voi ngu canh" hay "sai" cho cac manh khong o vi tri ★.'
@@ -437,11 +460,14 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
       ? '13) corrected_ja: voi MOI đáp án SAI, cho biet dang dung tuong ung. Dang chon cach doc/cach viet: ghi tu that su co cach doc do (vi du "そうごう" thuc ra la tu 総合). Dang cach dung/ngu canh: viet lai ca cau cho dung (vi du "台風の方針" -> "台風の進路"). Neu that su không co dang dung tuong ung thi de chuoi rong.'
       : '13) corrected_ja: de chuoi rong cho tat ca đáp án.',
     isKanjiSoundQuestion
-      ? '14) Voi tung kanji trong tu duoc hoi: cho am Han-Viet, va CHUNG MINH cach doc bang it nhat 2 tu ghep khac cung dung kanji do (vi du 要 doc よう trong 重要, 必要). BAT BUOC: moi tu ghep dan ra PHAI THUC SU chua dung kanji dang noi - kiem tra lai truoc khi viet, không được dan tu không chua kanji do. Neu co tu dong am khac kanji de nham thi phai canh bao ro (vi du やぶれる: 敗れる thua vs 破れる rach).'
+      ? '14) Chỉ phân tích Hán Việt, On/Kun và từ ghép khi có ích cho từ đang hỏi; không cần liệt kê mọi âm, không bịa quy tắc cho cách đọc ngoại lệ.'
       : '',
     '',
     'Trả về JSON dung cac key sau, không them key khac:',
     '{',
+    '  "completed_sentence_ja": "string",',
+    '  "completed_sentence_translation_vi": "string",',
+    '  "evidence": [{ "quote_ja": "string", "explanation_vi": "string" }],',
     '  "question_ja": "string",',
     '  "question_reading_hira": "string",',
     '  "question_translation_vi": "string",',
@@ -455,7 +481,7 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
     '  "key_point_vi": "string",',
     '  "reasoning_steps_vi": ["string"],',
     '  "option_analysis": [',
-    '    { "option": "1|2|3|4", "meaning_vi": "string", "verdict": "correct|wrong", "reason_vi": "string", "corrected_ja": "string" }',
+    '    { "option": "1|2|3|4", "meaning_vi": "string", "verdict": "correct|wrong", "reason_vi": "string", "corrected_ja": "string", "trap_vi": "string" }',
     '  ],',
     '  "options_with_reading": [',
     '    { "option": "1|2|3|4", "text_ja": "string", "reading_hira": "string", "meaning_vi": "string" }',
@@ -471,7 +497,7 @@ function buildPrompt(payload: ExamQuestionPayload, precomputedReadings: Precompu
   ].join('\n');
 }
 
-function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: PassagePrecomputedReadings) {
+export function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: PassagePrecomputedReadings) {
   const isReadingCloze = payload.questionType === 'reading_cloze';
 
   const sentenceListText =
@@ -489,7 +515,7 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
         .join('\n');
       if (isReadingCloze) {
         return [
-          `Question ${q.questionLabel}:`,
+          `question_label = "${q.questionLabel}" (BAT BUOC tra ve dung chuoi nay, không them tien to):`,
           `- Câu chứa o trong: ${q.questionWithBlank || '(không co)'}`,
           `- Cach doc câu chứa o trong: ${precomputed.questionBlankReadings[q.questionLabel] || '(không co)'}`,
           `- Câu sau khi điền đáp án dung: ${q.questionWithAnswer || '(không co)'}`,
@@ -499,7 +525,7 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
         ].join('\n');
       }
       return [
-        `Question ${q.questionLabel}:`,
+        `question_label = "${q.questionLabel}" (BAT BUOC tra ve dung chuoi nay, không them tien to):`,
         `- Câu hỏi: ${q.questionWithBlank || '(không co)'}`,
         `- Cach doc câu hỏi: ${precomputed.questionBlankReadings[q.questionLabel] || '(không co)'}`,
         `- Đáp án dung: ${q.correctAnswer || '(không ro)'}`,
@@ -529,6 +555,12 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
     'Thong tin tung cau trong cum:',
     questionsText || '(không co)',
     '',
+    EXPLANATION_FORMAT_RULES,
+    questionTeachingRules(payload.questionType),
+    'Mỗi câu hỏi: reasoning_vi là kết luận có căn cứ; evidence gồm quote_ja trích nguyên văn và explanation_vi giải thích paraphrase/suy luận. Bài A/B phải đối chiếu cả hai đoạn; không gán căn cứ ngoài nguồn.',
+    'Mỗi phương án sai có trap_vi mô tả bẫy cụ thể (sai chủ thể/thời điểm, tuyệt đối hóa, ngược ý, ngoài bài, sai điều kiện...). Không gán nhãn bẫy khi không có.',
+    'sentence_readings: dịch đúng từng câu, kèm vocab ngay trong mỗi phần tử theo định dạng surface, reading_hira, meaning_vi, dictionary_form (tùy chọn). Khi đã dịch đủ từng câu, passage_translation_vi để trống để tránh lặp.',
+    'Trả về ĐỦ các câu theo đúng thứ tự trong danh sách trên, không bỏ câu nào. Dòng chú thích （注1）… vẫn giữ và dịch nghĩa, nhưng không cần liệt kê vocab.',
     'Yeu cau:',
     isReadingCloze
       ? '1) Phan tich tong quan doan van truoc, sau do moi di vao tung o trong.'
@@ -549,7 +581,7 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
     '  "passage_ja": "string",',
     '  "passage_translation_vi": "string",',
     '  "sentence_readings": [',
-    '    { "index": 1, "sentence_ja": "string", "translation_vi": "string" }',
+    '    { "index": 1, "sentence_ja": "string", "translation_vi": "string", "vocab": [{ "surface": "string", "reading_hira": "string", "meaning_vi": "string", "dictionary_form": "string" }] }',
     '  ],',
     '  "passage_theme_vi": "string",',
     '  "passage_summary_vi": "string",',
@@ -561,9 +593,10 @@ function buildPassagePrompt(payload: PassageExplanationPayload, precomputed: Pas
     '      "sentence_with_answer": "string",',
     '      "correct_option": "1|2|3|4",',
     '      "option_analysis": [',
-    '        { "option": "1|2|3|4", "meaning_vi": "string", "verdict": "correct|wrong", "reason_vi": "string" }',
+    '        { "option": "1|2|3|4", "meaning_vi": "string", "verdict": "correct|wrong", "reason_vi": "string", "trap_vi": "string" }',
     '      ],',
-    '      "reasoning_vi": "string"',
+    '      "reasoning_vi": "string",',
+    '      "evidence": [{ "quote_ja": "string", "explanation_vi": "string" }]',
     '    }',
     '  ],',
     '  "global_traps_vi": ["string"],',
@@ -603,7 +636,7 @@ function parseLooseJson(raw: string): unknown {
   }
 }
 
-function normalizeExplanation(
+export function normalizeExplanation(
   raw: unknown,
   payload: ExamQuestionPayload,
   precomputedReadings: PrecomputedReadings,
@@ -623,6 +656,7 @@ function normalizeExplanation(
       verdict,
       reason_vi: text(item.reason_vi) || '',
       corrected_ja: text(item.corrected_ja) || '',
+      trap_vi: text(item.trap_vi) || '',
     });
   }
 
@@ -645,21 +679,7 @@ function normalizeExplanation(
       item.verdict = item.option === payload.correctAnswer ? 'correct' : 'wrong';
     }
   }
-  // Sentence-order (★) fragments have no "wrong content" — every fragment is used in the
-  // final sentence, only the ★ slot differs. The model's free-text reason_vi for this type
-  // has repeatedly contradicted the forced verdict (e.g. calling the ★ fragment "unfit"), so
-  // replace it with a deterministic, always-consistent explanation instead of trusting it.
-  if (payload.questionType === 'sentence_order') {
-    for (const item of optionAnalysis) {
-      const label = item.meaning_vi || payload.options[item.option] || item.option;
-      item.reason_vi =
-        item.option === payload.correctAnswer
-          ? `Mảnh "${label}" đứng ở vị trí ★ theo đáp án của đề.`
-          : `Mảnh "${label}" vẫn được dùng trong câu hoàn chỉnh, nhưng ở một vị trí khác, không phải vị trí ★.`;
-      item.corrected_ja = '';
-    }
-  }
-  const alignedOptionAnalysis = alignExamOptionReasonsWithOptionContext(optionAnalysis, payload);
+  const alignedOptionAnalysis = optionAnalysis;
 
   // Asking the model to leave reasoning_steps_vi empty for kanji reading/writing questions was not
   // enough - it kept returning the same "identify - recall - compare - eliminate" procedure, which
@@ -671,8 +691,6 @@ function normalizeExplanation(
       : asStringArray(value.reasoning_steps_vi);
 
   const questionJaFallback = payload.questionWithBlank || payload.questionText || '';
-  const forceOriginalQuestionText =
-    payload.isClozeQuestion || payload.questionType === 'reading_content' || payload.questionType === 'reading_cloze';
   const alignedFinalConclusion = buildAlignedFinalConclusion(
     text(value.final_conclusion_vi) || '',
     payload,
@@ -680,7 +698,10 @@ function normalizeExplanation(
   );
 
   return {
-    question_ja: forceOriginalQuestionText ? questionJaFallback : text(value.question_ja) || questionJaFallback,
+    completed_sentence_ja: text(value.completed_sentence_ja) || payload.questionWithAnswer || '',
+    completed_sentence_translation_vi: text(value.completed_sentence_translation_vi) || '',
+    evidence: normalizeEvidence(value.evidence, payload.passageText),
+    question_ja: questionJaFallback,
     question_ruby_html: precomputedReadings.questionRubyHtml || '',
     question_reading_hira: precomputedReadings.questionReadingHira || text(value.question_reading_hira) || '',
     question_translation_vi: text(value.question_translation_vi) || '',
@@ -704,19 +725,6 @@ function normalizeExplanation(
     quick_tip_vi: text(value.quick_tip_vi) || '',
     final_conclusion_vi: alignedFinalConclusion,
   };
-}
-
-function buildPassageReasoningFallback(question: {
-  correct_option: string;
-  option_analysis: OptionAnalysis[];
-}): string {
-  const correct =
-    question.option_analysis.find((item) => item.option === question.correct_option) ||
-    question.option_analysis.find((item) => item.verdict === 'correct');
-  const label = question.correct_option || correct?.option || '';
-  const reason = String(correct?.reason_vi || '').trim() || String(correct?.meaning_vi || '').trim();
-  if (!label) return '';
-  return reason ? `Đáp án đúng: ${label}. ${reason}` : `Đáp án đúng: ${label}.`;
 }
 
 function buildAlignedFinalConclusion(
@@ -781,7 +789,8 @@ async function completeSentenceOrderSolution(args: {
     solution.ordered_options = mergedOrder;
   }
 
-  if (!hasCompleteOrder(solution.ordered_options, optionKeys)) {
+  if (!isValidStarOrder(solution.ordered_options, optionKeys, args.payload.questionWithBlank || args.payload.questionText, args.payload.correctAnswer) ||
+    !isSentenceOptionOrderConsistent(solution.ordered_sentence_ja, solution.ordered_options, args.payload.options)) {
     const repaired = await repairSentenceOrderSolutionWithModel({
       provider: args.provider,
       payload: args.payload,
@@ -792,18 +801,12 @@ async function completeSentenceOrderSolution(args: {
     }
   }
 
-  if (!hasCompleteOrder(solution.ordered_options, optionKeys)) {
-    solution.ordered_options = uniqueOptions([...solution.ordered_options, ...optionKeys], optionKeys);
+  if (!isValidStarOrder(solution.ordered_options, optionKeys, args.payload.questionWithBlank || args.payload.questionText, args.payload.correctAnswer) ||
+    !isSentenceOptionOrderConsistent(solution.ordered_sentence_ja, solution.ordered_options, args.payload.options)) {
+    throw Object.assign(new Error('Chưa xác định được thứ tự câu và vị trí ★ nhất quán. Vui lòng thử tạo lại giải thích.'), { status: 502 });
   }
 
   solution.star_option = args.payload.correctAnswer || solution.star_option || '';
-
-  if (
-    !isSentenceContainsAllOptionTexts(solution.ordered_sentence_ja, solution.ordered_options, args.payload.options) ||
-    !isSentenceOptionOrderConsistent(solution.ordered_sentence_ja, solution.ordered_options, args.payload.options)
-  ) {
-    solution.ordered_sentence_ja = buildSentenceOrderCompletionSentence(args.payload, solution.ordered_options);
-  }
 
   if (!solution.ordered_sentence_reading_hira && solution.ordered_sentence_ja) {
     solution.ordered_sentence_reading_hira = await toReadingHiragana(solution.ordered_sentence_ja);
@@ -819,6 +822,9 @@ async function completeSentenceOrderSolution(args: {
 
   return {
     ...args.explanation,
+    option_analysis: args.explanation.option_analysis.map(item => ({ ...item,
+      reason_vi: solution.fragment_reasons?.find(fragment => fragment.option === item.option)?.reason_vi || item.reason_vi,
+    })),
     sentence_order_solution: solution,
   };
 }
@@ -847,12 +853,14 @@ async function repairSentenceOrderSolutionWithModel(args: {
     `- ordered_options phai chua DAY DU ${optionKeys.join(', ')} va moi lựa chọn dung 1 lan.`,
     '- star_option phai bang đáp án dung de bai.',
     '- ordered_sentence_ja phai la cau da sap xep day du tat ca manh.',
+    '- reason_vi giải thích liên kết ngữ pháp; fragment_reasons giải thích vai trò cả bốn mảnh theo thứ tự mới.',
     '',
     'Schema:',
     '{',
     '  "ordered_options": ["1","2","3","4"],',
     '  "ordered_sentence_ja": "string",',
-    '  "reason_vi": "string"',
+    '  "reason_vi": "string",',
+    '  "fragment_reasons": [{ "option": "1|2|3|4", "reason_vi": "string" }]',
     '}',
   ].join('\n');
 
@@ -875,13 +883,15 @@ async function repairSentenceOrderSolutionWithModel(args: {
     const ordered_sentence_ja = text((row as Record<string, unknown>).ordered_sentence_ja) || '';
     const reason_vi = text((row as Record<string, unknown>).reason_vi) || args.current.reason_vi || '';
 
-    const completedOrder = hasCompleteOrder(ordered_options, optionKeys)
-      ? ordered_options
-      : uniqueOptions([...ordered_options, ...optionKeys], optionKeys);
+    if (!hasCompleteOrder(ordered_options, optionKeys)) return null;
+    const fragment_reasons = (Array.isArray(row.fragment_reasons) ? row.fragment_reasons : [])
+      .filter(isObject).map(item => ({ option: normalizeOptionKey(item.option), reason_vi: text(item.reason_vi) || '' }));
+    if (optionKeys.some(option => !fragment_reasons.some(item => item.option === option && item.reason_vi))) return null;
 
     return {
       ...args.current,
-      ordered_options: completedOrder,
+      ordered_options,
+      fragment_reasons,
       ordered_sentence_ja: ordered_sentence_ja || args.current.ordered_sentence_ja,
       reason_vi,
     };
@@ -924,19 +934,6 @@ function hasCompleteOrder(orderedOptions: string[], optionKeys: string[]): boole
   return sortedOrdered.every((value, idx) => value === sortedKeys[idx]);
 }
 
-function isSentenceContainsAllOptionTexts(
-  sentence: string,
-  orderedOptions: string[],
-  options: Record<string, string>,
-): boolean {
-  const target = String(sentence || '');
-  if (!target || !orderedOptions.length) return false;
-  return orderedOptions.every((option) => {
-    const textValue = String(options[option] || '');
-    return textValue.length > 0 && target.includes(textValue);
-  });
-}
-
 function isSentenceOptionOrderConsistent(
   sentence: string,
   orderedOptions: string[],
@@ -957,25 +954,26 @@ function isSentenceOptionOrderConsistent(
   return true;
 }
 
-function buildSentenceOrderCompletionSentence(payload: ExamQuestionPayload, orderedOptions: string[]): string {
-  const orderedText = orderedOptions.map((option) => String(payload.options[option] || '')).join('');
-  const base = payload.questionWithBlank || payload.questionText || '';
-  if (!base) return orderedText;
-
-  const starClusterPattern = /(?:[＿_ー－\-〜～]+\s*)*★(?:\s*[＿_ー－\-〜～]+)*/u;
-  const replaced = base
-    .replace(starClusterPattern, orderedText)
-    .replace(/★/gu, orderedText);
-
-  if (replaced !== base) return normalizeWhitespaceLine(replaced);
-  return normalizeWhitespaceLine(`${base} ${orderedText}`);
-}
-
 function normalizeWhitespaceLine(input: string): string {
   return String(input || '').replace(/\s+/g, ' ').trim();
 }
 
-function normalizePassageExplanation(
+// The prompt heads each question block with its label, and the model regularly echoes the
+// whole heading back ("Question 6") instead of just the label ("6"). Falling back to the
+// question number keeps an otherwise complete answer from being discarded as unmatched.
+function findPayloadQuestion(
+  questions: PassageQuestionPayload[],
+  rawLabel: string,
+): PassageQuestionPayload | undefined {
+  if (!rawLabel) return undefined;
+  const exact = questions.find((q) => q.questionLabel === rawLabel);
+  if (exact) return exact;
+  const number = rawLabel.match(/\d+/)?.[0];
+  if (!number) return undefined;
+  return questions.find((q) => q.questionLabel.match(/\d+/)?.[0] === number);
+}
+
+export function normalizePassageExplanation(
   raw: unknown,
   payload: PassageExplanationPayload,
   precomputed: PassagePrecomputedReadings,
@@ -986,11 +984,12 @@ function normalizePassageExplanation(
 
   for (const item of rawQuestions) {
     if (!isObject(item)) continue;
-    const label = text(item.question_label);
-    if (!label) continue;
-    const payloadQuestion = payload.questions.find((q) => q.questionLabel === label);
+    const payloadQuestion = findPayloadQuestion(payload.questions, text(item.question_label) || '');
+    if (!payloadQuestion) continue;
+    const label = payloadQuestion.questionLabel;
     const optionAnalysis = normalizeOptionAnalysis(item.option_analysis, payloadQuestion);
     byLabel.set(label, {
+      display_question_label: payloadQuestion?.displayLabel || label,
       question_label: label,
       sentence_with_blank: text(item.sentence_with_blank) || '',
       sentence_with_blank_ruby_html: precomputed.questionBlankRubyHtmls[label] || '',
@@ -1002,6 +1001,7 @@ function normalizePassageExplanation(
       option_details: buildPassageOptionDetails(payloadQuestion, optionAnalysis, precomputed, label),
       option_analysis: optionAnalysis,
       reasoning_vi: text(item.reasoning_vi) || '',
+      evidence: normalizeEvidence(item.evidence, payload.passageText, precomputed.sentenceReadings.map(s => s.sentence_ja)),
     });
   }
 
@@ -1010,6 +1010,7 @@ function normalizePassageExplanation(
     if (!existing) {
       const fallbackAnalysis = normalizeOptionAnalysis([], q);
       return {
+        display_question_label: q.displayLabel || q.questionLabel,
         question_label: q.questionLabel,
         sentence_with_blank: q.questionWithBlank || '',
         sentence_with_blank_ruby_html: precomputed.questionBlankRubyHtmls[q.questionLabel] || '',
@@ -1041,19 +1042,18 @@ function normalizePassageExplanation(
       option_analysis: forced,
     };
   });
-  const questionsWithReasoning = questions.map((q) => ({
-    ...q,
-    reasoning_vi: q.reasoning_vi || buildPassageReasoningFallback(q),
-  }));
+  const questionsWithReasoning = questions;
 
   const llmSentences = Array.isArray(value.sentence_readings) ? value.sentence_readings : [];
   const sentenceTranslations = new Map<string, string>();
+  const sentenceVocab = new Map<number, KeyVocab[]>();
   const sentenceTranslationsByIndex = new Map<number, string>();
   for (const item of llmSentences) {
     if (!isObject(item)) continue;
     const sentence = normalizeSentenceKey(text(item.sentence_ja) || '');
     const translation = text(item.translation_vi) || '';
     const index = parsePositiveInt(item.index);
+    if (index !== null) sentenceVocab.set(index - 1, asKeyVocab(item.vocab));
     if (index !== null && translation) {
       sentenceTranslationsByIndex.set(index - 1, translation);
     }
@@ -1069,11 +1069,13 @@ function normalizePassageExplanation(
       sentence_ruby_html: item.sentence_ruby_html,
       reading_hira: item.reading_hira,
       translation_vi: byKey || byIndex,
+      vocab: (sentenceVocab.get(index) || []).filter(word => item.sentence_ja.includes(word.surface)),
+      evidence_for: questionsWithReasoning.filter(q => q.evidence?.some(e => e.sentence_index === index + 1)).map(q => q.display_question_label || q.question_label),
     };
   });
 
   return {
-    passage_ja: text(value.passage_ja) || payload.passageText || '',
+    passage_ja: payload.passageText || '',
     passage_ruby_html: precomputed.passageRubyHtml || '',
     passage_reading_hira: precomputed.passageReadingHira || '',
     passage_translation_vi: text(value.passage_translation_vi) || '',
@@ -1100,6 +1102,8 @@ function normalizeOptionAnalysis(value: unknown, question?: PassageQuestionPaylo
       meaning_vi: text(item.meaning_vi) || '',
       verdict: item.verdict === 'correct' ? 'correct' : 'wrong',
       reason_vi: text(item.reason_vi) || '',
+      trap_vi: text(item.trap_vi) || '',
+      corrected_ja: text(item.corrected_ja) || '',
     });
   }
   const options = question ? Object.keys(question.options || {}) : Array.from(byOption.keys());
@@ -1157,7 +1161,7 @@ function asOptionWithReading(
     if (!option) continue;
     byOption.set(option, {
       option,
-      text_ja: text(item.text_ja) || options[option] || '',
+      text_ja: options[option] || '',
       text_ruby_html: optionRubyHtmls[option] || text(item.text_ruby_html) || '',
       reading_hira: optionReadings[option] || text(item.reading_hira) || '',
       meaning_vi: text(item.meaning_vi) || '',
@@ -1352,6 +1356,7 @@ async function buildPrecomputedReadings(payload: ExamQuestionPayload): Promise<P
 
 function asKeyVocab(value: unknown): KeyVocab[] {
   if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
   return value
     .map((item) => {
       if (!isObject(item)) return null;
@@ -1359,8 +1364,11 @@ function asKeyVocab(value: unknown): KeyVocab[] {
       const reading_hira = text(item.reading_hira) || '';
       const meaning_vi = text(item.meaning_vi) || '';
       const why_important = text(item.why_important) || '';
-      if (!surface && !reading_hira && !meaning_vi && !why_important) return null;
-      return { surface, reading_hira, meaning_vi, why_important };
+      if (!surface || !reading_hira || !meaning_vi || seen.has(surface)) return null;
+      seen.add(surface);
+      const word: KeyVocab = { surface, reading_hira, meaning_vi, why_important };
+      if (text(item.dictionary_form)) word.dictionary_form = text(item.dictionary_form)!;
+      return word;
     })
     .filter((item): item is KeyVocab => Boolean(item));
 }
@@ -1495,14 +1503,9 @@ function forceFallbackPassageOptionContent(explanation: PassageExplanation): Pas
 
 function applyOptionFallback(question: PassageQuestionExplanation): PassageQuestionExplanation {
   const option_analysis = question.option_analysis.map((item) => {
-    const isCorrect = normalizeOptionKey(item.option) === normalizeOptionKey(question.correct_option);
     return {
       ...item,
-      reason_vi:
-        item.reason_vi ||
-        (isCorrect
-          ? 'Lựa chọn nay phu hop nhat voi noi dung va lap luan trong doan van.'
-          : 'Lựa chọn nay không khop voi thong tin/chu de được neu trong doan van.'),
+      reason_vi: item.reason_vi || '',
       meaning_vi: item.meaning_vi || '',
     };
   });
@@ -1518,6 +1521,26 @@ function applyOptionFallback(question: PassageQuestionExplanation): PassageQuest
   };
 }
 
+function incompleteExplanation(): never {
+  throw Object.assign(new Error('Giải thích chưa đủ căn cứ hoặc phân tích lựa chọn. Vui lòng thử lại.'), { status: 502 });
+}
+
+export function validateQuestionExplanation(explanation: ExamQuestionExplanation, payload: ExamQuestionPayload): void {
+  if (!explanation.key_point_vi || !explanation.question_translation_vi ||
+    explanation.option_analysis.some(item => !item.reason_vi)) incompleteExplanation();
+  if (['grammar_choice', 'vocab_context', 'vocab_word_formation'].includes(payload.questionType) &&
+    (!explanation.completed_sentence_ja || !explanation.completed_sentence_translation_vi)) incompleteExplanation();
+  if (['reading_content', 'reading_cloze', 'listening'].includes(payload.questionType) && !explanation.evidence?.length) incompleteExplanation();
+  if (payload.questionType === 'sentence_order' && !explanation.sentence_order_solution?.reason_vi) incompleteExplanation();
+}
+
+export function validatePassageExplanation(explanation: PassageExplanation): void {
+  if (!explanation.questions.length || !explanation.sentence_readings.length) incompleteExplanation();
+  if (explanation.questions.some(q => !q.reasoning_vi || !q.evidence?.length || q.option_analysis.some(o => !o.reason_vi))) incompleteExplanation();
+  if (explanation.sentence_readings.some(s => !isPassageFootnote(s.sentence_ja) &&
+    (!s.translation_vi || (/[\u3400-\u9fff]/u.test(s.sentence_ja) && !s.vocab?.length)))) incompleteExplanation();
+}
+
 function normalizeSentenceKey(input: string): string {
   return String(input || '')
     .replace(/\s+/g, '')
@@ -1531,32 +1554,6 @@ function parsePositiveInt(value: unknown): number | null {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return null;
   return parsed;
-}
-
-function alignExamOptionReasonsWithOptionContext(
-  optionAnalysis: OptionAnalysis[],
-  payload: ExamQuestionPayload,
-): OptionAnalysis[] {
-  return optionAnalysis.map((item) => {
-    const optionText = String(payload.options?.[item.option] || '');
-    if (!mentionsWorkContext(item.reason_vi) || mentionsWorkContext(optionText)) {
-      return item;
-    }
-
-    return {
-      ...item,
-      reason_vi:
-        item.verdict === 'correct'
-          ? 'Lựa chọn này đúng vì cách dùng từ/cấu trúc tự nhiên nhất trong chính ngữ cảnh của câu.'
-          : 'Lựa chọn này sai vì cách dùng từ/cấu trúc không tự nhiên trong chính ngữ cảnh của câu.',
-    };
-  });
-}
-
-function mentionsWorkContext(value: string): boolean {
-  const source = String(value || '');
-  if (!source) return false;
-  return /(仕事|業務|職場|勤務|作業|会社|công việc|việc làm|chỗ làm|đi làm|job|work)/iu.test(source);
 }
 
 function normalizeOptionKey(value: unknown): string {

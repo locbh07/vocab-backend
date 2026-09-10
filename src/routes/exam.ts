@@ -1,4 +1,5 @@
-﻿import { Router, Request, Response } from 'express';
+import { explanationSourceText, assertExplanationSource, assertStarQuestionSource } from '../lib/examExplanationStandards';
+import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { createHash } from 'crypto';
@@ -24,11 +25,11 @@ import { hasActivePremium } from '../lib/contentAccess';
 import { requireAdmin } from '../middleware/adminGuard';
 import { buildPracticeCatalog } from '../lib/examPractice';
 
-// Bumped: switched default explanation provider from OpenAI to Gemini (better accuracy in
-// testing, e.g. correct sentence-order fragment reassembly + meanings) and fixed a bug where
-// the option-gap-filler always called OpenAI regardless of provider. Bumping invalidates old
-// cached explanations so they regenerate under the new provider/prompt on next access.
-const EXPLANATION_PROMPT_VERSION = 17;
+// Version 23 adds evidence, sentence glossaries and per-type teaching rules. Version 24 pins
+// the expected question_label in the passage prompt and states that each evidence quote must
+// be one contiguous span. Older rows remain stored; both cache lookup and generation quotas
+// use this version on next access.
+const EXPLANATION_PROMPT_VERSION = 24;
 const FREE_EXAM_LIMIT_PER_LEVEL = Math.max(
   1,
   Number(process.env.FREE_EXAM_LIMIT_PER_LEVEL || process.env.CODE_EXAM_LIMIT_PER_LEVEL || 5),
@@ -471,6 +472,7 @@ export function createExamRouter() {
       return res.status(400).json({ message: 'Invalid sectionIndex/questionIndex' });
     }
 
+    let quotaClaimed = false;
     try {
       await requireExamAccess(body.userId, body.code || '', body.level, body.examId);
       await ensureQuestionExplanationTable();
@@ -508,6 +510,7 @@ export function createExamRouter() {
           passageText: listeningScript,
         };
       }
+      assertQuestionExplanationSource(questionCtx);
       const readingCache = await getOrCreateQuestionReadingCache({
         level: body.level,
         examId: body.examId,
@@ -590,6 +593,7 @@ export function createExamRouter() {
           sectionIndex,
           questionIndex,
         });
+        quotaClaimed = canGenerate;
         if (!canGenerate) {
           const cached = await findCachedExplanation({
             level: body.level,
@@ -660,6 +664,12 @@ export function createExamRouter() {
         model: generated.model,
       });
     } catch (error) {
+      if (quotaClaimed) {
+        await prisma.$executeRawUnsafe(
+          'DELETE FROM jlpt_question_explanation_request_log WHERE user_id = $1 AND level = $2 AND exam_id = $3 AND part = $4 AND section_index = $5 AND question_index = $6 AND prompt_version = $7',
+          body.userId, body.level, body.examId, part, sectionIndex, questionIndex, EXPLANATION_PROMPT_VERSION,
+        ).catch(() => undefined);
+      }
       return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
     }
   });
@@ -701,6 +711,7 @@ export function createExamRouter() {
       });
     }
 
+    let claimedGroupHash = '';
     try {
       await requireExamAccess(body.userId, body.code || '', body.level, body.examId);
       await ensureQuestionExplanationTable();
@@ -784,6 +795,7 @@ export function createExamRouter() {
           sectionIndex,
           groupHash,
         });
+        if (canGenerate) claimedGroupHash = groupHash;
         if (!canGenerate) {
           const cached = await findCachedPassageExplanation({
             level: body.level,
@@ -819,6 +831,7 @@ export function createExamRouter() {
         blankLabels,
         questions: contexts.map((ctx) => ({
           questionLabel: ctx.questionLabel,
+          displayLabel: ctx.displayQuestionLabel,
           questionWithBlank: ctx.questionWithBlank || ctx.questionText,
           questionWithAnswer: ctx.questionWithAnswer || '',
           options: ctx.options,
@@ -844,6 +857,12 @@ export function createExamRouter() {
         model: generated.model,
       });
     } catch (error) {
+      if (claimedGroupHash) {
+        await prisma.$executeRawUnsafe(
+          'DELETE FROM jlpt_passage_explanation_request_log WHERE user_id = $1 AND level = $2 AND exam_id = $3 AND part = $4 AND section_index = $5 AND group_hash = $6 AND prompt_version = $7',
+          body.userId, body.level, body.examId, part, sectionIndex, claimedGroupHash, EXPLANATION_PROMPT_VERSION,
+        ).catch(() => undefined);
+      }
       return res.status((error as { status?: number }).status || 500).json({ message: (error as Error).message });
     }
   });
@@ -1173,6 +1192,7 @@ async function processExplainBatchChunk(args: {
           }
           questionCtx = { ...questionCtx, passageText: listeningScript };
         }
+        assertQuestionExplanationSource(questionCtx);
         const readingCache = await getOrCreateQuestionReadingCache({
           level,
           examId,
@@ -1259,6 +1279,7 @@ async function processExplainBatchChunk(args: {
         }
         const contexts = contextEntries.map((item) => item.context);
         const passageText = pickPrimaryPassageText(contexts);
+  assertExplanationSource(passageText, true);
         const blankLabels = contexts.map((item) => item.questionLabel).filter((value) => value.length > 0);
         const groupHash = createHash('sha256')
           .update(
@@ -1303,6 +1324,7 @@ async function processExplainBatchChunk(args: {
             blankLabels,
             questions: contexts.map((ctx) => ({
               questionLabel: ctx.questionLabel,
+          displayLabel: ctx.displayQuestionLabel,
               questionWithBlank: ctx.questionWithBlank || ctx.questionText,
               questionWithAnswer: ctx.questionWithAnswer || '',
               options: ctx.options,
@@ -1612,6 +1634,7 @@ async function requireExamAccess(
 }
 
 type QuestionContext = {
+  displayQuestionLabel: string;
   sectionTitle: string;
   questionLabel: string;
   mondaiLabel: string;
@@ -2008,7 +2031,7 @@ async function loadQuestionContext(
   });
   // Always prefer latest runtime inference so upgraded N1/N2 Mondai mapping
   // applies immediately even when metadata was precomputed by older logic.
-  const questionType = fallbackMeta.questionType || metadata?.questionType || 'unknown';
+  const questionType = fallbackMeta.questionType !== 'unknown' ? fallbackMeta.questionType : metadata?.questionType || 'unknown';
   const questionTypeDescriptor = describeJlptQuestionType(questionType);
   const mondaiLabel = fallbackMeta.mondaiLabel || metadata?.mondaiLabel || '';
   const rawExpl = toText(q.expl ?? q.explanation ?? q.exp) || '';
@@ -2023,10 +2046,11 @@ async function loadQuestionContext(
   return {
     sectionTitle,
     questionLabel: rawQuestionLabel,
+    displayQuestionLabel: labelForInference,
     mondaiLabel,
     questionType,
     questionTypeLabelVi: questionTypeDescriptor.questionTypeLabelVi,
-    typeStrategyVi: questionTypeDescriptor.strategyVi,
+    typeStrategyVi: fallbackMeta.questionType === questionType ? fallbackMeta.strategyVi : questionTypeDescriptor.strategyVi,
     questionText,
     questionWithBlank,
     questionWithAnswer,
@@ -2039,6 +2063,12 @@ async function loadQuestionContext(
     questionWordReadings,
     sentenceOrderExpectedOrder,
   };
+}
+
+function assertQuestionExplanationSource(context: QuestionContext): void {
+  if (context.questionType === 'sentence_order') assertStarQuestionSource(context.questionWithBlank || context.questionText);
+  assertExplanationSource([context.questionText, context.passageText, ...Object.values(context.options)].join('\n'));
+  if (['reading_content', 'reading_cloze', 'listening'].includes(context.questionType)) assertExplanationSource(context.passageText, true);
 }
 
 function extractPassageText(partJson: Record<string, unknown>, question: Record<string, unknown>): string {
@@ -2274,6 +2304,7 @@ async function loadPassageGroup(args: {
   const contextEntries: Array<{ context: QuestionContext; readingCache: QuestionReadingCache }> = [];
   for (const questionIndex of args.questionIndexes) {
     const context = await loadQuestionContext(args.level, args.examId, args.part, args.sectionIndex, questionIndex);
+    assertQuestionExplanationSource(context);
     const readingCache = await getOrCreateQuestionReadingCache({
       level: args.level,
       examId: args.examId,
@@ -2290,6 +2321,7 @@ async function loadPassageGroup(args: {
 
   const contexts = contextEntries.map((item) => item.context);
   const passageText = pickPrimaryPassageText(contexts);
+  assertExplanationSource(passageText, true);
   const readingSeed = buildPassageReadingSeed(contextEntries, passageText);
   const blankLabels = contexts.map((item) => item.questionLabel).filter((value) => value.length > 0);
   const groupHash = createHash('sha256')
@@ -2631,16 +2663,7 @@ function injectRubyIntoKnownOptionSegments(
 }
 
 function stripHtml(input: string): string {
-  return input
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+  return explanationSourceText(input);
 }
 
 function normalizeSpace(input: string): string {
