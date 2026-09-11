@@ -1,3 +1,5 @@
+import { getPremiumPolicy } from '../lib/premiumPolicy';
+import { hasActivePremium } from '../lib/contentAccess';
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
@@ -162,15 +164,28 @@ async function getManualPaymentSetting(provider: ManualPaymentProvider) {
   return rows[0] || null;
 }
 
+function effectivePaymentAmount(row: any, provider: ManualPaymentProvider, plan: ManualPaymentPlan): number {
+  const stored = Number(row?.[planAmountKey(plan)]);
+  const defaults = provider === 'MSB' ? MSB_DEFAULT_AMOUNTS : { monthly: 990, yearly: 3650, lifetime: 16999 };
+  return Number.isFinite(stored) && stored > 0 ? Math.round(stored)
+    : envNumber(`MANUAL_PAYMENT_${provider}_${plan.toUpperCase()}_AMOUNT`, defaults[plan]);
+}
+
+function assertExpectedPrice(body: any, config: { amount: number; currency: string }) {
+  if ((body?.expectedAmount !== undefined && Number(body.expectedAmount) !== config.amount)
+    || (body?.expectedCurrency !== undefined && body.expectedCurrency !== config.currency)) {
+    const error = new Error('Payment price changed. Please reload the current prices before continuing.') as Error & { status?: number };
+    error.status = 409;
+    throw error;
+  }
+}
+
 async function getManualPaymentConfig(provider: ManualPaymentProvider, plan: ManualPaymentPlan) {
   const setting = await getManualPaymentSetting(provider);
-  const amountEnv = plan === 'lifetime' ? 'LIFETIME' : plan === 'yearly' ? 'YEARLY' : 'MONTHLY';
-  const settingAmount = Number(setting?.[planAmountKey(plan)] || 0);
+
   if (provider === 'PAYPAY') {
     return {
-      amount: Number.isFinite(settingAmount) && settingAmount > 0
-        ? Math.round(settingAmount)
-        : envNumber(`MANUAL_PAYMENT_PAYPAY_${amountEnv}_AMOUNT`, plan === 'lifetime' ? 16999 : plan === 'yearly' ? 3650 : 990),
+      amount: effectivePaymentAmount(setting, provider, plan),
       currency: String(setting?.currency || 'JPY'),
       accountName: String(setting?.account_name || envText('MANUAL_PAYMENT_PAYPAY_ACCOUNT_NAME')),
       accountNo: String(setting?.account_no || envText('MANUAL_PAYMENT_PAYPAY_ACCOUNT_ID')),
@@ -184,9 +199,7 @@ async function getManualPaymentConfig(provider: ManualPaymentProvider, plan: Man
   }
 
   return {
-    amount: Number.isFinite(settingAmount) && settingAmount > 0
-      ? Math.round(settingAmount)
-      : envNumber(`MANUAL_PAYMENT_MSB_${amountEnv}_AMOUNT`, plan === 'lifetime' ? MSB_DEFAULT_AMOUNTS.lifetime : plan === 'yearly' ? MSB_DEFAULT_AMOUNTS.yearly : MSB_DEFAULT_AMOUNTS.monthly),
+    amount: effectivePaymentAmount(setting, provider, plan),
     currency: String(setting?.currency || 'VND'),
     accountName: String(setting?.account_name || envText('MANUAL_PAYMENT_MSB_ACCOUNT_NAME')),
     accountNo: String(setting?.account_no || envText('MANUAL_PAYMENT_MSB_ACCOUNT_NO')),
@@ -230,9 +243,9 @@ function buildVietQrImageUrl(args: {
 }
 
 function buildPremiumUntil(existing: Date | null, plan: ManualPaymentPlan) {
-  if (plan === 'lifetime') return LIFETIME_PREMIUM_UNTIL;
+  if (plan === 'lifetime' || (existing && existing >= LIFETIME_PREMIUM_UNTIL)) return LIFETIME_PREMIUM_UNTIL;
   const base = existing && existing.getTime() > Date.now() ? existing.getTime() : Date.now();
-  return new Date(base + premiumDays(plan) * 24 * 60 * 60 * 1000);
+  return new Date(Math.min(LIFETIME_PREMIUM_UNTIL.getTime(), base + premiumDays(plan) * 24 * 60 * 60 * 1000));
 }
 
 function mapPaymentRow(row: any) {
@@ -314,9 +327,9 @@ function discountPercent(originalAmount: number | null, currentAmount: number): 
 }
 
 function mapSettingRow(row: any, provider: ManualPaymentProvider) {
-  const monthlyAmount = Number(row?.monthly_amount || envNumber(`MANUAL_PAYMENT_${provider}_MONTHLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.monthly : 599));
-  const yearlyAmount = Number(row?.yearly_amount || envNumber(`MANUAL_PAYMENT_${provider}_YEARLY_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.yearly : 5999));
-  const lifetimeAmount = Number(row?.lifetime_amount || envNumber(`MANUAL_PAYMENT_${provider}_LIFETIME_AMOUNT`, provider === 'MSB' ? MSB_DEFAULT_AMOUNTS.lifetime : 16999));
+  const monthlyAmount = effectivePaymentAmount(row, provider, 'monthly');
+  const yearlyAmount = effectivePaymentAmount(row, provider, 'yearly');
+  const lifetimeAmount = effectivePaymentAmount(row, provider, 'lifetime');
   const monthlyOriginalAmount = cleanSettingNumber(row?.monthly_original_amount);
   const yearlyOriginalAmount = cleanSettingNumber(row?.yearly_original_amount);
   const lifetimeOriginalAmount = cleanSettingNumber(row?.lifetime_original_amount);
@@ -422,12 +435,14 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
 
 export function createManualPaymentRouter() {
   const router = Router();
+  router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
 
   router.get('/settings', async (_req: Request, res: Response) => {
     const settings = await getAllManualPaymentSettings();
     res.set('Cache-Control', 'no-store');
     return res.json({
-      trialDays: envNumber('PREMIUM_TRIAL_DAYS', 30),
+      trialDays: getPremiumPolicy().trialDays,
+      premiumPolicy: getPremiumPolicy(),
       plans: ['trial', 'monthly', 'yearly', 'lifetime'],
       MSB: {
         enabled: settings.MSB.enabled,
@@ -466,6 +481,7 @@ export function createManualPaymentRouter() {
 
     if (provider === 'PAYPAY') {
       const config = await getManualPaymentConfig(provider, billingPeriod);
+      assertExpectedPrice(req.body, config);
       if (!config.enabled) {
         return res.status(400).json({ message: 'Phuong thuc thanh toan nay dang tam tat.' });
       }
@@ -484,31 +500,15 @@ export function createManualPaymentRouter() {
         RETURNING *
       `);
 
-      await notifyAdmins({
-        title: 'PayPay payment request',
-        lines: [
-          `User: ${formatUserLine({
-            id: user.id,
-            username: user.username,
-            fullName: user.fullName,
-            email: user.email,
-          })}`,
-          `Plan: ${billingPeriod}`,
-          `Amount: ${config.amount} ${config.currency}`,
-          `Payment code: ${paymentCode}`,
-          note ? `Note: ${note}` : null,
-        ],
-        link: `/admin/manual-payments?openRequestId=${Number(row.id)}`,
-      });
-
       return res.json({
         request: mapPaymentRow(row),
         account: { provider, accountName: null, accountNo: null },
-        note: 'Admin da nhan duoc yeu cau va se lien he huong dan thanh toan qua Telegram/thong bao trong app.',
+        note: 'Gui tin nhan cho admin de duoc huong dan thanh toan PayPay. Bao da thanh toan sau khi chuyen tien.',
       });
     }
 
     const config = await getManualPaymentConfig(provider, billingPeriod);
+    assertExpectedPrice(req.body, config);
     if (!config.enabled) {
       return res.status(400).json({ message: 'Phuong thuc thanh toan nay dang tam tat.' });
     }
@@ -564,6 +564,21 @@ export function createManualPaymentRouter() {
     return res.json({ items: rows.map(mapPaymentRow) });
   });
 
+  router.get('/requests/:id', async (req: Request, res: Response) => {
+    await ensureManualPaymentTable();
+    const user = await requireUser(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT * FROM manual_payment_request WHERE id = ${BigInt(id)} AND user_id = ${BigInt(user.id)} LIMIT 1
+    `;
+    if (!rows.length) return res.status(404).json({ message: 'Payment request not found' });
+    const account = await prisma.userAccount.findUnique({ where: { id: BigInt(user.id) },
+      select: { plan: true, role: true, premiumValidUntil: true, premiumTrialStartedAt: true } });
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ request: mapPaymentRow(rows[0]), access: { ...account, isPremium: hasActivePremium(account) } });
+  });
+
   router.post('/requests/:id/mark-paid', async (req: Request, res: Response) => {
     await ensureManualPaymentTable();
     const user = await requireUser(req);
@@ -571,18 +586,32 @@ export function createManualPaymentRouter() {
     if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
     const proofNote = String(req.body?.proofNote || '').trim().slice(0, 1000) || null;
 
-    const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
-      UPDATE manual_payment_request
-      SET status = CASE WHEN status = 'PENDING' THEN 'PAID_REPORTED' ELSE status END,
-          proof_note = ${proofNote},
-          updated_at = NOW()
-      WHERE id = ${BigInt(id)}
-        AND user_id = ${BigInt(user.id)}
-        AND status IN ('PENDING', 'PAID_REPORTED')
-      RETURNING *
-    `);
-    if (!rows.length) return res.status(404).json({ message: 'Payment request not found or cannot be updated' });
-    return res.json({ request: mapPaymentRow(rows[0]) });
+    await ensureMailboxTable();
+    const payment = await prisma.$transaction(async (tx) => {
+      const [existing] = await tx.$queryRaw<any[]>`
+        SELECT * FROM manual_payment_request WHERE id = ${BigInt(id)} AND user_id = ${BigInt(user.id)} FOR UPDATE
+      `;
+      if (!existing || !['PENDING', 'PAID_REPORTED'].includes(existing.status)) return null;
+      const [updated] = await tx.$queryRaw<any[]>`
+        UPDATE manual_payment_request SET status = 'PAID_REPORTED', proof_note = ${proofNote}, updated_at = NOW()
+        WHERE id = ${BigInt(id)} RETURNING *
+      `;
+      const title = 'Premium payment awaiting review';
+      const link = `/admin/manual-payments?openRequestId=${id}`;
+      const body = `${user.username} reported a payment.\n${updated.provider}: ${updated.amount} ${updated.currency}\nPlan: ${updated.billing_period}\nReference: ${updated.payment_code}`;
+      // Payment-row lock serializes retries. Persist the bell notification in the
+      // same transaction, so a successful report cannot silently lose its alert.
+      await tx.$executeRaw`
+        INSERT INTO user_mailbox (user_id, title, body, link)
+        SELECT u.id, ${title}, ${body}, ${link} FROM useraccount u
+        WHERE u.role ILIKE '%ADMIN%' AND NOT EXISTS (
+          SELECT 1 FROM user_mailbox m WHERE m.user_id = u.id AND m.link = ${link} AND m.title = ${title}
+        )
+      `;
+      return updated;
+    });
+    if (!payment) return res.status(404).json({ message: 'Payment request not found or cannot be updated' });
+    return res.json({ request: mapPaymentRow(payment) });
   });
 
   router.get('/requests/:id/messages', async (req: Request, res: Response) => {
@@ -650,13 +679,15 @@ export function createManualPaymentRouter() {
 
 export function createAdminManualPaymentRouter() {
   const router = Router();
+  router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
 
   router.get('/settings', async (_req: Request, res: Response) => {
     await requireAdmin(_req);
     const settings = await getAllManualPaymentSettings();
     res.set('Cache-Control', 'no-store');
     return res.json({
-      trialDays: envNumber('PREMIUM_TRIAL_DAYS', 30),
+      trialDays: getPremiumPolicy().trialDays,
+      premiumPolicy: getPremiumPolicy(),
       plans: ['trial', 'monthly', 'yearly', 'lifetime'],
       ...settings,
     });
@@ -676,10 +707,18 @@ export function createAdminManualPaymentRouter() {
   router.get('/', async (req: Request, res: Response) => {
     await ensureManualPaymentTable();
     await requireAdmin(req);
-    const status = normalizeStatus(req.query.status);
+    const status = normalizeStatus(req.query.status === undefined ? 'PAID_REPORTED' : req.query.status);
     const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 300);
     const predicates: Prisma.Sql[] = [];
-    if (status) predicates.push(Prisma.sql`mpr.status = ${status}`);
+    const requestId = req.query.requestId === undefined ? null : Number(req.query.requestId);
+    if (requestId !== null && (!Number.isSafeInteger(requestId) || requestId <= 0)) return res.status(400).json({ message: 'Invalid request id' });
+    if (requestId) predicates.push(Prisma.sql`mpr.id = ${BigInt(requestId)}`);
+    else {
+      // Checkout drafts are not review requests, even in the "all" filter.
+      // Direct lookup remains available for support conversations before payment.
+      predicates.push(Prisma.sql`mpr.status <> 'PENDING'`);
+      if (status) predicates.push(Prisma.sql`mpr.status = ${status}`);
+    }
     const whereSql = predicates.length ? Prisma.sql`WHERE ${Prisma.join(predicates, ' AND ')}` : Prisma.sql``;
 
     const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
@@ -695,7 +734,8 @@ export function createAdminManualPaymentRouter() {
       FROM manual_payment_request mpr
       LEFT JOIN useraccount u ON u.id = mpr.user_id
       ${whereSql}
-      ORDER BY mpr.created_at DESC
+      ORDER BY CASE mpr.status WHEN 'PAID_REPORTED' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END,
+        mpr.updated_at DESC, mpr.id DESC
       LIMIT ${limit}
     `);
     return res.json({ items: rows.map(mapPaymentRow) });
@@ -776,7 +816,14 @@ export function createAdminManualPaymentRouter() {
         error.status = 400;
         throw error;
       }
+      if (payment.status !== 'PAID_REPORTED') {
+        const error = new Error('User must report payment before this request can be approved') as Error & { status?: number };
+        error.status = 409;
+        throw error;
+      }
 
+      // Serialize different payments for the same account to preserve every extension.
+      await tx.$queryRaw`SELECT id FROM useraccount WHERE id = ${payment.user_id} FOR UPDATE`;
       const user = await tx.userAccount.findUnique({ where: { id: payment.user_id } });
       if (!user) {
         const error = new Error('User not found') as Error & { status?: number };

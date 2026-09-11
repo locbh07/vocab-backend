@@ -1,3 +1,4 @@
+import { requireUser } from '../middleware/userGuard';
 import { Prisma } from '@prisma/client';
 import { Request, Response, Router } from 'express';
 import { ensureMailboxTable } from '../lib/mailboxStore';
@@ -23,7 +24,8 @@ export function createMailboxRouter() {
   router.get('/mine', async (req: Request, res: Response) => {
     await ensureMailboxTable();
 
-    const userId = Number(req.query.userId);
+    const userId = (await requireUser(req)).id;
+    res.set('Cache-Control', 'private, no-store');
     if (!Number.isFinite(userId) || userId <= 0) {
       return res.status(400).json({ message: 'userId không hợp lệ' });
     }
@@ -57,7 +59,7 @@ export function createMailboxRouter() {
     await ensureMailboxTable();
 
     const id = Number(req.params.id);
-    const userId = Number(req.body?.userId || req.query.userId);
+    const userId = (await requireUser(req)).id;
 
     if (!Number.isFinite(id) || id <= 0) {
       return res.status(400).json({ message: 'id thông báo không hợp lệ' });

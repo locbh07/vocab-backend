@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { getClientIp, isLocalRequest, authenticatedUserId, canonicalRateScope } from '../lib/requestIdentity';
 
 type ApiShieldOptions = {
   windowMs: number;
@@ -65,15 +66,6 @@ const sequenceCounters = new Map<string, SequenceBucket>();
 
 let requestCount = 0;
 
-function getClientIp(req: Request): string {
-  const forwarded = req.header('x-forwarded-for');
-  if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first;
-  }
-  return req.ip || req.socket?.remoteAddress || 'unknown';
-}
-
 function normalizePath(req: Request): string {
   const rawUrl = String(req.originalUrl || req.url || '');
   const pathOnly = rawUrl.split('?')[0] || '/';
@@ -101,7 +93,7 @@ function getNumericTarget(req: Request): number | null {
   if (pathNumbers.length) return pathNumbers[pathNumbers.length - 1];
 
   const query = req.query as Record<string, unknown>;
-  for (const key of ['id', 'vocabId', 'vocabularyId', 'wordId', 'page', 'offset']) {
+  for (const key of ['id', 'vocabId', 'vocabularyId', 'wordId']) {
     const value = Number(query[key]);
     if (Number.isInteger(value) && value > 0) return value;
   }
@@ -119,52 +111,12 @@ function isSuspiciousUserAgent(req: Request): boolean {
 function isLargeCollectionRequest(req: Request): boolean {
   if (req.method !== 'GET') return false;
   const path = normalizePath(req);
-  if (path.endsWith('/vocabulary/all')) return true;
+  if (path.endsWith('/vocabulary/all')) return Number(req.query.limit || 250) > 500;
   if (path.endsWith('/listening/videos')) {
     const limit = Number((req.query as Record<string, unknown>)?.limit || 0);
     return !Number.isFinite(limit) || limit >= 1000;
   }
   return false;
-}
-
-function isLocalRequest(req: Request, clientIp: string): boolean {
-  const host = String(req.hostname || req.header('host') || '').toLowerCase();
-  if (host.includes('localhost') || host.startsWith('127.0.0.1')) return true;
-
-  const ip = String(clientIp || '').toLowerCase();
-  return (
-    ip === '::1' ||
-    ip === '127.0.0.1' ||
-    ip === '::ffff:127.0.0.1' ||
-    ip.startsWith('::ffff:127.')
-  );
-}
-
-function toUserIdString(value: unknown): string | null {
-  if (value == null) return null;
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return null;
-  return String(Math.trunc(num));
-}
-
-function extractUserId(req: Request): string | null {
-  const fromQuery = toUserIdString((req.query as Record<string, unknown>)?.userId);
-  if (fromQuery) return fromQuery;
-
-  const fromQuerySnake = toUserIdString((req.query as Record<string, unknown>)?.user_id);
-  if (fromQuerySnake) return fromQuerySnake;
-
-  const body = (req.body || {}) as Record<string, unknown>;
-  const fromBody = toUserIdString(body.userId);
-  if (fromBody) return fromBody;
-
-  const fromBodySnake = toUserIdString(body.user_id);
-  if (fromBodySnake) return fromBodySnake;
-
-  const fromHeader = toUserIdString(req.header('x-user-id'));
-  if (fromHeader) return fromHeader;
-
-  return null;
 }
 
 function bumpCounter(store: Map<string, CounterBucket>, key: string, now: number, windowMs: number): CounterBucket {
@@ -266,7 +218,7 @@ export function createApiShield(options: ApiShieldOptions) {
   const maxDistinctUsersPerIp = Math.max(1, Number(options.maxDistinctUsersPerIp || 6));
   const distinctWindowMs = Math.max(5_000, Number(options.distinctWindowMs || 300_000));
   const blockMs = Math.max(10_000, Number(options.blockMs || 600_000));
-  const keyPrefix = String(options.keyPrefix || 'api-shield');
+  const keyPrefix = canonicalRateScope(String(options.keyPrefix || 'api-shield'));
   const suspiciousScoreWindowMs = Math.max(10_000, Number(options.suspiciousScoreWindowMs || 300_000));
   const suspiciousScoreThreshold = Math.max(1, Number(options.suspiciousScoreThreshold || 14));
   const maxDistinctTargetsPerIp = Math.max(5, Number(options.maxDistinctTargetsPerIp || 80));
@@ -380,15 +332,15 @@ export function createApiShield(options: ApiShieldOptions) {
       });
     }
 
-    const userId = extractUserId(req);
+    const userId = authenticatedUserId(req);
     if (userId) {
-      const userKey = `${keyPrefix}:user:${clientIp}:${userId}`;
+      const userKey = `${keyPrefix}:user:${userId}`;
       const userBucket = bumpCounter(userCounters, userKey, now, windowMs);
       if (userBucket.count > maxRequestsPerUser) {
-        blockIp(keyPrefix, clientIp, now, blockMs, 'user_rate_limit_exceeded');
+        // Throttle this account without banning unrelated users on a shared IP.
         res.setHeader('Retry-After', String(Math.ceil(blockMs / 1000)));
         return res.status(429).json({
-          message: 'Too many requests for this account from one IP. Please retry later.',
+          message: 'Too many requests for this account. Please retry later.',
         });
       }
 
@@ -396,12 +348,8 @@ export function createApiShield(options: ApiShieldOptions) {
       const distinctBucket = getDistinctUsersBucket(distinctUserCounters, distinctKey, now, distinctWindowMs);
       distinctBucket.ids.add(userId);
       distinctUserCounters.set(distinctKey, distinctBucket);
-      if (distinctBucket.ids.size > maxDistinctUsersPerIp) {
-        blockIp(keyPrefix, clientIp, now, blockMs, 'too_many_user_ids_per_ip');
-        res.setHeader('Retry-After', String(Math.ceil(blockMs / 1000)));
-        return res.status(429).json({
-          message: 'Unusual access pattern detected. Please retry later.',
-        });
+      if (distinctBucket.ids.size === maxDistinctUsersPerIp + 1) {
+        console.info(`[api-shield] shared network observed scope=${keyPrefix}`);
       }
     }
 

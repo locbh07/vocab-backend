@@ -1,3 +1,5 @@
+import { reserveContentBudget } from '../middleware/contentBudget';
+import { vocabularyPagination } from '../lib/vocabularyPagination';
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
@@ -159,8 +161,10 @@ export function createVocabularyRouter() {
     const sourceUnit = cleanText(req.query.sourceUnit);
     const level = cleanText(req.query.level);
     const includeExamples = normalizeBoolean(req.query.includeExamples);
-    const limitRaw = Number(req.query.limit);
-    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 500) : undefined;
+    const pagination = vocabularyPagination(req.query);
+    if (!pagination) return res.status(400).json({ message: 'Invalid limit or offset' });
+    res.set('Cache-Control', 'private, no-store');
+    if (!(await reserveContentBudget(req, res, pagination.take))) return;
 
     const where: Prisma.VocabularyWhereInput =
       track === 'core'
@@ -177,7 +181,7 @@ export function createVocabularyRouter() {
         ? [{ id: 'asc' }]
         : [{ source_book: 'asc' }, { source_unit: 'asc' }, { id: 'asc' }];
 
-    const rows = await prisma.vocabulary.findMany({ where, orderBy, ...(limit ? { take: limit } : {}) });
+    const rows = await prisma.vocabulary.findMany({ where, orderBy, ...pagination });
     if (!includeExamples || !rows.length) {
       const topicTranslations = await overlayTopicTranslations(rows.map((r) => String(r.topic || '')), language);
       const rowsWithTopic = topicTranslations.size

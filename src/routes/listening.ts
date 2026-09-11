@@ -1,3 +1,4 @@
+import { getPremiumPolicy } from '../lib/premiumPolicy';
 import { Request, Response, Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { mkdtemp, readdir, readFile, rm, stat } from 'fs/promises';
@@ -106,8 +107,8 @@ type ListeningVocabLookupToken = {
   posDetail: string;
 };
 
-const LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL = Math.max(1, Number(process.env.LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL || 15));
-const REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT = String(process.env.LISTENING_YOUTUBE_IMPORT_REQUIRE_PREMIUM || 'true').toLowerCase() !== 'false';
+const LISTENING_FREE_VIDEO_LIMIT_PER_LEVEL = getPremiumPolicy().freeListeningLimitPerLevel;
+const REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT = getPremiumPolicy().youtubeImportRequiresPremium;
 const LISTENING_AI_TRANSCRIPT_ENABLED = String(process.env.LISTENING_AI_TRANSCRIPT_ENABLED || 'true').toLowerCase() !== 'false';
 const LISTENING_AI_TRANSCRIPT_MODEL = String(process.env.OPENAI_LISTENING_TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1').trim();
 const LISTENING_AI_TRANSCRIPT_LANGUAGE = String(process.env.LISTENING_AI_TRANSCRIPT_LANGUAGE || 'ja').trim();

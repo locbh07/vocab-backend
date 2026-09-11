@@ -1,3 +1,4 @@
+import { getPremiumPolicy } from '../lib/premiumPolicy';
 import { explanationSourceText, assertExplanationSource, assertStarQuestionSource } from '../lib/examExplanationStandards';
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
@@ -30,10 +31,7 @@ import { buildPracticeCatalog } from '../lib/examPractice';
 // be one contiguous span. Older rows remain stored; both cache lookup and generation quotas
 // use this version on next access.
 const EXPLANATION_PROMPT_VERSION = 24;
-const FREE_EXAM_LIMIT_PER_LEVEL = Math.max(
-  1,
-  Number(process.env.FREE_EXAM_LIMIT_PER_LEVEL || process.env.CODE_EXAM_LIMIT_PER_LEVEL || 5),
-);
+const FREE_EXAM_LIMIT_PER_LEVEL = getPremiumPolicy().freeExamLimitPerLevel;
 const FREE_EXAM_LEVELS = ['N5', 'N4', 'N3', 'N2', 'N1'];
 let ensureExplainTablePromise: Promise<void> | null = null;
 
