@@ -36,6 +36,9 @@ import { contentGuard } from './middleware/contentGuard';
 dotenv.config();
 
 const app = express();
+// Supply only the IPs/CIDRs of proxies you operate; never blanket-trust forwarded headers.
+const trustedProxies = String(process.env.TRUST_PROXY_CIDRS || '').split(',').map((value) => value.trim()).filter(Boolean);
+app.set('trust proxy', trustedProxies.length ? trustedProxies : false);
 const apiShieldEnabled = String(process.env.API_SHIELD_ENABLED || 'true').toLowerCase() !== 'false';
 const apiShieldWindowMs = Number(process.env.API_SHIELD_WINDOW_MS || 60_000);
 const apiShieldDistinctWindowMs = Number(process.env.API_SHIELD_DISTINCT_WINDOW_MS || 300_000);
@@ -126,8 +129,8 @@ app.use('/auth', createAuthRouter());
 app.use('/api/auth', createAuthRouter());
 app.use('/billing', createBillingRouter());
 app.use('/api/billing', createBillingRouter());
-app.use('/manual-payments', createManualPaymentRouter());
-app.use('/api/manual-payments', createManualPaymentRouter());
+app.use('/manual-payments', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'manual-payments' }), createManualPaymentRouter());
+app.use('/api/manual-payments', createSimpleRateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'api-manual-payments' }), createManualPaymentRouter());
 app.use(
   '/vocabulary',
   ...(apiShieldEnabled ? [createRouteShield('vocabulary-shield', 180, 140)] : []),
@@ -159,11 +162,13 @@ app.use(
 app.use(
   '/learning',
   ...(apiShieldEnabled ? [createRouteShield('learning-shield', 160, 120)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'learning' }),
   createLearningRouter(),
 );
 app.use(
   '/api/learning',
   ...(apiShieldEnabled ? [createRouteShield('api-learning-shield', 160, 120)] : []),
+  createSimpleRateLimit({ windowMs: 60_000, max: 120, keyPrefix: 'learning' }),
   createLearningRouter(),
 );
 app.use(
