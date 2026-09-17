@@ -554,14 +554,22 @@ export function createManualPaymentRouter() {
   router.get('/requests/mine', async (req: Request, res: Response) => {
     await ensureManualPaymentTable();
     const user = await requireUser(req);
+    const openOnly = req.query.status === 'open';
+    const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+    const offset = req.query.offset === undefined ? 0 : Number(req.query.offset);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000) {
+      return res.status(400).json({ message: 'Invalid limit or offset' });
+    }
+    res.set('Cache-Control', 'private, no-store');
     const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT *
       FROM manual_payment_request
       WHERE user_id = ${BigInt(user.id)}
-      ORDER BY created_at DESC
-      LIMIT 20
+        ${openOnly ? Prisma.sql`AND status IN ('PENDING', 'PAID_REPORTED')` : Prisma.empty}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit + 1} OFFSET ${offset}
     `);
-    return res.json({ items: rows.map(mapPaymentRow) });
+    return res.json({ items: rows.slice(0, limit).map(mapPaymentRow), hasMore: rows.length > limit });
   });
 
   router.get('/requests/:id', async (req: Request, res: Response) => {
@@ -796,6 +804,7 @@ export function createAdminManualPaymentRouter() {
 
   router.post('/:id/approve', async (req: Request, res: Response) => {
     await ensureManualPaymentTable();
+    await ensureMailboxTable();
     const admin = await requireAdmin(req);
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
@@ -849,6 +858,16 @@ export function createAdminManualPaymentRouter() {
         WHERE id = ${BigInt(id)}
         RETURNING *
       `);
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO user_mailbox (user_id, title, body, link, sent_by_admin_id)
+        VALUES (
+          ${payment.user_id},
+          ${'Thanh toán Premium đã được duyệt'},
+          ${`Yêu cầu ${payment.payment_code} đã được duyệt. Quyền Premium của bạn đã được cập nhật. Mở thông báo để tải lại trang và tiếp tục học.`},
+          ${`/account?premiumPaymentResult=approved&requestId=${id}`},
+          ${BigInt(admin.id)}
+        )
+      `);
       return { payment: updatedRows[0], user, premiumUntil, newlyApproved: true };
     });
 
@@ -876,23 +895,41 @@ export function createAdminManualPaymentRouter() {
 
   router.post('/:id/reject', async (req: Request, res: Response) => {
     await ensureManualPaymentTable();
+    await ensureMailboxTable();
     const admin = await requireAdmin(req);
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: 'Invalid request id' });
     const adminNote = String(req.body?.adminNote || '').trim().slice(0, 1000) || null;
-    const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
-      UPDATE manual_payment_request
-      SET status = 'REJECTED',
-          admin_note = ${adminNote},
-          reviewed_by = ${BigInt(admin.id)},
-          reviewed_at = NOW(),
-          updated_at = NOW()
-      WHERE id = ${BigInt(id)}
-        AND status <> 'APPROVED'
-      RETURNING *
-    `);
-    if (!rows.length) return res.status(404).json({ message: 'Payment request not found or already approved' });
-    return res.json({ request: mapPaymentRow(rows[0]) });
+    const payment = await prisma.$transaction(async (tx) => {
+      const [existing] = await tx.$queryRaw<any[]>(Prisma.sql`
+        SELECT * FROM manual_payment_request WHERE id = ${BigInt(id)} FOR UPDATE
+      `);
+      if (!existing || existing.status === 'APPROVED') return null;
+      if (existing.status === 'REJECTED') return existing;
+      const [updated] = await tx.$queryRaw<any[]>(Prisma.sql`
+        UPDATE manual_payment_request
+        SET status = 'REJECTED',
+            admin_note = ${adminNote},
+            reviewed_by = ${BigInt(admin.id)},
+            reviewed_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ${BigInt(id)}
+        RETURNING *
+      `);
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO user_mailbox (user_id, title, body, link, sent_by_admin_id)
+        VALUES (
+          ${existing.user_id},
+          ${'Yêu cầu thanh toán Premium bị từ chối'},
+          ${`Yêu cầu ${existing.payment_code} chưa được duyệt.${adminNote ? ` Ghi chú của admin: ${adminNote}` : ' Vui lòng kiểm tra giao dịch và trao đổi với admin trước khi chuyển tiền lại.'}`},
+          ${`/account?premiumPaymentResult=rejected&requestId=${id}`},
+          ${BigInt(admin.id)}
+        )
+      `);
+      return updated;
+    });
+    if (!payment) return res.status(404).json({ message: 'Payment request not found or already approved' });
+    return res.json({ request: mapPaymentRow(payment) });
   });
 
   return router;
