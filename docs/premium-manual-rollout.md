@@ -19,6 +19,7 @@
 - Admin mặc định chỉ hiển thị PAID_REPORTED (chờ duyệt). Tạo QR/yêu cầu PayPay chỉ là PENDING, không phát thông báo duyệt. Bản nháp bị loại khỏi toàn bộ danh sách, kể cả bộ lọc “Tất cả”; bỏ bộ lọc/chỉ số chờ user thanh toán. Chỉ tra cứu trực tiếp `requestId` để mở cuộc trao đổi hỗ trợ trước thanh toán vẫn được phép. API duyệt PENDING trả 409; chỉ PAID_REPORTED được cấp Premium, còn APPROVED giữ tính idempotent.
 - Danh sách và chuông tự làm mới mỗi 15 giây khi tab hiển thị, làm mới khi focus. API admin hỗ trợ `requestId` để mở đúng yêu cầu kể cả nằm ngoài danh sách mặc định. `GET /admin/manual-payments` không truyền status mặc định lọc PAID_REPORTED; truyền `status=` để xem tất cả yêu cầu đã báo thanh toán/đã xử lý, không gồm PENDING. Frontend cũng lọc bản nháp nếu backend cũ còn trả về.
 - Modal chỉ poll trạng thái sau khi user báo thanh toán, không poll khi mới tạo QR. Điều này tránh trình bày lỗi theo dõi duyệt ở bước chưa gửi duyệt.
+- Duyệt hoặc từ chối ghi thông báo cho chủ yêu cầu trong cùng transaction đổi trạng thái; thao tác lặp không tạo thông báo trùng. Chuông user tự làm mới mỗi 15 giây và hiện dialog một lần cho thông báo chưa đọc. Khi duyệt, nút trong dialog lấy lại `/auth/me`, xác nhận quyền Premium rồi tải lại trang hiện tại; khi từ chối, dialog hiển thị ghi chú của admin nếu có.
 - API thanh toán và mailbox đọc/ghi cùng backend được cấu hình; không fallback sang môi trường khác khi lỗi mạng. Biến môi trường frontend dùng cú pháp `import.meta.env` để Vite xử lý đúng.
 - Mailbox yêu cầu JWT và lấy chủ sở hữu từ token; không tin `userId` trong query/body. Các response thanh toán không cache.
 - Modal mới dùng tông xanh ngọc, thẻ chọn gói dạng radio, một khu vực số tiền/mã chuyển khoản, màn hình chờ duyệt riêng. Bố cục thích ứng desktop/mobile; hỗ trợ bàn phím và giữ focus trong dialog.
@@ -29,6 +30,8 @@
 `GET /manual-payments/settings` thêm `premiumPolicy` gồm `version`, `trialDays`, `freeExamLimitPerLevel`, `freeListeningLimitPerLevel`, `youtubeImportRequiresPremium`, `paymentMode`, `autoRenew`. Các trường cũ vẫn giữ.
 
 `GET /manual-payments/requests/:id` yêu cầu bearer token. Chỉ chủ giao dịch đọc được; trả `{ request, access }`, trong đó `access` có `plan`, `role`, `premiumValidUntil`, `premiumTrialStartedAt`, `isPremium`. Không tìm thấy hoặc không sở hữu trả 404. Response không được cache.
+
+`GET /manual-payments/requests/mine` giữ mặc định 20 yêu cầu mới nhất cho client cũ. Client có thể truyền `status=open` để chỉ lấy `PENDING` và `PAID_REPORTED`, `limit` (1–50, mặc định 20), `offset` (0–100000, mặc định 0). Response thêm `hasMore` để tải tiếp các yêu cầu cũ; thứ tự là `created_at DESC, id DESC`. Response không được cache và chỉ trả yêu cầu của tài khoản trong bearer token.
 
 `GET /vocabulary/all` vẫn trả mảng, nhưng luôn phân trang: mặc định `limit=250`, tối đa 500; `offset` mặc định 0, số nguyên từ 0 đến 100000. Giá trị không hợp lệ trả 400. Kết thúc khi trang nhận được ít hơn `limit`. Ba màn hình học từ vựng trong frontend đã chuyển sang tải từng trang tuần tự. Trang chủ vẫn tải preview có `limit` riêng.
 

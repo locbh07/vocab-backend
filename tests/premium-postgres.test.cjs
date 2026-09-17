@@ -98,6 +98,21 @@ test('manual status is private and reporting a transfer does not grant Premium',
   assert.equal((await fetch(`${base}/admin/manual-payments/${id}/approve`, { method: 'POST', headers: auth(owner) })).status, 403);
 });
 
+test('open payment requests are paginated without hiding older drafts', async () => {
+  const ids = [await payment(), await payment('yearly'), await payment()];
+  const list = (offset) => fetch(`${base}/manual-payments/requests/mine?status=open&limit=2&offset=${offset}`, { headers: auth(owner) });
+  const first = await list(0);
+  const firstPage = await first.json();
+  assert.deepEqual(firstPage.items.map((item) => String(item.id)), [ids[2], ids[1]]);
+  assert.equal(firstPage.hasMore, true);
+  assert.match(first.headers.get('cache-control'), /no-store/);
+  const secondPage = await (await list(2)).json();
+  assert.equal(String(secondPage.items[0].id), ids[0]);
+  assert.equal((await fetch(`${base}/manual-payments/requests/mine?limit=51`, { headers: auth(owner) })).status, 400);
+  const strangerPage = await (await fetch(`${base}/manual-payments/requests/mine?status=open`, { headers: auth(stranger) })).json();
+  assert.equal(strangerPage.items.length, 0);
+});
+
 test('different payments extend the account serially and duplicate approval grants once', async () => {
   const baseDate = new Date('2030-01-01T00:00:00Z');
   await prisma.userAccount.update({ where: { id: owner.id }, data: { premiumValidUntil: baseDate } });
@@ -111,6 +126,27 @@ test('different payments extend the account serially and duplicate approval gran
   const data = await (await fetch(`${base}/manual-payments/requests/${ids[0]}`, { headers: auth(owner) })).json();
   assert.equal(data.request.status, 'APPROVED');
   assert.equal(data.access.isPremium, true);
+  for (const id of ids) {
+    const link = `/account?premiumPaymentResult=approved&requestId=${id}`;
+    const messages = await prisma.$queryRaw`SELECT id FROM user_mailbox WHERE user_id = ${owner.id} AND link = ${link}`;
+    assert.equal(messages.length, 1, 'each approval sends exactly one user notification');
+  }
+});
+
+test('rejecting a payment notifies its owner once with the review note', async () => {
+  const id = await payment();
+  const reject = () => fetch(`${base}/admin/manual-payments/${id}/reject`, {
+    method: 'POST', headers: { ...auth(admin), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminNote: 'Chưa thấy giao dịch trên sao kê.' }),
+  });
+  assert.equal((await reject()).status, 200);
+  assert.equal((await reject()).status, 200);
+  const link = `/account?premiumPaymentResult=rejected&requestId=${id}`;
+  const messages = await prisma.$queryRaw`SELECT * FROM user_mailbox WHERE user_id = ${owner.id} AND link = ${link}`;
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].body, /Chưa thấy giao dịch/);
+  const strangerMessages = await prisma.$queryRaw`SELECT id FROM user_mailbox WHERE user_id = ${stranger.id} AND link = ${link}`;
+  assert.equal(strangerMessages.length, 0);
 });
 
 test('monthly approval preserves an existing lifetime entitlement', async () => {
