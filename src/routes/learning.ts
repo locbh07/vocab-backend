@@ -309,15 +309,31 @@ export function createLearningRouter() {
     const identity = await requireUser(req);
     const userId = identity.id;
     const language = resolveRequestLanguage(req);
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(500, Math.floor(requestedLimit)))
+      : null;
     // Keep date filtering in SQL to match Java logic exactly and avoid timezone shifts.
-    const dueRows = await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
-      SELECT vocab_id
-      FROM user_vocab_progress
-      WHERE user_id = ${BigInt(userId)}
-        AND is_mastered = 0
-        AND next_review_date <= CURRENT_DATE
-      ORDER BY next_review_date ASC
-    `;
+    // The optional limit lets interactive clients fetch a bounded working set while
+    // preserving the legacy unbounded response for existing API consumers.
+    const dueRows = limit
+      ? await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
+          SELECT vocab_id
+          FROM user_vocab_progress
+          WHERE user_id = ${BigInt(userId)}
+            AND is_mastered = 0
+            AND next_review_date <= CURRENT_DATE
+          ORDER BY next_review_date ASC
+          LIMIT ${limit}
+        `
+      : await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
+          SELECT vocab_id
+          FROM user_vocab_progress
+          WHERE user_id = ${BigInt(userId)}
+            AND is_mastered = 0
+            AND next_review_date <= CURRENT_DATE
+          ORDER BY next_review_date ASC
+        `;
     const ids = dueRows.map((p) => p.vocab_id);
     if (!ids.length) return res.json([]);
     const words = await prisma.vocabulary.findMany({ where: { id: { in: ids } } });
@@ -1134,62 +1150,52 @@ export function createLearningRouter() {
     const userBigId = BigInt(userId);
 
     const vocabWhere = buildVocabularyScopeWhere(scope);
-    const total = await prisma.vocabulary.count({ where: vocabWhere as any });
-    const learned = await prisma.userVocabProgress.count({
-      where: { user_id: userBigId, vocabulary: vocabWhere as any },
-    });
-    const mastered = await prisma.userVocabProgress.count({
-      where: { user_id: userBigId, is_mastered: 1, vocabulary: vocabWhere as any },
-    });
-
-    const today = dateOnly(new Date());
-    const rows = await prisma.$queryRaw<Array<{ study_date: Date; words: bigint }>>`
-      SELECT DATE(review_time) AS study_date, COUNT(DISTINCT vocab_id) AS words
-      FROM user_review_log
-      WHERE user_id = ${userBigId}
-      GROUP BY DATE(review_time)
-      ORDER BY study_date DESC
-      LIMIT 60
-    `;
-    const streakRows = await prisma.$queryRaw<Array<{ study_date: Date }>>`
-      SELECT DATE(review_time) AS study_date
-      FROM user_review_log
-      WHERE user_id = ${userBigId}
-      GROUP BY DATE(review_time)
-      ORDER BY study_date ASC
-    `;
+    const [total, learned, mastered, activityRows, dueReviewsRows] = await Promise.all([
+      prisma.vocabulary.count({ where: vocabWhere as any }),
+      prisma.userVocabProgress.count({
+        where: { user_id: userBigId, vocabulary: vocabWhere as any },
+      }),
+      prisma.userVocabProgress.count({
+        where: { user_id: userBigId, is_mastered: 1, vocabulary: vocabWhere as any },
+      }),
+      // One history scan supplies the calendar, today's counts and all-time streak days.
+      // Previously dashboard scanned user_review_log three separate times.
+      prisma.$queryRaw<Array<{ study_date: Date; words: bigint; new_words: bigint; is_today: boolean }>>`
+        SELECT
+          DATE(review_time) AS study_date,
+          COUNT(DISTINCT vocab_id) AS words,
+          COUNT(DISTINCT vocab_id) FILTER (WHERE mode = 'new') AS new_words,
+          DATE(review_time) = CURRENT_DATE AS is_today
+        FROM user_review_log
+        WHERE user_id = ${userBigId}
+        GROUP BY DATE(review_time)
+        ORDER BY study_date DESC
+      `,
+      prisma.$queryRaw<Array<{ total: bigint }>>`
+        SELECT COUNT(*)::bigint AS total
+        FROM user_vocab_progress
+        WHERE user_id = ${userBigId}
+          AND is_mastered = 0
+          AND next_review_date <= CURRENT_DATE
+      `,
+    ]);
 
     const recentStudyDays: Record<string, number> = {};
     let todayReviews = 0;
-    for (const row of rows) {
+    let todayNewWords = 0;
+    for (const [index, row] of activityRows.entries()) {
       const key = formatLocalDateKey(row.study_date);
       const words = Number(row.words);
-      recentStudyDays[key] = words;
-      if (key === formatLocalDateKey(today)) todayReviews = words;
+      if (index < 60) recentStudyDays[key] = words;
+      if (row.is_today) {
+        todayReviews = words;
+        todayNewWords = Number(row.new_words);
+      }
     }
     const longestStreak = calculateLongestStreakFromKeys(
-      streakRows.map((row) => formatLocalDateKey(row.study_date)),
+      activityRows.map((row) => formatLocalDateKey(row.study_date)),
     );
     const streak = calculateCurrentStreakFromDayCounts(recentStudyDays);
-
-    // Dùng CURRENT_DATE (ngày theo timezone của DB) thay vì truyền Date đã tính theo giờ
-    // local của server Node — nếu không, lệch múi giờ giữa server và DB khiến "hôm nay"
-    // của server rơi vào một ngày UTC khác, làm todayNewWords luôn đếm sai/0.
-    const [todayNewRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
-      SELECT COUNT(DISTINCT vocab_id) AS total
-      FROM user_review_log
-      WHERE user_id = ${userBigId}
-        AND mode = 'new'
-        AND DATE(review_time) = CURRENT_DATE
-    `;
-
-    const [dueReviewsRow] = await prisma.$queryRaw<Array<{ total: bigint }>>`
-      SELECT COUNT(*)::bigint AS total
-      FROM user_vocab_progress
-      WHERE user_id = ${userBigId}
-        AND is_mastered = 0
-        AND next_review_date <= CURRENT_DATE
-    `;
 
     return res.json({
       totalCoreWords: total,
@@ -1197,9 +1203,9 @@ export function createLearningRouter() {
       masteredWords: mastered,
       inProgressWords: Math.max(learned - mastered, 0),
       progressPercent: total === 0 ? 0 : (learned * 100) / total,
-      todayNewWords: Number(todayNewRow?.total || 0n),
+      todayNewWords,
       todayReviews,
-      dueReviews: Number(dueReviewsRow?.total || 0n),
+      dueReviews: Number(dueReviewsRows[0]?.total || 0n),
       currentStreak: streak,
       longestStreak,
       recentStudyDays,
@@ -1690,6 +1696,50 @@ let ensureKanjiLearningTablesPromise: Promise<void> | null = null;
 export async function ensureKanjiLearningTables() {
   if (!ensureKanjiLearningTablesPromise) {
     ensureKanjiLearningTablesPromise = (async () => {
+      // These tables predate the Prisma migration history and are retained here as a
+      // self-healing fallback. On a normal deployed database, avoid replaying 25 DDL
+      // statements on every serverless cold start: one catalog probe is sufficient.
+      const [schemaState] = await prisma.$queryRawUnsafe<Array<{ ready: boolean }>>(`
+        SELECT (
+          to_regclass('public.user_kanji_learning_plan') IS NOT NULL
+          AND to_regclass('public.user_kanji_progress') IS NOT NULL
+          AND to_regclass('public.user_kanji_review_log') IS NOT NULL
+          AND to_regclass('public.user_kanji_plan_item') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_learning_plan_user_active') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_progress_due') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_progress_first_seen') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_review_log_user_time') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_review_log_user_char') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_review_log_user_mode_time') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_plan_item_user_plan_day') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_plan_item_user_status_day') IS NOT NULL
+          AND to_regclass('public.idx_user_kanji_plan_item_user_char') IS NOT NULL
+          AND (
+            SELECT COUNT(*) = 7
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'user_kanji_progress'
+              AND column_name IN ('stability', 'difficulty', 'reps', 'lapses', 'state', 'last_rating', 'self_marked_known')
+          )
+          AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'user_kanji_learning_plan' AND column_name = 'jlpt_level'
+          )
+          AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'user_kanji_review_log' AND column_name = 'rating'
+          )
+          AND (
+            SELECT COUNT(*) = 3
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'user_kanji_plan_item'
+              AND column_name IN ('status', 'first_result', 'reviewed_at')
+          )
+        ) AS ready
+      `);
+      if (schemaState?.ready) return;
+
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS user_kanji_learning_plan (
           id BIGSERIAL PRIMARY KEY,
