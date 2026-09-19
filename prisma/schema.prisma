@@ -271,6 +271,8 @@ model UserReviewLog {
 
   user UserAccount @relation(fields: [user_id], references: [id])
 
+  @@index([user_id, review_time], map: "idx_log_user_time")
+  @@index([user_id, mode, review_time], map: "idx_user_review_log_user_mode_time")
   @@map("user_review_log")
 }
 
@@ -348,6 +350,8 @@ model UserVocabProgress {
   plan       UserLearningPlan? @relation(fields: [plan_id], references: [id])
 
   @@unique([user_id, vocab_id])
+  @@index([user_id, is_mastered, next_review_date], map: "ix_uvp_user_mastered_nextreview")
+  @@index([user_id, first_seen_date], map: "ix_uvp_user_firstseen")
   @@map("user_vocab_progress")
 }
 
