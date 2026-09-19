@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { getClientIp, isLocalRequest, canonicalRateScope, authenticatedUserId } from '../lib/requestIdentity';
-import { consumeRateBudget } from '../lib/rateLimitStore';
+import { consumeRateBudgets } from '../lib/rateLimitStore';
 
 type RateLimitOptions = { windowMs: number; max: number; keyPrefix?: string };
 
@@ -12,10 +12,11 @@ export function createSimpleRateLimit(options: RateLimitOptions) {
     if (isLocalRequest(req)) return next();
     try {
       const userId = authenticatedUserId(req);
-      const budgets = await Promise.all([
-        consumeRateBudget(`${scope}:ip:${getClientIp(req)}`, 1, max, windowMs),
-        ...(userId ? [consumeRateBudget(`${scope}:user:${userId}`, 1, max, windowMs)] : []),
-      ]);
+      const keys = [
+        `${scope}:ip:${getClientIp(req)}`,
+        ...(userId ? [`${scope}:user:${userId}`] : []),
+      ];
+      const budgets = await consumeRateBudgets(keys, 1, max, windowMs);
       const blocked = budgets.filter((budget) => !budget.allowed);
       if (blocked.length) {
         res.set('Retry-After', String(Math.max(...blocked.map((budget) => budget.retryAfter))));
