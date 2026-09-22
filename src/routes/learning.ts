@@ -309,36 +309,59 @@ export function createLearningRouter() {
     const identity = await requireUser(req);
     const userId = identity.id;
     const language = resolveRequestLanguage(req);
+    const includeMeta = ['1', 'true'].includes(String(req.query.includeMeta || '').toLowerCase());
     const requestedLimit = Number(req.query.limit);
     const limit = Number.isFinite(requestedLimit)
       ? Math.max(1, Math.min(500, Math.floor(requestedLimit)))
       : null;
-    // Keep date filtering in SQL to match Java logic exactly and avoid timezone shifts.
+    // Compare precise instants in SQL so sub-day FSRS intervals are not returned early.
     // The optional limit lets interactive clients fetch a bounded working set while
     // preserving the legacy unbounded response for existing API consumers.
-    const dueRows = limit
-      ? await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
+    const dueRowsPromise = limit
+      ? prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
           SELECT vocab_id
           FROM user_vocab_progress
           WHERE user_id = ${BigInt(userId)}
             AND is_mastered = 0
-            AND next_review_date <= CURRENT_DATE
+            AND next_review_date <= NOW()
           ORDER BY next_review_date ASC
           LIMIT ${limit}
         `
-      : await prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
+      : prisma.$queryRaw<Array<{ vocab_id: bigint }>>`
           SELECT vocab_id
           FROM user_vocab_progress
           WHERE user_id = ${BigInt(userId)}
             AND is_mastered = 0
-            AND next_review_date <= CURRENT_DATE
+            AND next_review_date <= NOW()
           ORDER BY next_review_date ASC
         `;
+    const totalDuePromise = includeMeta
+      ? prisma.$queryRaw<Array<{ total: bigint }>>`
+          SELECT COUNT(*)::bigint AS total
+          FROM user_vocab_progress
+          WHERE user_id = ${BigInt(userId)}
+            AND is_mastered = 0
+            AND next_review_date <= NOW()
+        `
+      : Promise.resolve(null);
+    const [dueRows, totalDueRows] = await Promise.all([dueRowsPromise, totalDuePromise]);
     const ids = dueRows.map((p) => p.vocab_id);
-    if (!ids.length) return res.json([]);
+    const totalDue = includeMeta ? Number(totalDueRows?.[0]?.total || 0n) : 0;
+    if (!ids.length) {
+      return res.json(includeMeta
+        ? { items: [], totalDue, batchSize: limit || 0, hasMore: false }
+        : []);
+    }
     const words = await prisma.vocabulary.findMany({ where: { id: { in: ids } } });
     const translatedWords = await overlayVocabularyTranslations(words, language);
-    return res.json(translatedWords);
+    return res.json(includeMeta
+      ? {
+          items: translatedWords,
+          totalDue,
+          batchSize: limit || translatedWords.length,
+          hasMore: totalDue > translatedWords.length,
+        }
+      : translatedWords);
   });
 
   router.get('/today', async (req: Request, res: Response) => {
@@ -559,6 +582,7 @@ export function createLearningRouter() {
         reps: current?.reps,
         lapses: current?.lapses,
         state: current?.state,
+        learningSteps: current?.learning_steps,
         dueAt: current?.next_review_date,
         lastReviewedAt: current?.last_reviewed_at,
       },
@@ -585,6 +609,7 @@ export function createLearningRouter() {
           reps: graded.fsrs.reps,
           lapses: graded.fsrs.lapses,
           state: graded.fsrs.state,
+          learning_steps: graded.fsrs.learningSteps,
           last_rating: graded.lastRating,
         },
         update: {
@@ -601,6 +626,7 @@ export function createLearningRouter() {
           reps: graded.fsrs.reps,
           lapses: graded.fsrs.lapses,
           state: graded.fsrs.state,
+          learning_steps: graded.fsrs.learningSteps,
           last_rating: graded.lastRating,
         },
       }),
@@ -645,6 +671,7 @@ export function createLearningRouter() {
         reps: current?.reps,
         lapses: current?.lapses,
         state: current?.state,
+        learningSteps: current?.learning_steps,
         dueAt: current?.next_review_date,
         lastReviewedAt: current?.last_reviewed_at,
       },
@@ -878,11 +905,12 @@ export function createLearningRouter() {
           reps: number | null;
           lapses: number | null;
           state: number | null;
+          learning_steps: number | null;
         }>
       >(
         `
           SELECT id, stage, times_reviewed, is_mastered, plan_id, first_seen_date,
-                 next_review_date, last_reviewed_at, stability, difficulty, reps, lapses, state
+                 next_review_date, last_reviewed_at, stability, difficulty, reps, lapses, state, learning_steps
           FROM user_kanji_progress
           WHERE user_id = $1
             AND kanji_char = $2
@@ -899,6 +927,7 @@ export function createLearningRouter() {
           reps: current?.reps,
           lapses: current?.lapses,
           state: current?.state,
+          learningSteps: current?.learning_steps,
           dueAt: current?.next_review_date,
           lastReviewedAt: current?.last_reviewed_at,
         },
@@ -912,9 +941,9 @@ export function createLearningRouter() {
             INSERT INTO user_kanji_progress (
               user_id, kanji_char, plan_id, stage, next_review_date, last_reviewed_at,
               times_reviewed, last_result, is_mastered, first_seen_date,
-              stability, difficulty, reps, lapses, state, last_rating, created_at, updated_at
+              stability, difficulty, reps, lapses, state, learning_steps, last_rating, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
           `,
           BigInt(userId),
           kanji,
@@ -930,6 +959,7 @@ export function createLearningRouter() {
           graded.fsrs.reps,
           graded.fsrs.lapses,
           graded.fsrs.state,
+          graded.fsrs.learningSteps,
           graded.lastRating,
         );
       } else {
@@ -950,9 +980,10 @@ export function createLearningRouter() {
               reps = $10,
               lapses = $11,
               state = $12,
-              last_rating = $13,
+              learning_steps = $13,
+              last_rating = $14,
               updated_at = NOW()
-            WHERE id = $14
+            WHERE id = $15
           `,
           plan?.id ? BigInt(plan.id) : null,
           graded.legacyStage,
@@ -966,6 +997,7 @@ export function createLearningRouter() {
           graded.fsrs.reps,
           graded.fsrs.lapses,
           graded.fsrs.state,
+          graded.fsrs.learningSteps,
           graded.lastRating,
           current.id,
         );
@@ -1032,11 +1064,12 @@ export function createLearningRouter() {
         reps: number | null;
         lapses: number | null;
         state: number | null;
+        learning_steps: number | null;
         next_review_date: Date | null;
         last_reviewed_at: Date | null;
       }>
     >(
-      `SELECT stability, difficulty, reps, lapses, state, next_review_date, last_reviewed_at
+      `SELECT stability, difficulty, reps, lapses, state, learning_steps, next_review_date, last_reviewed_at
        FROM user_kanji_progress WHERE user_id = $1 AND kanji_char = $2 LIMIT 1`,
       BigInt(userId),
       kanji,
@@ -1050,6 +1083,7 @@ export function createLearningRouter() {
         reps: current?.reps,
         lapses: current?.lapses,
         state: current?.state,
+        learningSteps: current?.learning_steps,
         dueAt: current?.next_review_date,
         lastReviewedAt: current?.last_reviewed_at,
       },
@@ -1123,7 +1157,7 @@ export function createLearningRouter() {
       FROM user_kanji_progress
       WHERE user_id = ${userBigId}
         AND is_mastered = 0
-        AND next_review_date <= CURRENT_DATE
+        AND next_review_date <= NOW()
     `;
 
     const activePlan = await getActiveKanjiPlan(userId);
@@ -1176,7 +1210,7 @@ export function createLearningRouter() {
         FROM user_vocab_progress
         WHERE user_id = ${userBigId}
           AND is_mastered = 0
-          AND next_review_date <= CURRENT_DATE
+          AND next_review_date <= NOW()
       `,
     ]);
 
@@ -1715,11 +1749,11 @@ export async function ensureKanjiLearningTables() {
           AND to_regclass('public.idx_user_kanji_plan_item_user_status_day') IS NOT NULL
           AND to_regclass('public.idx_user_kanji_plan_item_user_char') IS NOT NULL
           AND (
-            SELECT COUNT(*) = 7
+            SELECT COUNT(*) = 8
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = 'user_kanji_progress'
-              AND column_name IN ('stability', 'difficulty', 'reps', 'lapses', 'state', 'last_rating', 'self_marked_known')
+              AND column_name IN ('stability', 'difficulty', 'reps', 'lapses', 'state', 'learning_steps', 'last_rating', 'self_marked_known')
           )
           AND EXISTS (
             SELECT 1 FROM information_schema.columns
@@ -1776,6 +1810,7 @@ export async function ensureKanjiLearningTables() {
           last_result INT,
           is_mastered INT NOT NULL DEFAULT 0,
           first_seen_date TIMESTAMPTZ,
+          learning_steps INT NOT NULL DEFAULT 0,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           CONSTRAINT uq_user_kanji_progress_user_char UNIQUE (user_id, kanji_char)
@@ -1808,6 +1843,10 @@ export async function ensureKanjiLearningTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE user_kanji_progress
         ADD COLUMN IF NOT EXISTS state INT NOT NULL DEFAULT 0;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_progress
+        ADD COLUMN IF NOT EXISTS learning_steps INT NOT NULL DEFAULT 0;
       `);
       await prisma.$executeRawUnsafe(`
         ALTER TABLE user_kanji_progress
@@ -2116,7 +2155,7 @@ async function listDueKanjiRows(userId: number): Promise<KanjiLearningItemRow[]>
         FROM user_kanji_progress
         WHERE user_id = $1
           AND is_mastered = 0
-          AND next_review_date <= CURRENT_DATE
+          AND next_review_date <= NOW()
         ORDER BY next_review_date ASC, kanji_char ASC
         LIMIT 200
       )

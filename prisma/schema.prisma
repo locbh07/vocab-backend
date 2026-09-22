@@ -329,8 +329,8 @@ model UserVocabProgress {
   vocab_id         BigInt    @map("vocab_id")
   plan_id          BigInt?   @map("plan_id")
   stage            Int       @default(0)
-  next_review_date DateTime?
-  last_reviewed_at DateTime?
+  next_review_date DateTime? @db.Timestamptz(6)
+  last_reviewed_at DateTime? @db.Timestamptz(6)
   times_reviewed   Int       @default(0)
   last_result      Int?
   is_mastered      Int       @default(0)
@@ -342,6 +342,7 @@ model UserVocabProgress {
   reps             Int       @default(0)
   lapses           Int       @default(0)
   state            Int       @default(0)
+  learning_steps   Int       @default(0)
   last_rating      Int?
   self_marked_known Boolean  @default(false)
 
