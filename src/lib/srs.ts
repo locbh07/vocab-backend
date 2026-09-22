@@ -1,10 +1,17 @@
 import { fsrs, generatorParameters, createEmptyCard, State } from 'ts-fsrs';
 import type { Card as FsrsCard, Grade } from 'ts-fsrs';
 
-// Phase 1: library defaults only (request_retention 0.9, maximum_interval 36500,
-// enable_fuzz false, enable_short_term true). Per-user parameter optimization from
-// accumulated review logs is a future enhancement, not part of this phase.
-const params = generatorParameters();
+// Keep the target explicit so library upgrades cannot silently change the product's
+// learning policy. A single 10-minute learning/relearning step avoids unnecessary
+// same-session repetition; FSRS chooses every later interval from card history.
+const params = generatorParameters({
+  request_retention: 0.9,
+  maximum_interval: 36500,
+  enable_fuzz: false,
+  enable_short_term: true,
+  learning_steps: ['10m'],
+  relearning_steps: ['10m'],
+});
 const scheduler = fsrs(params);
 
 export type SrsRating = 1 | 2 | 3 | 4; // Rating.Again..Easy; Rating.Manual(0) is unused here
@@ -15,6 +22,7 @@ export type StoredFsrsFields = {
   reps?: number | null;
   lapses?: number | null;
   state?: number | null;
+  learningSteps?: number | null;
   dueAt?: Date | null;
   lastReviewedAt?: Date | null;
 };
@@ -34,7 +42,7 @@ export function toFsrsCard(stored: StoredFsrsFields, now: Date = new Date()): Fs
     difficulty: stored.difficulty ?? 0,
     elapsed_days: 0,
     scheduled_days: 0,
-    learning_steps: 0,
+    learning_steps: stored.learningSteps ?? 0,
     reps: stored.reps ?? 0,
     lapses: stored.lapses ?? 0,
     state: stored.state as State,
@@ -49,6 +57,7 @@ export type GradeResult = {
     reps: number;
     lapses: number;
     state: number;
+    learningSteps: number;
     dueAt: Date;
     lastReviewedAt: Date;
   };
@@ -82,6 +91,7 @@ export function gradeReview(args: {
       reps: nextCard.reps,
       lapses: nextCard.lapses, // ts-fsrs auto-increments this on Again from Review state
       state: nextCard.state,
+      learningSteps: nextCard.learning_steps,
       dueAt: nextCard.due,
       lastReviewedAt: nextCard.last_review ?? now,
     },

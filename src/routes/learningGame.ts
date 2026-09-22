@@ -328,7 +328,7 @@ async function listDeckCandidates(input: DeckRequestPayload, candidateTake: numb
       FROM user_vocab_progress
       WHERE user_id = ${BigInt(input.userId)}
         AND is_mastered = 0
-        AND next_review_date <= CURRENT_DATE
+        AND next_review_date <= NOW()
       ORDER BY next_review_date ASC, vocab_id ASC
       LIMIT ${Math.min(candidateTake, 500)}
     `;
@@ -831,6 +831,7 @@ async function applyLearningReview(args: {
       reps: existing?.reps,
       lapses: existing?.lapses,
       state: existing?.state,
+      learningSteps: existing?.learning_steps,
       dueAt: existing?.next_review_date,
       lastReviewedAt: existing?.last_reviewed_at,
     },
@@ -856,6 +857,7 @@ async function applyLearningReview(args: {
         reps: graded.fsrs.reps,
         lapses: graded.fsrs.lapses,
         state: graded.fsrs.state,
+        learning_steps: graded.fsrs.learningSteps,
         last_rating: graded.lastRating,
       },
     });
@@ -876,6 +878,7 @@ async function applyLearningReview(args: {
         reps: graded.fsrs.reps,
         lapses: graded.fsrs.lapses,
         state: graded.fsrs.state,
+        learning_steps: graded.fsrs.learningSteps,
         last_rating: graded.lastRating,
       },
     });
