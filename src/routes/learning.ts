@@ -17,6 +17,59 @@ import { requireUser } from '../middleware/userGuard';
 // baseline component for the equivalent of one graded item.
 const FLAT_REVIEW_XP = 2;
 
+type ReviewRatingInput = {
+  rating: unknown;
+  remembered: unknown;
+  correct?: unknown;
+  score?: unknown;
+  maxScore?: unknown;
+};
+
+function numberOrNull(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function resolveReviewRating(input: ReviewRatingInput): {
+  rating: SrsRating;
+  score: number | null;
+  maxScore: number | null;
+} {
+  const remembered =
+    typeof input.remembered === 'boolean'
+      ? input.remembered
+      : typeof input.correct === 'boolean'
+        ? input.correct
+        : null;
+  const score = numberOrNull(input.score);
+  const maxScore = numberOrNull(input.maxScore);
+
+  if (score != null && maxScore != null && maxScore > 0) {
+    if (remembered === false) {
+      return { rating: 1, score, maxScore };
+    }
+    if (maxScore <= 1) {
+      return { rating: remembered ? 3 : 1, score, maxScore };
+    }
+
+    const ratio = clamp01(score / maxScore);
+    if (ratio < 0.35) return { rating: 1, score, maxScore };
+    if (ratio < 0.7) return { rating: 2, score, maxScore };
+    if (ratio < 0.95) return { rating: 3, score, maxScore };
+    return { rating: 4, score, maxScore };
+  }
+
+  if (remembered === true) return { rating: 3, score: null, maxScore: null };
+  if (remembered === false) return { rating: 1, score: null, maxScore: null };
+
+  const rating = Number(input.rating) as SrsRating;
+  return { rating, score: null, maxScore: null };
+}
+
 const JLPT_LEVELS = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'] as const;
 type JlptLevel = (typeof JLPT_LEVELS)[number];
 type VocabTrack = 'core' | 'book';
@@ -562,16 +615,17 @@ export function createLearningRouter() {
     const identity = await requireUser(req);
     const userId = identity.id;
     const vocabId = Number(req.body?.vocabId);
-    const rating = Number(req.body?.rating) as SrsRating;
+    const resolvedReview = resolveReviewRating(req.body || {});
+    const rating = resolvedReview.rating;
     const mode = String(req.body?.mode || 'review');
     if (!Number.isFinite(vocabId) || ![1, 2, 3, 4].includes(rating)) {
       return res.status(400).json({ message: 'Invalid vocabId or rating' });
     }
 
-    const plan = await getActivePlan(userId);
     const current = await prisma.userVocabProgress.findUnique({
       where: { user_id_vocab_id: { user_id: BigInt(userId), vocab_id: BigInt(vocabId) } },
     });
+    const plan = current?.plan_id ? null : await getActivePlan(userId);
 
     const now = new Date();
     const firstSeen = current?.first_seen_date || dateOnly(now);
@@ -619,7 +673,7 @@ export function createLearningRouter() {
           last_reviewed_at: graded.fsrs.lastReviewedAt,
           times_reviewed: (current?.times_reviewed || 0) + 1,
           last_result: graded.legacyResult,
-          is_mastered: graded.legacyIsMastered ? 1 : (current?.is_mastered ?? 0),
+          is_mastered: graded.legacyIsMastered ? 1 : 0,
           first_seen_date: firstSeen,
           stability: graded.fsrs.stability,
           difficulty: graded.fsrs.difficulty,
@@ -630,27 +684,30 @@ export function createLearningRouter() {
           last_rating: graded.lastRating,
         },
       }),
-      prisma.userReviewLog.create({
-        data: {
-          user_id: BigInt(userId),
-          vocab_id: BigInt(vocabId),
-          review_time: now,
-          result: graded.legacyResult,
-          rating: graded.lastRating,
-          mode,
-        },
-      }),
+      prisma.$executeRaw`
+        INSERT INTO user_review_log (user_id, vocab_id, review_time, result, rating, mode, review_score, review_max_score)
+        VALUES (
+          ${BigInt(userId)},
+          ${BigInt(vocabId)},
+          ${now},
+          ${graded.legacyResult},
+          ${graded.lastRating},
+          ${mode},
+          ${resolvedReview.score},
+          ${resolvedReview.maxScore}
+        )
+      `,
     ]);
 
-    try {
-      await awardXp(userId, FLAT_REVIEW_XP);
-    } catch (error) {
-      // XP is additive and non-critical -- never fail an already-graded review
-      // because the shared ledger write hiccuped.
-      console.error('awardXp failed for review-result', { userId, error });
-    }
+    res.json('OK');
 
-    return res.json('OK');
+    // XP is additive and non-critical. Keep the review endpoint responsive by
+    // completing the grade write before responding, then updating the shared ledger
+    // in the background.
+    void awardXp(userId, FLAT_REVIEW_XP).catch((error) => {
+      console.error('awardXp failed for review-result', { userId, error });
+    });
+    return;
   });
 
   router.get('/review-preview', async (req: Request, res: Response) => {
@@ -878,7 +935,8 @@ export function createLearningRouter() {
     const identity = await requireUser(req);
     const userId = identity.id;
     const kanji = String(req.body?.kanji || '').trim();
-    const rating = Number(req.body?.rating) as SrsRating;
+    const resolvedReview = resolveReviewRating(req.body || {});
+    const rating = resolvedReview.rating;
     const mode = String(req.body?.mode || 'review').trim() || 'review';
     if (!kanji || ![1, 2, 3, 4].includes(rating)) {
       return res.status(400).json({ message: 'Invalid kanji or rating' });
@@ -973,7 +1031,7 @@ export function createLearningRouter() {
               last_reviewed_at = $4,
               times_reviewed = COALESCE(times_reviewed, 0) + 1,
               last_result = $5,
-              is_mastered = CASE WHEN $6 = 1 THEN 1 ELSE COALESCE(is_mastered, 0) END,
+              is_mastered = CASE WHEN $6 = 1 THEN 1 ELSE 0 END,
               first_seen_date = COALESCE(first_seen_date, $7),
               stability = $8,
               difficulty = $9,
@@ -1005,8 +1063,10 @@ export function createLearningRouter() {
 
       await tx.$executeRawUnsafe(
         `
-          INSERT INTO user_kanji_review_log (user_id, kanji_char, review_time, result, rating, mode)
-          VALUES ($1, $2, $3, $4, $5, $6)
+          INSERT INTO user_kanji_review_log (
+            user_id, kanji_char, review_time, result, rating, mode, review_score, review_max_score
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `,
         BigInt(userId),
         kanji,
@@ -1014,6 +1074,8 @@ export function createLearningRouter() {
         graded.legacyResult,
         graded.lastRating,
         mode,
+        resolvedReview.score,
+        resolvedReview.maxScore,
       );
 
       if (mode === 'new' && plan?.id) {
@@ -1040,13 +1102,12 @@ export function createLearningRouter() {
 
     invalidateKanjiTodayCache(userId);
 
-    try {
-      await awardXp(userId, FLAT_REVIEW_XP);
-    } catch (error) {
-      console.error('awardXp failed for kanji/review-result', { userId, error });
-    }
+    res.json('OK');
 
-    return res.json('OK');
+    void awardXp(userId, FLAT_REVIEW_XP).catch((error) => {
+      console.error('awardXp failed for kanji/review-result', { userId, error });
+    });
+    return;
   });
 
   router.get('/kanji/review-preview', async (req: Request, res: Response) => {
@@ -1764,6 +1825,13 @@ export async function ensureKanjiLearningTables() {
             WHERE table_schema = 'public' AND table_name = 'user_kanji_review_log' AND column_name = 'rating'
           )
           AND (
+            SELECT COUNT(*) = 2
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'user_kanji_review_log'
+              AND column_name IN ('review_score', 'review_max_score')
+          )
+          AND (
             SELECT COUNT(*) = 3
             FROM information_schema.columns
             WHERE table_schema = 'public'
@@ -1863,12 +1931,22 @@ export async function ensureKanjiLearningTables() {
           kanji_char VARCHAR(8) NOT NULL,
           review_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           result INT NOT NULL,
-          mode VARCHAR(20) NOT NULL
+          mode VARCHAR(20) NOT NULL,
+          review_score DOUBLE PRECISION,
+          review_max_score DOUBLE PRECISION
         );
       `);
       await prisma.$executeRawUnsafe(`
         ALTER TABLE user_kanji_review_log
         ADD COLUMN IF NOT EXISTS rating INT;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_review_log
+        ADD COLUMN IF NOT EXISTS review_score DOUBLE PRECISION;
+      `);
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_kanji_review_log
+        ADD COLUMN IF NOT EXISTS review_max_score DOUBLE PRECISION;
       `);
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS idx_user_kanji_review_log_user_time
