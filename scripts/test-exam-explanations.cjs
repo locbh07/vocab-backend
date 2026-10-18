@@ -1,6 +1,27 @@
 // Run after npm run build. All model calls are mocked; no database or external API access.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+
+test('exam explanation cache routes can bypass the shared rate-limit store', async () => {
+  const { createSimpleRateLimit } = require('../dist/middleware/simpleRateLimit');
+  const middleware = createSimpleRateLimit({
+    windowMs: 60_000,
+    max: 1,
+    keyPrefix: 'test-exam',
+    skip: req => req.path === '/question-explanation' || req.path === '/passage-explanation',
+  });
+  for (const path of ['/question-explanation', '/passage-explanation']) {
+    let nextCalls = 0;
+    const response = {
+      set: () => response,
+      status: () => response,
+      json: () => response,
+    };
+    await middleware({ path }, response, () => { nextCalls += 1; });
+    assert.equal(nextCalls, 1);
+  }
+});
+
 const { inferJlptQuestionMeta } = require('../dist/lib/jlptQuestionType');
 const standards = require('../dist/lib/examExplanationStandards');
 const explanations = require('../dist/lib/examExplanation');
@@ -44,6 +65,21 @@ test('ruby is removed without duplicating pronunciation; HTML tables retain cell
   assert.equal(standards.explanationSourceText('<table><tr><td>大人</td><td>500円</td></tr><tr><td>子供</td><td>無料</td></tr></table>'), '大人 | 500円 | \n子供 | 無料 | \n');
   assert.throws(() => standards.assertExplanationSource(standards.explanationSourceText('案内<img src="table.png">')), { status: 422 });
   assert.throws(() => standards.assertExplanationSource('', true), { status: 422 });
+});
+
+test('passage editorial omission markers do not require a vocabulary list', () => {
+  assert.equal(standards.isPassageFootnote('\uFF08\u4E2D\u7565\uFF09'), true);
+  assert.equal(standards.isPassageFootnote('(\u524D\u7565)'), true);
+  assert.equal(standards.isPassageFootnote('\uFF08\u5F8C\u7565\uFF09'), true);
+});
+
+test('passage correspondence metadata does not require a prose glossary', () => {
+  assert.equal(standards.isPassageAuxiliaryLine('\u5317\u5ddd\u8fb2\u696d\u5927\u5b66 \u5fdc\u7528\u751f\u547d\u79d1\u5b66\u90e8'), true);
+  assert.equal(standards.isPassageAuxiliaryLine('APD\u51fa\u7248 \u7de8\u96c6\u90e8'), true);
+  assert.equal(standards.isPassageAuxiliaryLine('\u5ddd\u6ce2\u656c\u4e00'), true);
+  assert.equal(standards.isPassageAuxiliaryLine('\u52df\u96c6\u90e8\u9580 | \u5fdc\u52df\u8cc7\u683c |'), true);
+  assert.equal(standards.isPassageAuxiliaryLine('\u3088\u308d\u3057\u304f\u304a\u9858\u3044\u3057\u307e\u3059\u3002'), true);
+  assert.equal(standards.isPassageAuxiliaryLine('\u4f55\u3088\u308a\u3001\u4e8b\u5f8c\u5bfe\u7b56\u3092\u6025\u304c\u306a\u3051\u308c\u3070\u306a\u3089\u306a\u3044\u304b\u3089\u3067\u3059\u3002'), false);
 });
 
 test('evidence must exist in source and sentence index is derived from quote', () => {
@@ -117,6 +153,52 @@ test('passage normalizer keeps sentence glossary and maps evidence to display nu
   }), { status: 502 });
   result.questions[0].evidence = [];
   assert.throws(() => explanations.validatePassageExplanation(result), { status: 502 });
+});
+
+test('passage normalizer maps split heading and prose rows by text before sentence index', () => {
+  const heading = '\u6f2b\u753b\u3067\u5b66\u3076\u672c';
+  const prose = '\u8fd1\u5e74\u3001\u6f2b\u753b\u5f62\u5f0f\u306e\u672c\u304c\u591a\u304f\u51fa\u7248\u3055\u308c\u3066\u3044\u308b\u3002';
+  const combined = heading + prose;
+  const question = { questionLabel: '1', displayLabel: '1', questionWithBlank: '', questionWithAnswer: '', correctAnswer: '4', options };
+  const passagePayload = { ...payload, questionType: 'reading_content', passageText: combined, questions: [question] };
+  const readings = {
+    passageRubyHtml: '', passageReadingHira: '',
+    sentenceReadings: [{ sentence_ja: combined, sentence_ruby_html: '', reading_hira: '' }],
+    questionBlankReadings: {}, questionBlankRubyHtmls: {}, questionAnswerReadings: {},
+    questionAnswerRubyHtmls: {}, questionOptionReadings: {}, questionOptionRubyHtmls: {},
+  };
+  const result = explanations.normalizePassageExplanation({
+    sentence_readings: [
+      { index: 1, sentence_ja: heading, translation_vi: 'S\u00e1ch h\u1ecdc qua manga.', vocab: [{ surface: '\u6f2b\u753b', reading_hira: '\u307e\u3093\u304c', meaning_vi: 'manga' }] },
+      { index: 2, sentence_ja: prose, translation_vi: 'Nh\u1eefng n\u0103m g\u1ea7n \u0111\u00e2y, nhi\u1ec1u s\u00e1ch manga \u0111\u01b0\u1ee3c xu\u1ea5t b\u1ea3n.', vocab: [{ surface: '\u8fd1\u5e74', reading_hira: '\u304d\u3093\u306d\u3093', meaning_vi: 'nh\u1eefng n\u0103m g\u1ea7n \u0111\u00e2y' }] },
+    ],
+    questions: [{ question_label: '1', reasoning_vi: 'C\u0103n c\u1ee9 theo c\u00e2u trong b\u00e0i.', option_analysis: optionAnalysis(), evidence: [{ quote_ja: prose, explanation_vi: 'B\u00e0i n\u00eau xu h\u01b0\u1edbng xu\u1ea5t b\u1ea3n.' }] }],
+  }, passagePayload, readings);
+  assert.equal(result.sentence_readings[0].translation_vi, 'S\u00e1ch h\u1ecdc qua manga. Nh\u1eefng n\u0103m g\u1ea7n \u0111\u00e2y, nhi\u1ec1u s\u00e1ch manga \u0111\u01b0\u1ee3c xu\u1ea5t b\u1ea3n.');
+  assert.deepEqual(result.sentence_readings[0].vocab.map(item => item.surface), ['\u6f2b\u753b', '\u8fd1\u5e74']);
+  explanations.validatePassageExplanation(result);
+});
+
+test('passage normalizer maps one reviewed row back to split source sentences', () => {
+  const first = '\u5927\u304d\u306a\u30df\u30b9\u306e\u5834\u5408\u3001\u53f1\u308b\u306e\u306f\u3042\u3068\u307e\u308f\u3057\u306b\u306a\u308a\u307e\u3059\u3002';
+  const second = '\u4f55\u3088\u308a\u3001\u4e8b\u5f8c\u5bfe\u7b56\u3092\u6025\u304c\u306a\u3051\u308c\u3070\u306a\u3089\u306a\u3044\u304b\u3089\u3067\u3059\u3002';
+  const question = { questionLabel: '1', displayLabel: '1', questionWithBlank: '', questionWithAnswer: '', correctAnswer: '4', options };
+  const passagePayload = { ...payload, questionType: 'reading_content', passageText: first + second, questions: [question] };
+  const readings = {
+    passageRubyHtml: '', passageReadingHira: '',
+    sentenceReadings: [first, second].map(sentence_ja => ({ sentence_ja, sentence_ruby_html: '', reading_hira: '' })),
+    questionBlankReadings: {}, questionBlankRubyHtmls: {}, questionAnswerReadings: {},
+    questionAnswerRubyHtmls: {}, questionOptionReadings: {}, questionOptionRubyHtmls: {},
+  };
+  const result = explanations.normalizePassageExplanation({
+    sentence_readings: [{
+      index: 1, sentence_ja: first + second, translation_vi: 'V\u1edbi l\u1ed7i l\u1edbn, tr\u01b0\u1edbc h\u1ebft ph\u1ea3i x\u1eed l\u00fd h\u1eadu qu\u1ea3.',
+      vocab: [{ surface: '\u4e8b\u5f8c\u5bfe\u7b56', reading_hira: '\u3058\u3054\u305f\u3044\u3055\u304f', meaning_vi: 'bi\u1ec7n ph\u00e1p kh\u1eafc ph\u1ee5c' }],
+    }],
+    questions: [{ question_label: '1', reasoning_vi: 'C\u0103n c\u1ee9 theo c\u00e2u trong b\u00e0i.', option_analysis: optionAnalysis(), evidence: [{ quote_ja: second, explanation_vi: 'C\u00e2u n\u00e0y n\u00eau vi\u1ec7c c\u1ea7n l\u00e0m tr\u01b0\u1edbc.' }] }],
+  }, passagePayload, readings);
+  assert.equal(result.sentence_readings[1].translation_vi, 'V\u1edbi l\u1ed7i l\u1edbn, tr\u01b0\u1edbc h\u1ebft ph\u1ea3i x\u1eed l\u00fd h\u1eadu qu\u1ea3.');
+  assert.deepEqual(result.sentence_readings[1].vocab.map(item => item.surface), ['\u4e8b\u5f8c\u5bfe\u7b56']);
 });
 
 test('incomplete grammar explanation cannot be cached as complete', () => {

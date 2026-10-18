@@ -51,7 +51,13 @@ function Invoke-External {
     [Parameter(Mandatory = $true)][string[]]$Arguments
   )
 
-  Write-Host ">> $FilePath $($Arguments -join ' ')" -ForegroundColor Cyan
+  # Never print database URLs: they commonly contain production credentials.
+  $displayArguments = $Arguments | ForEach-Object {
+    if ($_ -match '(postgres|postgresql)://') {
+      if ($_ -match '^--[^=]+=') { ($_ -replace '=.*$', '=<DATABASE_URL_REDACTED>') } else { '<DATABASE_URL_REDACTED>' }
+    } else { $_ }
+  }
+  Write-Host ">> $FilePath $($displayArguments -join ' ')" -ForegroundColor Cyan
   & $FilePath @Arguments
   if ($LASTEXITCODE -ne 0) {
     throw "Command failed with exit code ${LASTEXITCODE}: $FilePath"
@@ -103,7 +109,12 @@ $null = New-Item -ItemType Directory -Path $backupDir -Force
 $pgDumpPath = Resolve-PgToolPath -ToolName "pg_dump" -PreferredBinDir $PgBinDir
 $pgRestorePath = Resolve-PgToolPath -ToolName "pg_restore" -PreferredBinDir $PgBinDir
 
-$serverDbUrl = Get-EnvValueFromFile -Path $serverEnvFile -Key "DATABASE_URL"
+$serverDirectUrlLine = Get-Content -LiteralPath $serverEnvFile | Where-Object { $_ -match '^\s*DIRECT_URL\s*=' } | Select-Object -First 1
+$serverDbUrl = if ($serverDirectUrlLine) {
+  Get-EnvValueFromFile -Path $serverEnvFile -Key "DIRECT_URL"
+} else {
+  Get-EnvValueFromFile -Path $serverEnvFile -Key "DATABASE_URL"
+}
 $localDbUrl = Get-EnvValueFromFile -Path $localEnvPath -Key "DATABASE_URL"
 
 if ($serverDbUrl -eq $localDbUrl) {

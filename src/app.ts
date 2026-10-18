@@ -186,13 +186,27 @@ app.use(
 app.use(
   '/exam',
   ...(apiShieldEnabled ? [createRouteShield('exam-shield', 100, 80)] : []),
-  createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'exam' }),
+  createSimpleRateLimit({
+    windowMs: 60_000,
+    max: 90,
+    keyPrefix: 'exam',
+    // These endpoints read their own cache before deciding whether generation is needed.
+    // Non-admin generation has a separate per-question/per-passage quota in the route,
+    // while API Shield still protects cached reads. Avoid making cache availability
+    // depend on the shared PostgreSQL rate-limit bucket.
+    skip: (req) => req.path === '/question-explanation' || req.path === '/passage-explanation',
+  }),
   createExamRouter(),
 );
 app.use(
   '/api/exam',
   ...(apiShieldEnabled ? [createRouteShield('api-exam-shield', 100, 80)] : []),
-  createSimpleRateLimit({ windowMs: 60_000, max: 90, keyPrefix: 'api-exam' }),
+  createSimpleRateLimit({
+    windowMs: 60_000,
+    max: 90,
+    keyPrefix: 'api-exam',
+    skip: (req) => req.path === '/question-explanation' || req.path === '/passage-explanation',
+  }),
   createExamRouter(),
 );
 app.use('/admin/users', createAdminUsersRouter());

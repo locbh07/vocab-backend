@@ -112,11 +112,24 @@ function groundQuoteSegments(quote: string, source: string): QuoteSegment[] | nu
   return grounded ? segments : null;
 }
 
-// The trailing "（注1）語：意味　（注2）…" line of a reading passage is a glossary of hard words,
-// not prose. Models either skip it or gloss it as a whole, and demanding a translation plus a
-// vocab list for it fails an otherwise complete explanation.
+// Footnotes and editorial omission markers such as （中略） are not prose. Models either skip
+// them or translate them as a whole, and demanding a vocab list for those markers fails an
+// otherwise complete explanation.
 export function isPassageFootnote(sentence: string): boolean {
-  return /^[\s　]*[（(]\s*注\s*\d*\s*[）)]/u.test(String(sentence || ''));
+  return /^[\s　]*[（(]\s*(?:注\s*\d*|[前中後]略)\s*[）)]/u.test(String(sentence || ''));
+}
+
+// Headers, signatures and formulaic closings in letters/emails are layout metadata rather than
+// prose to study. They can legitimately have no per-sentence glossary even though they contain
+// kanji. Keep this deliberately narrow: ordinary sentences containing kana or punctuation still
+// require translations and vocabulary.
+export function isPassageAuxiliaryLine(sentence: string): boolean {
+  const raw = String(sentence || '').trim();
+  if (!raw) return true;
+  if (/^よろしく(?:お願い(?:します|いたします|申し上げます))?。?$/u.test(raw)) return true;
+  if (/[。！？!?]/u.test(raw)) return false;
+  const compact = raw.replace(/\s+/g, '').replace(/[|｜:：]/g, '');
+  return /^(?:[A-Z]{2,})?[\p{Script=Han}]+$/u.test(compact);
 }
 
 export function starSlotIndex(question: string): number | null {

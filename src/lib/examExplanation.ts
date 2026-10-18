@@ -1,7 +1,7 @@
 import type { JlptQuestionType } from './jlptQuestionType';
 import { toReadingHiragana, toRubyHtml } from './japaneseReading';
 import { generateGeminiJson } from './gemini';
-import { EXPLANATION_FORMAT_RULES, questionTeachingRules, normalizeEvidence, isValidStarOrder, assertStarQuestionSource, assertExplanationSource, isPassageFootnote, type ExplanationEvidence } from './examExplanationStandards';
+import { EXPLANATION_FORMAT_RULES, questionTeachingRules, normalizeEvidence, isValidStarOrder, assertStarQuestionSource, assertExplanationSource, isPassageFootnote, isPassageAuxiliaryLine, type ExplanationEvidence } from './examExplanationStandards';
 
 export type ExplanationProvider = 'openai' | 'gemini';
 
@@ -1048,28 +1048,44 @@ export function normalizePassageExplanation(
   const sentenceTranslations = new Map<string, string>();
   const sentenceVocab = new Map<number, KeyVocab[]>();
   const sentenceTranslationsByIndex = new Map<number, string>();
+  const sentenceContentRows: Array<{ key: string; translation: string; vocab: KeyVocab[] }> = [];
   for (const item of llmSentences) {
     if (!isObject(item)) continue;
     const sentence = normalizeSentenceKey(text(item.sentence_ja) || '');
     const translation = text(item.translation_vi) || '';
     const index = parsePositiveInt(item.index);
-    if (index !== null) sentenceVocab.set(index - 1, asKeyVocab(item.vocab));
+    const vocab = asKeyVocab(item.vocab);
+    if (index !== null) sentenceVocab.set(index - 1, vocab);
     if (index !== null && translation) {
       sentenceTranslationsByIndex.set(index - 1, translation);
     }
     if (!sentence) continue;
     if (translation) sentenceTranslations.set(sentence, translation);
+    sentenceContentRows.push({ key: sentence, translation, vocab });
   }
 
   const sentence_readings: PassageSentenceReading[] = precomputed.sentenceReadings.map((item, index) => {
-    const byKey = sentenceTranslations.get(normalizeSentenceKey(item.sentence_ja)) || '';
+    const canonicalKey = normalizeSentenceKey(item.sentence_ja);
+    const exactRow = sentenceContentRows.find(row => row.key === canonicalKey);
+    // HTML headings can be adjacent to the first prose sentence without punctuation in the
+    // source. The reading cache then sees one sentence while an external reviewer reasonably
+    // returns two rows. Match those rows by their actual text before falling back to indexes so
+    // the heading does not shift every later sentence's vocabulary by one.
+    const containedRows = exactRow
+      ? [exactRow]
+      : sentenceContentRows.filter(row => row.key.length >= 4 &&
+          (canonicalKey.includes(row.key) || row.key.includes(canonicalKey)));
+    const byKey = exactRow?.translation || containedRows.map(row => row.translation).filter(Boolean).join(' ') ||
+      sentenceTranslations.get(canonicalKey) || '';
     const byIndex = sentenceTranslationsByIndex.get(index) || '';
+    const keyedVocab = asKeyVocab(containedRows.flatMap(row => row.vocab));
+    const vocab = keyedVocab.length ? keyedVocab : (sentenceVocab.get(index) || []);
     return {
       sentence_ja: item.sentence_ja,
       sentence_ruby_html: item.sentence_ruby_html,
       reading_hira: item.reading_hira,
-      translation_vi: byKey || byIndex,
-      vocab: (sentenceVocab.get(index) || []).filter(word => item.sentence_ja.includes(word.surface)),
+      translation_vi: byKey || (isPassageAuxiliaryLine(item.sentence_ja) ? '' : byIndex),
+      vocab: vocab.filter(word => item.sentence_ja.includes(word.surface)),
       evidence_for: questionsWithReasoning.filter(q => q.evidence?.some(e => e.sentence_index === index + 1)).map(q => q.display_question_label || q.question_label),
     };
   });
@@ -1537,13 +1553,14 @@ export function validateQuestionExplanation(explanation: ExamQuestionExplanation
 export function validatePassageExplanation(explanation: PassageExplanation): void {
   if (!explanation.questions.length || !explanation.sentence_readings.length) incompleteExplanation();
   if (explanation.questions.some(q => !q.reasoning_vi || !q.evidence?.length || q.option_analysis.some(o => !o.reason_vi))) incompleteExplanation();
-  if (explanation.sentence_readings.some(s => !isPassageFootnote(s.sentence_ja) &&
+  if (explanation.sentence_readings.some(s => !isPassageFootnote(s.sentence_ja) && !isPassageAuxiliaryLine(s.sentence_ja) &&
     (!s.translation_vi || (/[\u3400-\u9fff]/u.test(s.sentence_ja) && !s.vocab?.length)))) incompleteExplanation();
 }
 
 function normalizeSentenceKey(input: string): string {
   return String(input || '')
     .replace(/\s+/g, '')
+    .replace(/[|｜:：]/g, '')
     .replace(/[（(]/g, '(')
     .replace(/[）)]/g, ')')
     .replace(/[。．]/g, '。')

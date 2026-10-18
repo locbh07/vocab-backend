@@ -1,5 +1,5 @@
 import { getPremiumPolicy } from '../lib/premiumPolicy';
-import { explanationSourceText, assertExplanationSource, assertStarQuestionSource } from '../lib/examExplanationStandards';
+import { explanationSourceText, assertExplanationSource, assertStarQuestionSource, isValidStarOrder } from '../lib/examExplanationStandards';
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
@@ -11,6 +11,10 @@ import {
   PassageExplanation,
   ReadingSeedQuestionData,
   ExplanationProvider,
+  normalizeExplanation,
+  normalizePassageExplanation,
+  validateQuestionExplanation,
+  validatePassageExplanation,
 } from '../lib/examExplanation';
 import { describeJlptQuestionType, inferJlptQuestionMeta, JlptQuestionType } from '../lib/jlptQuestionType';
 import { getOrCreateQuestionReadingCache, QuestionReadingCache } from '../lib/examReadingCache';
@@ -2545,6 +2549,156 @@ async function hydratePassageExplanationWithReadingSeed(
 
 function normalizePassageSentenceKey(input: string): string {
   return String(input || '').replace(/\s+/g, '').trim();
+}
+
+type DetailedImportLocation = {
+  level: string;
+  examId: string;
+  part: number;
+  sectionIndex: number;
+};
+
+export async function importDetailedQuestionExplanationLocal(args: DetailedImportLocation & {
+  questionIndex: number;
+  rawExplanation: unknown;
+  save?: boolean;
+}): Promise<{ explanation: ExamQuestionExplanation; questionHash: string }> {
+  await ensureQuestionExplanationTable();
+  const loaded = await loadQuestionContext(args.level, args.examId, args.part, args.sectionIndex, args.questionIndex);
+  let context = loaded;
+  if (args.part === 3 || loaded.questionType === 'listening') {
+    const listeningScript = extractListeningScriptForExplanation(
+      loaded.listeningScriptText,
+      loaded.passageText,
+      loaded.questionText,
+    );
+    if (!listeningScript) throw new Error('Listening question has no valid transcript');
+    context = { ...loaded, passageText: listeningScript };
+  }
+  assertQuestionExplanationSource(context);
+  const readingCache = await getOrCreateQuestionReadingCache({
+    level: args.level,
+    examId: args.examId,
+    part: args.part,
+    sectionIndex: args.sectionIndex,
+    questionIndex: args.questionIndex,
+    questionText: context.questionText,
+    options: context.options,
+    passageText: context.passageText,
+    questionWordReadings: context.questionWordReadings,
+  });
+  const payload = {
+    level: args.level,
+    examId: args.examId,
+    part: args.part,
+    sectionTitle: context.sectionTitle,
+    questionLabel: context.questionLabel,
+    mondaiLabel: context.mondaiLabel,
+    questionType: context.questionType,
+    questionTypeLabelVi: context.questionTypeLabelVi,
+    typeStrategyVi: context.typeStrategyVi,
+    questionText: context.questionText,
+    questionWithBlank: context.questionWithBlank,
+    questionWithAnswer: context.questionWithAnswer,
+    blankLabels: context.blankLabels,
+    isClozeQuestion: context.isClozeQuestion,
+    options: context.options,
+    correctAnswer: context.correctAnswer,
+    passageText: context.passageText,
+    sentenceOrderExpectedOrder: context.sentenceOrderExpectedOrder,
+  };
+  const raw = isObject(args.rawExplanation) ? { ...args.rawExplanation } : {};
+  if (context.questionType === 'sentence_order' && isObject(raw.sentence_order_solution)) {
+    const solution = { ...raw.sentence_order_solution };
+    solution.ordered_sentence_ja = solution.ordered_sentence_ja || solution.completed_sentence_ja || raw.completed_sentence_ja || '';
+    solution.ordered_sentence_reading_hira = solution.ordered_sentence_reading_hira || '';
+    solution.reason_vi = solution.reason_vi || raw.key_point_vi || '';
+    raw.sentence_order_solution = solution;
+  }
+  const normalized = normalizeExplanation(raw, payload, {
+    questionReadingHira: readingCache.question_reading_hira,
+    questionRubyHtml: readingCache.question_ruby_html,
+    optionReadings: readingCache.option_readings,
+    optionRubyHtmls: readingCache.option_ruby_htmls,
+  });
+  validateQuestionExplanation(normalized, payload);
+  if (context.questionType === 'sentence_order') {
+    const solution = normalized.sentence_order_solution;
+    if (!solution || !isValidStarOrder(
+      solution.ordered_options,
+      Object.keys(context.options),
+      context.questionWithBlank || context.questionText,
+      context.correctAnswer,
+    )) throw new Error('Sentence-order solution is inconsistent with the source answer');
+  }
+  const explanation = hydrateQuestionExplanationWithReadingCache(normalized, readingCache);
+  const questionHash = buildQuestionHash(context);
+  if (args.save) {
+    await saveCachedExplanation({
+      level: args.level,
+      examId: args.examId,
+      part: args.part,
+      sectionIndex: args.sectionIndex,
+      questionIndex: args.questionIndex,
+      questionHash,
+      explanation,
+      sourceModel: 'external-ai-reviewed',
+    });
+  }
+  return { explanation, questionHash };
+}
+
+export async function importDetailedPassageExplanationLocal(args: DetailedImportLocation & {
+  questionIndexes: number[];
+  rawExplanation: unknown;
+  save?: boolean;
+}): Promise<{ explanation: PassageExplanation; groupHash: string }> {
+  await ensureQuestionExplanationTable();
+  const { contexts, passageText, readingSeed, blankLabels, groupHash } = await loadPassageGroup(args);
+  const payload = {
+    level: args.level,
+    examId: args.examId,
+    part: args.part,
+    sectionTitle: contexts[0]?.sectionTitle || '',
+    mondaiLabel: contexts[0]?.mondaiLabel || '',
+    questionType: contexts[0]?.questionType || 'reading_cloze' as JlptQuestionType,
+    questionTypeLabelVi: contexts[0]?.questionTypeLabelVi || '',
+    typeStrategyVi: contexts[0]?.typeStrategyVi || '',
+    passageText,
+    blankLabels,
+    questions: contexts.map((ctx) => ({
+      questionLabel: ctx.questionLabel,
+      displayLabel: ctx.displayQuestionLabel,
+      questionWithBlank: ctx.questionWithBlank || ctx.questionText,
+      questionWithAnswer: ctx.questionWithAnswer || '',
+      options: ctx.options,
+      correctAnswer: ctx.correctAnswer,
+    })),
+  };
+  const raw = isObject(args.rawExplanation) ? JSON.parse(JSON.stringify(args.rawExplanation)) : {};
+  if (Array.isArray(raw.questions)) {
+    raw.questions.forEach((question: Record<string, unknown>, index: number) => {
+      if (contexts[index]) question.question_label = contexts[index].questionLabel;
+    });
+  }
+  const explanation = normalizePassageExplanation(raw, payload, {
+    ...readingSeed,
+    questionAnswerReadings: {},
+    questionAnswerRubyHtmls: {},
+  });
+  validatePassageExplanation(explanation);
+  if (args.save) {
+    await saveCachedPassageExplanation({
+      level: args.level,
+      examId: args.examId,
+      part: args.part,
+      sectionIndex: args.sectionIndex,
+      groupHash,
+      explanation,
+      sourceModel: 'external-ai-reviewed',
+    });
+  }
+  return { explanation, groupHash };
 }
 
 function parseQuestionExplanationPatch(value: unknown): Partial<ExamQuestionExplanation> {
