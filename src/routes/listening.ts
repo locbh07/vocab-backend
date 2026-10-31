@@ -114,7 +114,7 @@ const LISTENING_AI_TRANSCRIPT_MODEL = String(process.env.OPENAI_LISTENING_TRANSC
 const LISTENING_AI_TRANSCRIPT_LANGUAGE = String(process.env.LISTENING_AI_TRANSCRIPT_LANGUAGE || 'ja').trim();
 const LISTENING_AI_TRANSCRIPT_MAX_DURATION_SEC = Math.max(30, Number(process.env.LISTENING_AI_TRANSCRIPT_MAX_DURATION_SEC || 45 * 60));
 const LISTENING_AI_TRANSCRIPT_MAX_AUDIO_BYTES = Math.max(1024 * 1024, Number(process.env.LISTENING_AI_TRANSCRIPT_MAX_AUDIO_BYTES || 24 * 1024 * 1024));
-const SUPPORTED_TRANSLATION_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
+const SUPPORTED_TRANSLATION_LANGUAGES = new Set(['vi']);
 const translationCache = new Map<string, string>();
 const MAX_TRANSLATION_CACHE_SIZE = 1000;
 const LISTENING_VOCAB_LOOKUP_MAX_LINES = 400;
@@ -2318,7 +2318,7 @@ export function createListeningRouter() {
     if (!videoId) {
       return res.status(400).json({ success: false, message: 'videoId is required' });
     }
-    const language = String(req.query.language || 'vi').trim().toLowerCase() || 'vi';
+    const language = 'vi';
 
     const videoRows = await prisma.$queryRaw<Array<{ is_free_preview: boolean | null }>>(
       Prisma.sql`

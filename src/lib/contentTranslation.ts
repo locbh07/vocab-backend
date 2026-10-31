@@ -15,10 +15,9 @@ export const LANGUAGE_NAMES: Record<string, string> = {
   fil: 'Filipino',
 };
 
-// Shared across every route that serves translatable content — keep this Set in sync with
-// LANGUAGE_NAMES above (and with frontend `SUPPORTED_LANGUAGES` in utils/language.js) when
-// adding a new language.
-const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
+// Production currently serves Vietnamese only. Keep this narrow so stale clients
+// cannot recreate deleted multilingual cache rows through lazy translation.
+const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi']);
 
 export function resolveRequestLanguage(req: Request): string {
   const raw = String(req.query.language ?? req.headers['x-language'] ?? 'vi').trim().toLowerCase();

@@ -20,7 +20,7 @@ const ALLOWED_PREFIXES = new Set([
   '3000_N1_',
 ]);
 const ALLOWED_TRACKS = new Set(['core', 'book']);
-const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi', 'en', 'zh', 'ko', 'pt', 'id', 'ne', 'my', 'fil']);
+const SUPPORTED_CONTENT_LANGUAGES = new Set(['vi']);
 
 type VocabTrack = 'core' | 'book';
 
