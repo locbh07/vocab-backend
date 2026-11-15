@@ -1,3 +1,4 @@
+import { contentEnvelope } from './middleware/contentEnvelope';
 import express from 'express';
 import 'express-async-errors';
 import cors from 'cors';
@@ -124,6 +125,8 @@ app.use((req, res, next) => {
   res.json = (body: unknown) => originalJson(jsonSafe(body));
   next();
 });
+
+app.use(contentEnvelope);
 
 app.use('/auth', createAuthRouter());
 app.use('/api/auth', createAuthRouter());

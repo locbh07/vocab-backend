@@ -26,7 +26,6 @@ import {
 } from '../lib/examPassageVocab';
 import { toReadingHiragana, toRubyHtml } from '../lib/japaneseReading';
 import { getExamQuestionMeta, upsertExamQuestionMetaForPart } from '../lib/examQuestionMeta';
-import { hasActivePremium } from '../lib/contentAccess';
 import { requireAdmin } from '../middleware/adminGuard';
 import { buildPracticeCatalog } from '../lib/examPractice';
 
@@ -1542,21 +1541,7 @@ async function resolveExamListAccess(userId: number, code: string, level: string
     err.status = 404;
     throw err;
   }
-  if (hasActivePremium(user)) {
-    return { levels: FREE_EXAM_LEVELS, fullAccess: true };
-  }
-  if (!user.exam_enabled || !code?.trim()) {
-    return { levels: FREE_EXAM_LEVELS, fullAccess: false };
-  }
-  const rows = await prisma.userExamCode.findMany({
-    where: { user_id: BigInt(userId), enabled: true, code },
-    orderBy: { level: 'asc' },
-  });
-  const levels = rows.map((r: { level: string }) => r.level);
-  if (!levels.includes(level)) {
-    return { levels: FREE_EXAM_LEVELS, fullAccess: false };
-  }
-  return { levels: Array.from(new Set([...FREE_EXAM_LEVELS, ...levels])), fullAccess: false };
+  return { levels: FREE_EXAM_LEVELS, fullAccess: true };
 }
 
 async function getLimitedExamIds(level: string): Promise<string[]> {
@@ -1587,52 +1572,7 @@ async function requireExamAccess(
     err.status = 404;
     throw err;
   }
-  if (hasActivePremium(user)) {
-    return { levels: FREE_EXAM_LEVELS, fullAccess: true };
-  }
-  if (level && examId) {
-    const allowedExamIds = await getLimitedExamIds(level);
-    if (allowedExamIds.includes(examId)) {
-      return { levels: FREE_EXAM_LEVELS, fullAccess: false };
-    }
-  }
-  if (!level && !examId) {
-    return { levels: FREE_EXAM_LEVELS, fullAccess: false };
-  }
-  if (!user.exam_enabled) {
-    const err = new Error('Exam access not enabled') as Error & { status?: number };
-    err.status = 403;
-    throw err;
-  }
-  if (!code?.trim()) {
-    const err = new Error('Invalid code') as Error & { status?: number };
-    err.status = 403;
-    throw err;
-  }
-  const rows = await prisma.userExamCode.findMany({
-    where: { user_id: BigInt(userId), enabled: true, code },
-    orderBy: { level: 'asc' },
-  });
-  const levels = rows.map((r: { level: string }) => r.level);
-  if (!levels.length) {
-    const err = new Error('Exam code not set') as Error & { status?: number };
-    err.status = 403;
-    throw err;
-  }
-  if (level && !levels.includes(level)) {
-    const err = new Error('Invalid code') as Error & { status?: number };
-    err.status = 403;
-    throw err;
-  }
-  if (level && examId) {
-    const allowedExamIds = await getLimitedExamIds(level);
-    if (!allowedExamIds.includes(examId)) {
-      const err = new Error('Premium account required for this exam') as Error & { status?: number };
-      err.status = 403;
-      throw err;
-    }
-  }
-  return { levels, fullAccess: false };
+  return { levels: FREE_EXAM_LEVELS, fullAccess: true };
 }
 
 type QuestionContext = {

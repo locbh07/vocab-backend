@@ -435,6 +435,9 @@ async function saveManualPaymentSetting(provider: ManualPaymentProvider, body: a
 
 export function createManualPaymentRouter() {
   const router = Router();
+  router.post('/requests', (_req, res) => {
+    res.status(410).json({ code: 'PREMIUM_RETIRED', message: 'Learning is free. Premium purchases are no longer available.' });
+  });
   router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
 
   router.get('/settings', async (_req: Request, res: Response) => {
@@ -443,9 +446,9 @@ export function createManualPaymentRouter() {
     return res.json({
       trialDays: getPremiumPolicy().trialDays,
       premiumPolicy: getPremiumPolicy(),
-      plans: ['trial', 'monthly', 'yearly', 'lifetime'],
+      plans: [],
       MSB: {
-        enabled: settings.MSB.enabled,
+        enabled: false,
         monthlyAmount: settings.MSB.monthlyAmount,
         yearlyAmount: settings.MSB.yearlyAmount,
         lifetimeAmount: settings.MSB.lifetimeAmount,
@@ -458,7 +461,7 @@ export function createManualPaymentRouter() {
         currency: settings.MSB.currency,
       },
       PAYPAY: {
-        enabled: settings.PAYPAY.enabled,
+        enabled: false,
         monthlyAmount: settings.PAYPAY.monthlyAmount,
         yearlyAmount: settings.PAYPAY.yearlyAmount,
         lifetimeAmount: settings.PAYPAY.lifetimeAmount,
@@ -696,7 +699,7 @@ export function createAdminManualPaymentRouter() {
     return res.json({
       trialDays: getPremiumPolicy().trialDays,
       premiumPolicy: getPremiumPolicy(),
-      plans: ['trial', 'monthly', 'yearly', 'lifetime'],
+      plans: [],
       ...settings,
     });
   });

@@ -1,7 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireUser, UserIdentity } from '../middleware/userGuard';
-import { hasActivePremium } from '../lib/contentAccess';
 import {
   buildBookStoragePath,
   coverStorageKeyFor,
@@ -40,11 +39,8 @@ function isAdminUser(user: UserIdentity): boolean {
   return String(user.role || '').toUpperCase().includes('ADMIN');
 }
 
-function canReadBook(book: { isPremiumOnly: boolean; uploadedBy: bigint }, user: UserIdentity): boolean {
-  if (!book.isPremiumOnly) return true;
-  if (Number(book.uploadedBy) === user.id) return true;
-  if (isAdminUser(user)) return true;
-  return hasActivePremium(user);
+function canReadBook(_book: { isPremiumOnly: boolean; uploadedBy: bigint }, _user: UserIdentity): boolean {
+  return true;
 }
 
 // Upload is open to any logged-in user now (previously premium-only) — non-admin uploads just
@@ -70,7 +66,7 @@ async function serializeBook(book: BookWithUploader, user: UserIdentity) {
     fileName: book.fileName,
     fileSize: book.fileSize,
     pageCount: book.pageCount,
-    isPremiumOnly: book.isPremiumOnly,
+    isPremiumOnly: false,
     pagesCached: book.pagesCached,
     sortOrder: book.sortOrder,
     isHidden: book.isHidden,
@@ -268,8 +264,7 @@ export function createBookRouter() {
     const description = String(req.body.description || '').trim() || null;
     const pageCountRaw = Number(req.body.pageCount);
     const pageCount = Number.isFinite(pageCountRaw) && pageCountRaw > 0 ? Math.trunc(pageCountRaw) : null;
-    const requestedPremiumOnly = req.body.isPremiumOnly === true || req.body.isPremiumOnly === 'true';
-    const isPremiumOnly = requestedPremiumOnly && isAdminUser(user);
+    const isPremiumOnly = false;
     // Admin uploads go live immediately; everyone else's need an admin to review and approve
     // before the book shows up in the public list (see GET / and GET /:id filtering above).
     const isApproved = isAdminUser(user);
@@ -428,7 +423,7 @@ export function createBookRouter() {
       data.description = description || null;
     }
     if (req.body.isPremiumOnly !== undefined) {
-      data.isPremiumOnly = req.body.isPremiumOnly === true || req.body.isPremiumOnly === 'true';
+      data.isPremiumOnly = false;
     }
     if (req.body.sortOrder !== undefined) {
       const sortOrder = Number(req.body.sortOrder);

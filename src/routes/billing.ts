@@ -195,6 +195,9 @@ async function processStripeEvent(db: PrismaExecutor, stripe: Stripe, event: Str
 
 export function createBillingRouter() {
   const router = Router();
+  router.post(['/trial/activate', '/checkout-session'], (_req, res) => {
+    res.status(410).json({ code: 'PREMIUM_RETIRED', message: 'Learning is free. Premium purchases are no longer available.' });
+  });
 
   router.post('/trial/activate', async (req: Request, res: Response) => {
     await ensurePremiumTrialColumns();

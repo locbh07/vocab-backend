@@ -1988,6 +1988,7 @@ export function createListeningRouter() {
   });
 
   router.post('/import-youtube', async (req: Request, res: Response) => {
+    await requireUser(req);
     const access = await resolveContentAccess(req);
     if (REQUIRE_PREMIUM_FOR_YOUTUBE_IMPORT && !access.isPremium) {
       return res.status(403).json({
@@ -2192,6 +2193,7 @@ export function createListeningRouter() {
   });
 
   router.post('/videos/:videoId/transcript', async (req: Request, res: Response) => {
+    await requireUser(req);
     const access = await resolveContentAccess(req);
     if (!access.isPremium) {
       return res.status(403).json({
