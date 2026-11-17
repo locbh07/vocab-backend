@@ -122,10 +122,17 @@ export function buildExamStudy(exams: Row[], questions: Row[], passages: Row[]) 
       }
     }
   }
+  const kanjiExamples = new Map<string, Map<string, Example>>();
+  for (const v of vocab) for (const example of v.examples) {
+    if (!norm(sources.get(example.source.id)?.text).includes(norm(example.surface))) continue;
+    for (const char of new Set(example.surface.match(/[\u3400-\u4dbf\u4e00-\u9fff]/g) || [])) {
+      if (!kanjiExamples.has(char)) kanjiExamples.set(char, new Map());
+      kanjiExamples.get(char)!.set(example.surface, example);
+    }
+  }
   for (const b of buckets.values()) if (b.category === 'kanji') {
-    const wordExamples = vocab.flatMap((v) => v.examples.filter((e) => e.surface.includes(b.title) && norm(sources.get(e.source.id)?.text).includes(norm(e.surface))));
-    const unique = new Map(wordExamples.map((e) => [e.surface, e]));
-    if (unique.size) b.examples = [...unique.values()].slice(0, 5);
+    const examples = kanjiExamples.get(b.title);
+    if (examples?.size) b.examples = [...examples.values()].slice(0, 5);
   }
   const items: StudyItem[] = [...buckets.entries()].map(([key, b]) => ({ id: createHash('sha256').update(key).digest('hex').slice(0, 20), category: b.category, title: b.title, sourceCount: b.sources.size, explanationCount: b.explanationSources.size, examCount: b.exams.size, basic: b.category === 'vocabulary' && basicWords.has(b.title), examples: b.examples }));
   items.sort((a, b) => b.sourceCount - a.sourceCount || b.examCount - a.examCount || a.title.localeCompare(b.title, 'ja'));
