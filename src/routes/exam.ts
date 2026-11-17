@@ -1,4 +1,6 @@
+import { applyReviewedReadings } from '../lib/reviewedReadings';
 import { getPremiumPolicy } from '../lib/premiumPolicy';
+import { createExamStudyRouter } from './examStudy';
 import { explanationSourceText, assertExplanationSource, assertStarQuestionSource, isValidStarOrder } from '../lib/examExplanationStandards';
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
@@ -132,6 +134,7 @@ const JLPT_MAX_SCORE_PER_SECTION = 60;
 
 export function createExamRouter() {
   const router = Router();
+  router.use('/study', createExamStudyRouter());
 
   router.post('/verify-code', async (req: Request, res: Response) => {
     const body = req.body as VerifyRequest;
@@ -1836,7 +1839,7 @@ async function saveCachedExplanation(args: CachedExplainQuery & { explanation: E
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NOW(), NOW())
       ON CONFLICT (level, exam_id, part, section_index, question_index, question_hash, prompt_version)
       DO UPDATE SET
-        explanation_json = EXCLUDED.explanation_json,
+        explanation_json = EXCLUDED.explanation_json || CASE WHEN jlpt_question_explanation.explanation_json ? '_reading_review' THEN jsonb_build_object('_reading_review', jlpt_question_explanation.explanation_json->'_reading_review') ELSE '{}'::jsonb END,
         source_model = EXCLUDED.source_model,
         updated_at = NOW()
     `,
@@ -1862,7 +1865,7 @@ async function saveCachedPassageExplanation(args: PassageCacheQuery & { explanat
       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, NOW(), NOW())
       ON CONFLICT (level, exam_id, part, section_index, group_hash, prompt_version)
       DO UPDATE SET
-        explanation_json = EXCLUDED.explanation_json,
+        explanation_json = EXCLUDED.explanation_json || CASE WHEN jlpt_passage_explanation.explanation_json ? '_reading_review' THEN jsonb_build_object('_reading_review', jlpt_passage_explanation.explanation_json->'_reading_review') ELSE '{}'::jsonb END,
         source_model = EXCLUDED.source_model,
         updated_at = NOW()
     `,
@@ -2400,13 +2403,13 @@ function hydrateQuestionExplanationWithReadingCache(
     optionRubyHtmls,
   );
 
-  return {
+  return applyReviewedReadings({
     ...explanation,
     question_ruby_html: readingCache.question_ruby_html || explanation.question_ruby_html || '',
     question_reading_hira: readingCache.question_reading_hira || explanation.question_reading_hira || '',
     options_with_reading,
     sentence_order_solution,
-  };
+  });
 }
 
 // Question explanations keep their furigana in jlpt_exam_reading_cache and get it re-attached on
@@ -2478,13 +2481,13 @@ async function hydratePassageExplanationWithReadingSeed(
     }),
   );
 
-  return {
+  return applyReviewedReadings({
     ...explanation,
     passage_ruby_html: seed.passageRubyHtml || explanation.passage_ruby_html || '',
     passage_reading_hira: seed.passageReadingHira || explanation.passage_reading_hira || '',
     sentence_readings,
     questions,
-  };
+  });
 }
 
 function normalizePassageSentenceKey(input: string): string {
